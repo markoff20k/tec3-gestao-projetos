@@ -142,41 +142,42 @@ export function Layout({ children }: LayoutProps) {
       >
         <div className="flex flex-col h-full">
           {/* Logo Section */}
-          <div className="p-4 flex items-center justify-between">
-            <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center w-full' : ''}`}>
-              {/* TEC3 Logo */}
-              {sidebarCollapsed ? (
-                <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
+          <div className="p-4">
+            {sidebarCollapsed ? (
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
                   <span className="text-primary-foreground font-bold text-lg">T3</span>
                 </div>
-              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      data-testid="button-toggle-sidebar"
+                      onClick={() => setSidebarCollapsed(false)}
+                      className="p-1.5 rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Expandir menu</TooltipContent>
+                </Tooltip>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-2">
                 <img 
                   src="https://www.tec3engenharia.com.br/wp-content/uploads/2025/09/tec3-LogoTagline-Cor.svg" 
                   alt="TEC3 Engenharia" 
-                  className="h-10 brightness-0 invert"
+                  className="w-full max-h-12 object-contain brightness-0 invert"
                   data-testid="img-sidebar-logo"
                 />
-              )}
-            </div>
-            {/* Toggle Button - Always visible */}
-            <Tooltip>
-              <TooltipTrigger asChild>
                 <button
                   data-testid="button-toggle-sidebar"
-                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                  className={`p-1.5 rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors flex-shrink-0 ${sidebarCollapsed ? 'mx-auto mt-2' : ''}`}
+                  onClick={() => setSidebarCollapsed(true)}
+                  className="p-1.5 rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors flex-shrink-0"
                 >
-                  {sidebarCollapsed ? (
-                    <ChevronRight className="h-5 w-5" />
-                  ) : (
-                    <ChevronLeft className="h-5 w-5" />
-                  )}
+                  <ChevronLeft className="h-5 w-5" />
                 </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                {sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
-              </TooltipContent>
-            </Tooltip>
+              </div>
+            )}
           </div>
 
           {/* User Profile Section */}
