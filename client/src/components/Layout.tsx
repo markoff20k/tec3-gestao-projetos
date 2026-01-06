@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
@@ -78,7 +79,22 @@ export function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
   const { user, logout, hasRole } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { toast } = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const handleSettings = () => {
+    toast({
+      title: 'Em breve',
+      description: 'A página de configurações será implementada em breve.',
+    });
+  };
+
+  const handleProfile = () => {
+    toast({
+      title: 'Em breve',
+      description: 'A página de perfil será implementada em breve.',
+    });
+  };
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('sidebar-collapsed') === 'true';
@@ -235,6 +251,7 @@ export function Layout({ children }: LayoutProps) {
                   <TooltipTrigger asChild>
                     <button
                       data-testid="button-settings"
+                      onClick={handleSettings}
                       className="w-full flex items-center justify-center p-2.5 rounded-lg text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
                     >
                       <Settings className="h-5 w-5" />
@@ -259,6 +276,7 @@ export function Layout({ children }: LayoutProps) {
               <>
                 <button
                   data-testid="button-settings"
+                  onClick={handleSettings}
                   className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
                 >
                   <Settings className="h-5 w-5" />
@@ -371,11 +389,11 @@ export function Layout({ children }: LayoutProps) {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem data-testid="menu-profile" className="gap-2 cursor-pointer">
+                <DropdownMenuItem data-testid="menu-profile" className="gap-2 cursor-pointer" onClick={handleProfile}>
                   <User className="h-4 w-4" />
                   Meu Perfil
                 </DropdownMenuItem>
-                <DropdownMenuItem data-testid="menu-settings" className="gap-2 cursor-pointer">
+                <DropdownMenuItem data-testid="menu-settings" className="gap-2 cursor-pointer" onClick={handleSettings}>
                   <Settings className="h-4 w-4" />
                   Configurações
                 </DropdownMenuItem>
