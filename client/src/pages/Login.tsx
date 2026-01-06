@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useLocation } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
-import { useTheme } from '@/contexts/ThemeContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,26 +10,16 @@ import { Building2, Lock, Mail, ArrowRight, Shield, Users, BarChart3, Eye, EyeOf
 export default function Login() {
   const [, setLocation] = useLocation();
   const { login } = useAuth();
-  const { theme, setTheme } = useTheme();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const previousTheme = useRef(theme);
 
   const isFormValid = email.trim() !== '' && password.trim() !== '';
 
   useEffect(() => {
-    previousTheme.current = theme;
-    if (theme !== 'light') {
-      setTheme('light');
-    }
-    return () => {
-      if (previousTheme.current !== 'light') {
-        setTheme(previousTheme.current);
-      }
-    };
+    document.documentElement.classList.remove('dark');
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
