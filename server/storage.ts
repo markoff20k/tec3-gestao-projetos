@@ -61,7 +61,7 @@ export class MemStorage implements IStorage {
   private async seedData() {
     const hashedPassword = await bcrypt.hash('admin123', 10);
     const adminUser: User = {
-      id: randomUUID(),
+      id: 'admin-user-fixed-id-001',
       email: 'admin@empresa.com',
       password: hashedPassword,
       name: 'Administrador',
@@ -71,7 +71,7 @@ export class MemStorage implements IStorage {
     this.users.set(adminUser.id, adminUser);
 
     const client1: Client = {
-      id: randomUUID(),
+      id: 'client-fixed-id-001',
       name: 'Empresa ABC Ltda',
       tradeName: 'ABC Tech',
       document: '12.345.678/0001-90',
@@ -83,7 +83,7 @@ export class MemStorage implements IStorage {
     this.clients.set(client1.id, client1);
 
     const client2: Client = {
-      id: randomUUID(),
+      id: 'client-fixed-id-002',
       name: 'XYZ Industrias S/A',
       tradeName: 'XYZ',
       document: '98.765.432/0001-10',
