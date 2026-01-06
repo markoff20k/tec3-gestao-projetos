@@ -13,6 +13,7 @@ import Projects from "@/pages/Projects";
 import TimeEntries from "@/pages/TimeEntries";
 import Reports from "@/pages/Reports";
 import Users from "@/pages/Users";
+import Settings from "@/pages/Settings";
 
 function ProtectedRoute({ component: Component }: { component: () => JSX.Element }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -56,6 +57,9 @@ function Router() {
       </Route>
       <Route path="/users">
         <ProtectedRoute component={Users} />
+      </Route>
+      <Route path="/settings">
+        <ProtectedRoute component={Settings} />
       </Route>
       <Route>
         <Redirect to="/" />

@@ -1,5 +1,5 @@
 import { ReactNode, useState, useEffect } from 'react';
-import { Link, useLocation } from 'wouter';
+import { Link, useLocation, useRoute } from 'wouter';
 import {
   LayoutDashboard,
   Users,
@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
@@ -76,24 +75,17 @@ const pageDescriptions: Record<string, string> = {
 };
 
 export function Layout({ children }: LayoutProps) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const { user, logout, hasRole } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const { toast } = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleSettings = () => {
-    toast({
-      title: 'Em breve',
-      description: 'A página de configurações será implementada em breve.',
-    });
+    setLocation('/settings');
   };
 
   const handleProfile = () => {
-    toast({
-      title: 'Em breve',
-      description: 'A página de perfil será implementada em breve.',
-    });
+    setLocation('/settings');
   };
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window !== 'undefined') {
