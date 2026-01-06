@@ -15,6 +15,17 @@ import {
   ConvertToProjectDto,
 } from '../dto/proposal.dto';
 
+const ALLOWED_STATUS_TRANSITIONS: Record<ProposalStatus, ProposalStatus[]> = {
+  [ProposalStatus.DRAFT]: [ProposalStatus.IN_REVIEW, ProposalStatus.CANCELLED],
+  [ProposalStatus.IN_REVIEW]: [ProposalStatus.DRAFT, ProposalStatus.SENT, ProposalStatus.CANCELLED],
+  [ProposalStatus.SENT]: [ProposalStatus.NEGOTIATING, ProposalStatus.APPROVED, ProposalStatus.REJECTED, ProposalStatus.CANCELLED],
+  [ProposalStatus.NEGOTIATING]: [ProposalStatus.SENT, ProposalStatus.APPROVED, ProposalStatus.REJECTED, ProposalStatus.CANCELLED],
+  [ProposalStatus.APPROVED]: [ProposalStatus.CONVERTED],
+  [ProposalStatus.REJECTED]: [ProposalStatus.DRAFT],
+  [ProposalStatus.CANCELLED]: [],
+  [ProposalStatus.CONVERTED]: [],
+};
+
 @Injectable()
 export class ProposalService {
   constructor(
@@ -29,6 +40,17 @@ export class ProposalService {
     @InjectRepository(Project)
     private projectRepository: Repository<Project>,
   ) {}
+
+  private validateStatusTransition(currentStatus: ProposalStatus, newStatus: ProposalStatus): void {
+    if (currentStatus === newStatus) return;
+    
+    const allowedTransitions = ALLOWED_STATUS_TRANSITIONS[currentStatus];
+    if (!allowedTransitions.includes(newStatus)) {
+      throw new BadRequestException(
+        `Invalid status transition from '${currentStatus}' to '${newStatus}'. Allowed: ${allowedTransitions.join(', ') || 'none'}`
+      );
+    }
+  }
 
   private generateCode(): string {
     const year = new Date().getFullYear();
@@ -63,7 +85,12 @@ export class ProposalService {
   }
 
   async update(id: string, dto: UpdateProposalDto): Promise<Proposal> {
-    await this.findOne(id);
+    const proposal = await this.findOne(id);
+    
+    if (dto.status) {
+      this.validateStatusTransition(proposal.status, dto.status);
+    }
+    
     await this.proposalRepository.update(id, dto);
     return this.findOne(id);
   }
