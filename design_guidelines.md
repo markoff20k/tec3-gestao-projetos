@@ -6,26 +6,28 @@
 
 ## Color Palette - TEC3 Engenharia Brand
 **Brand Source:** https://www.tec3engenharia.com.br/
+**Primary Brand Color:** #0074C8 (HSL 205, 100%, 39%)
 
 **Primary Colors:**
-- Deep Navy Blue: HSL(207, 70%, 25%) - Main brand color, used for headers, primary buttons
-- Gold/Amber Accent: HSL(45, 90%, 55%) - Highlight actions, sidebar active items, accents
+- TEC3 Blue: #0074C8 / HSL(205, 100%, 39%) - Main brand color for buttons, links, active states
+- Sidebar uses darker shade of brand blue for professional appearance
 
 **Light Mode:**
-- Background: Soft off-white with slight blue tint
-- Sidebar: Dark navy (HSL 207, 70%, 18%) with light text
+- Background: Soft off-white with subtle blue tint
+- Sidebar: Dark blue (HSL 205, 100%, 20%) with white text
+- Primary buttons/actions: Brand blue #0074C8
 - Cards: Light gray with subtle blue undertone
-- Text: Deep navy for primary, muted blue-gray for secondary
+- Text: Dark blue for primary, muted gray for secondary
 
 **Dark Mode:**
-- Background: Deep navy-black (HSL 207, 70%, 8%)
-- Sidebar: Darker navy (HSL 207, 70%, 10%)
-- Primary: Lighter blue (HSL 207, 70%, 45%) for visibility
-- Accent remains gold for consistency
+- Background: Deep blue-tinted dark (HSL 205, 50%, 8%)
+- Sidebar: Dark blue (HSL 205, 80%, 12%)
+- Primary: Lighter blue (HSL 205, 100%, 50%) for visibility
+- Maintains brand consistency across themes
 
 **Usage Guidelines:**
-- Navy blue: Navigation, headers, primary actions, professional tone
-- Gold accent: CTAs, active states, success indicators, important highlights
+- Brand blue #0074C8: Primary buttons, links, active states, highlights
+- Darker blue shades: Sidebar, navigation, headers
 - Maintain high contrast for accessibility
 
 ## Typography System
