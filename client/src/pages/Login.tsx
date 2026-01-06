@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Building2, Lock, Mail, ArrowRight, Shield, Users, BarChart3 } from 'lucide-react';
+import { Building2, Lock, Mail, ArrowRight, Shield, Users, BarChart3, Eye, EyeOff } from 'lucide-react';
 
 export default function Login() {
   const [, setLocation] = useLocation();
@@ -16,7 +16,10 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const previousTheme = useRef(theme);
+
+  const isFormValid = email.trim() !== '' && password.trim() !== '';
 
   useEffect(() => {
     previousTheme.current = theme;
@@ -176,14 +179,27 @@ export default function Login() {
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                 <Input
                   id="password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   data-testid="input-password"
                   placeholder="Digite sua senha"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 h-12"
+                  className="pl-10 pr-12 h-12"
                   required
                 />
+                <button
+                  type="button"
+                  data-testid="button-toggle-password"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
               </div>
             </div>
 
@@ -191,7 +207,7 @@ export default function Login() {
               type="submit"
               data-testid="button-login"
               className="w-full h-12 text-base font-semibold gap-2"
-              disabled={isLoading}
+              disabled={isLoading || !isFormValid}
             >
               {isLoading ? (
                 <>
