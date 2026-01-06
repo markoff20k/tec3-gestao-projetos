@@ -10,6 +10,8 @@ import Clients from "@/pages/Clients";
 import Proposals from "@/pages/Proposals";
 import Projects from "@/pages/Projects";
 import TimeEntries from "@/pages/TimeEntries";
+import Reports from "@/pages/Reports";
+import Users from "@/pages/Users";
 
 function ProtectedRoute({ component: Component }: { component: () => JSX.Element }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -47,6 +49,12 @@ function Router() {
       </Route>
       <Route path="/time-entries">
         <ProtectedRoute component={TimeEntries} />
+      </Route>
+      <Route path="/reports">
+        <ProtectedRoute component={Reports} />
+      </Route>
+      <Route path="/users">
+        <ProtectedRoute component={Users} />
       </Route>
       <Route>
         <Redirect to="/" />

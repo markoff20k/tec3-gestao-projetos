@@ -123,6 +123,20 @@ export async function registerRoutes(
     });
   });
 
+  app.get('/api/auth/users', authenticateToken, async (req, res) => {
+    const userRole = (req as any).user.role;
+    if (userRole !== 'owner') {
+      return res.status(403).json({ message: 'Acesso nao autorizado' });
+    }
+    const users = await storage.getAllUsers();
+    res.json(users.map(u => ({
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      role: u.role,
+    })));
+  });
+
   app.get('/api/clients', authenticateToken, async (_req, res) => {
     const clients = await storage.getAllClients();
     res.json(clients);
