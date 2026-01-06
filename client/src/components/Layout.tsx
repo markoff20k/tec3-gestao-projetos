@@ -145,14 +145,17 @@ export function Layout({ children }: LayoutProps) {
           <div className="p-4 flex items-center justify-between">
             <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center w-full' : ''}`}>
               {/* TEC3 Logo */}
-              <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-                <span className="text-primary-foreground font-bold text-lg">T3</span>
-              </div>
-              {!sidebarCollapsed && (
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-sidebar-foreground font-semibold text-sm truncate">TEC3 Engenharia</h2>
-                  <p className="text-sidebar-foreground/50 text-xs truncate">Gestão de Projetos</p>
+              {sidebarCollapsed ? (
+                <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
+                  <span className="text-primary-foreground font-bold text-lg">T3</span>
                 </div>
+              ) : (
+                <img 
+                  src="https://www.tec3engenharia.com.br/wp-content/uploads/2025/09/tec3-LogoTagline-Cor.svg" 
+                  alt="TEC3 Engenharia" 
+                  className="h-10 brightness-0 invert"
+                  data-testid="img-sidebar-logo"
+                />
               )}
             </div>
             {/* Toggle Button - Always visible */}
