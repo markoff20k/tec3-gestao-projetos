@@ -184,6 +184,12 @@ export default function Login() {
                   placeholder="Digite sua senha"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && isFormValid && !isLoading) {
+                      e.preventDefault();
+                      handleSubmit(e as unknown as React.FormEvent);
+                    }
+                  }}
                   className="pl-10 pr-12 h-12"
                   required
                 />
