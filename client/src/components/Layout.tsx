@@ -220,32 +220,25 @@ export function Layout({ children }: LayoutProps) {
             )}
           </div>
 
-          {/* Collapse Toggle Button */}
-          <div className="hidden lg:flex px-3 py-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  data-testid="button-collapse-sidebar"
-                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                  className={`w-full justify-center text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent ${sidebarCollapsed ? 'px-0' : ''}`}
-                >
-                  {sidebarCollapsed ? (
-                    <PanelLeft className="h-5 w-5" />
-                  ) : (
-                    <>
-                      <PanelLeftClose className="h-5 w-5 mr-2" />
-                      <span className="text-sm">Recolher</span>
-                    </>
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                {sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
-              </TooltipContent>
-            </Tooltip>
-          </div>
+          {/* Collapse Toggle Button - positioned at bottom of logo area */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                data-testid="button-collapse-sidebar"
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                className="hidden lg:flex absolute top-4 -right-3 w-6 h-6 items-center justify-center rounded-full bg-sidebar-border border border-sidebar-border text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors shadow-sm"
+              >
+                {sidebarCollapsed ? (
+                  <ChevronRight className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+            </TooltipContent>
+          </Tooltip>
 
           {/* Navigation */}
           <nav className="flex-1 px-3 py-2 space-y-1 overflow-y-auto">
