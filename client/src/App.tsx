@@ -1,17 +1,56 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import Login from "@/pages/Login";
+import Dashboard from "@/pages/Dashboard";
+import Clients from "@/pages/Clients";
+import Proposals from "@/pages/Proposals";
+import Projects from "@/pages/Projects";
+import TimeEntries from "@/pages/TimeEntries";
+
+function ProtectedRoute({ component: Component }: { component: () => JSX.Element }) {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-muted-foreground">Carregando...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Redirect to="/login" />;
+  }
+
+  return <Component />;
+}
 
 function Router() {
   return (
     <Switch>
-      {/* Add pages below */}
-      {/* <Route path="/" component={Home}/> */}
-      {/* Fallback to 404 */}
-      <Route component={NotFound} />
+      <Route path="/login" component={Login} />
+      <Route path="/">
+        <ProtectedRoute component={Dashboard} />
+      </Route>
+      <Route path="/clients">
+        <ProtectedRoute component={Clients} />
+      </Route>
+      <Route path="/proposals">
+        <ProtectedRoute component={Proposals} />
+      </Route>
+      <Route path="/projects">
+        <ProtectedRoute component={Projects} />
+      </Route>
+      <Route path="/time-entries">
+        <ProtectedRoute component={TimeEntries} />
+      </Route>
+      <Route>
+        <Redirect to="/" />
+      </Route>
     </Switch>
   );
 }
@@ -19,10 +58,12 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Router />
+        </TooltipProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
