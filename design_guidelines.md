@@ -4,6 +4,30 @@
 **System Selected:** Material Design 3 (Material You)
 **Rationale:** Enterprise productivity application requiring clear data hierarchy, robust form components, and professional polish for B2B context.
 
+## Color Palette - TEC3 Engenharia Brand
+**Brand Source:** https://www.tec3engenharia.com.br/
+
+**Primary Colors:**
+- Deep Navy Blue: HSL(207, 70%, 25%) - Main brand color, used for headers, primary buttons
+- Gold/Amber Accent: HSL(45, 90%, 55%) - Highlight actions, sidebar active items, accents
+
+**Light Mode:**
+- Background: Soft off-white with slight blue tint
+- Sidebar: Dark navy (HSL 207, 70%, 18%) with light text
+- Cards: Light gray with subtle blue undertone
+- Text: Deep navy for primary, muted blue-gray for secondary
+
+**Dark Mode:**
+- Background: Deep navy-black (HSL 207, 70%, 8%)
+- Sidebar: Darker navy (HSL 207, 70%, 10%)
+- Primary: Lighter blue (HSL 207, 70%, 45%) for visibility
+- Accent remains gold for consistency
+
+**Usage Guidelines:**
+- Navy blue: Navigation, headers, primary actions, professional tone
+- Gold accent: CTAs, active states, success indicators, important highlights
+- Maintain high contrast for accessibility
+
 ## Typography System
 **Primary Font:** Inter (Google Fonts)
 - Headings: 600 weight, sizes: 2xl (32px), xl (24px), lg (20px)
