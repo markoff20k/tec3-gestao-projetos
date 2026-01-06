@@ -30,6 +30,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 interface LayoutProps {
   children: ReactNode;
@@ -341,19 +349,47 @@ export function Layout({ children }: LayoutProps) {
               <TooltipContent>Notificações</TooltipContent>
             </Tooltip>
 
-            {/* Profile Avatar with User Icon */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="ml-2">
+            {/* Profile Avatar with Dropdown Menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  data-testid="button-profile-menu"
+                  className="ml-2 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-sidebar"
+                >
                   <Avatar className="h-9 w-9 cursor-pointer bg-sidebar-accent">
                     <AvatarFallback className="bg-sidebar-accent text-sidebar-foreground">
                       <User className="h-5 w-5" />
                     </AvatarFallback>
                   </Avatar>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>{user?.name}</TooltipContent>
-            </Tooltip>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  <div className="flex flex-col">
+                    <span className="font-medium">{user?.name}</span>
+                    <span className="text-xs text-muted-foreground font-normal">{user?.email}</span>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem data-testid="menu-profile" className="gap-2 cursor-pointer">
+                  <User className="h-4 w-4" />
+                  Meu Perfil
+                </DropdownMenuItem>
+                <DropdownMenuItem data-testid="menu-settings" className="gap-2 cursor-pointer">
+                  <Settings className="h-4 w-4" />
+                  Configurações
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem 
+                  data-testid="menu-logout" 
+                  className="gap-2 cursor-pointer text-destructive focus:text-destructive"
+                  onClick={logout}
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sair do Sistema
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </header>
