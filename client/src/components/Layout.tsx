@@ -91,7 +91,7 @@ export function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen bg-background">
       {/* Fixed Header */}
-      <header className={`fixed top-0 right-0 left-0 ${sidebarCollapsed ? 'lg:left-[72px]' : 'lg:left-64'} h-16 bg-card/80 backdrop-blur-md border-b z-30 px-4 lg:px-6 transition-all duration-300 ease-in-out`}>
+      <header className={`fixed top-0 right-0 left-0 ${sidebarCollapsed ? 'lg:left-[72px]' : 'lg:left-64'} h-16 bg-sidebar border-b border-sidebar-border z-30 px-4 lg:px-6 transition-all duration-300 ease-in-out`}>
         <div className="flex items-center justify-between h-full gap-4">
           {/* Left: Mobile menu + Page title */}
           <div className="flex items-center gap-3">
@@ -99,13 +99,13 @@ export function Layout({ children }: LayoutProps) {
               variant="ghost"
               size="icon"
               data-testid="button-mobile-menu"
-              className="lg:hidden"
+              className="lg:hidden text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               onClick={() => setSidebarOpen(!sidebarOpen)}
             >
               {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </Button>
             <div className="hidden sm:block">
-              <h1 className="text-lg font-semibold text-foreground">{currentPage}</h1>
+              <h1 className="text-lg font-semibold text-sidebar-foreground">{currentPage}</h1>
             </div>
           </div>
 
@@ -118,10 +118,10 @@ export function Layout({ children }: LayoutProps) {
                   variant="ghost"
                   size="icon"
                   data-testid="button-notifications"
-                  className="relative"
+                  className="relative text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 >
                   <Bell className="h-5 w-5" />
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full" />
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-sidebar-primary rounded-full" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Notificações</TooltipContent>
@@ -135,7 +135,7 @@ export function Layout({ children }: LayoutProps) {
                   size="icon"
                   data-testid="button-theme-toggle"
                   onClick={toggleTheme}
-                  className="relative overflow-visible"
+                  className="relative overflow-visible text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 >
                   <Sun className={`h-5 w-5 transition-all duration-300 ${theme === 'dark' ? 'scale-0 rotate-90 opacity-0' : 'scale-100 rotate-0 opacity-100'}`} />
                   <Moon className={`absolute h-5 w-5 transition-all duration-300 ${theme === 'dark' ? 'scale-100 rotate-0 opacity-100' : 'scale-0 -rotate-90 opacity-0'}`} />
@@ -150,20 +150,20 @@ export function Layout({ children }: LayoutProps) {
                 <Button
                   variant="ghost"
                   data-testid="button-profile-menu"
-                  className="flex items-center gap-2 px-2 h-10"
+                  className="flex items-center gap-2 px-2 h-10 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 >
                   <Avatar className="h-8 w-8">
-                    <AvatarFallback className="bg-primary text-primary-foreground text-sm font-medium">
+                    <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-sm font-medium">
                       {user?.name?.charAt(0).toUpperCase() || 'U'}
                     </AvatarFallback>
                   </Avatar>
                   <div className="hidden md:flex flex-col items-start">
                     <span className="text-sm font-medium leading-none">{user?.name}</span>
-                    <span className="text-xs text-muted-foreground leading-none mt-0.5">
+                    <span className="text-xs text-sidebar-foreground/70 leading-none mt-0.5">
                       {user?.role ? roleLabels[user.role] : ''}
                     </span>
                   </div>
-                  <ChevronDown className="h-4 w-4 text-muted-foreground hidden md:block" />
+                  <ChevronDown className="h-4 w-4 text-sidebar-foreground/70 hidden md:block" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
