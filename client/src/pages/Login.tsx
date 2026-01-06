@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,10 +11,24 @@ import { Building2, Lock, Mail, ArrowRight, Shield, Users, BarChart3 } from 'luc
 export default function Login() {
   const [, setLocation] = useLocation();
   const { login } = useAuth();
+  const { theme, setTheme } = useTheme();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const previousTheme = useRef(theme);
+
+  useEffect(() => {
+    previousTheme.current = theme;
+    if (theme !== 'light') {
+      setTheme('light');
+    }
+    return () => {
+      if (previousTheme.current !== 'light') {
+        setTheme(previousTheme.current);
+      }
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
