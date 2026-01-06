@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useLocation } from 'wouter';
+import { Redirect } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,8 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Building2, Lock, Mail, ArrowRight, Shield, Users, BarChart3, Eye, EyeOff } from 'lucide-react';
 
 export default function Login() {
-  const [, setLocation] = useLocation();
-  const { login } = useAuth();
+  const { login, isAuthenticated, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
@@ -22,20 +21,22 @@ export default function Login() {
     document.documentElement.classList.remove('dark');
   }, []);
 
+  if (!authLoading && isAuthenticated) {
+    return <Redirect to="/" />;
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
       await login(email, password);
-      setLocation('/');
     } catch (error) {
       toast({
         title: 'Erro ao fazer login',
         description: error instanceof Error ? error.message : 'Credenciais inválidas',
         variant: 'destructive',
       });
-    } finally {
       setIsLoading(false);
     }
   };
