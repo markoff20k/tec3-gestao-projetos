@@ -19,6 +19,20 @@ import { UserRole } from './entities/user.entity';
 export class AuthController {
   constructor(private authService: AuthService) {}
 
+  @Post('seed')
+  async seed() {
+    try {
+      return await this.authService.register({
+        email: 'admin@empresa.com',
+        password: 'admin123',
+        name: 'Administrador',
+        role: UserRole.OWNER,
+      });
+    } catch (e) {
+      return { message: 'Usuario ja existe. Use: admin@empresa.com / admin123' };
+    }
+  }
+
   @Post('register')
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
