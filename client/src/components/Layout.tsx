@@ -14,9 +14,11 @@ import {
   Sun,
   Moon,
   ChevronLeft,
+  ChevronRight,
   Settings,
   Bell,
   Search,
+  User,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -92,8 +94,8 @@ export function Layout({ children }: LayoutProps) {
   const currentPage = allItems.find(item => item.path === location)?.label || 'Dashboard';
   const currentDescription = pageDescriptions[location] || 'Bem-vindo ao sistema';
 
-  const sidebarWidth = sidebarCollapsed ? 'w-[72px]' : 'w-72';
-  const mainPadding = sidebarCollapsed ? 'lg:pl-[72px]' : 'lg:pl-72';
+  const sidebarWidth = sidebarCollapsed ? 'w-20' : 'w-72';
+  const mainPadding = sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-72';
 
   const renderMenuItem = (item: typeof mainMenuItems[0]) => {
     const Icon = item.icon;
@@ -140,33 +142,46 @@ export function Layout({ children }: LayoutProps) {
       >
         <div className="flex flex-col h-full">
           {/* Logo Section */}
-          <div className="p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-sidebar-primary flex items-center justify-center flex-shrink-0">
-              <span className="text-sidebar-primary-foreground font-bold text-lg">T3</span>
-            </div>
-            {!sidebarCollapsed && (
-              <div className="flex-1 min-w-0">
-                <h2 className="text-sidebar-foreground font-semibold text-sm truncate">TEC3 Engenharia</h2>
-                <p className="text-sidebar-foreground/50 text-xs truncate">Gestão de Projetos</p>
+          <div className="p-4 flex items-center justify-between">
+            <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center w-full' : ''}`}>
+              {/* TEC3 Logo */}
+              <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
+                <span className="text-primary-foreground font-bold text-lg">T3</span>
               </div>
-            )}
-            {!sidebarCollapsed && (
-              <button
-                data-testid="button-collapse-sidebar"
-                onClick={() => setSidebarCollapsed(true)}
-                className="p-1.5 rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-            )}
+              {!sidebarCollapsed && (
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-sidebar-foreground font-semibold text-sm truncate">TEC3 Engenharia</h2>
+                  <p className="text-sidebar-foreground/50 text-xs truncate">Gestão de Projetos</p>
+                </div>
+              )}
+            </div>
+            {/* Toggle Button - Always visible */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  data-testid="button-toggle-sidebar"
+                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  className={`p-1.5 rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors flex-shrink-0 ${sidebarCollapsed ? 'mx-auto mt-2' : ''}`}
+                >
+                  {sidebarCollapsed ? (
+                    <ChevronRight className="h-5 w-5" />
+                  ) : (
+                    <ChevronLeft className="h-5 w-5" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+              </TooltipContent>
+            </Tooltip>
           </div>
 
           {/* User Profile Section */}
-          <div className="px-4 py-3 border-t border-sidebar-border">
+          <div className="px-4 py-3 border-t border-b border-sidebar-border">
             <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
-              <Avatar className="h-10 w-10 flex-shrink-0">
-                <AvatarFallback className="bg-primary text-primary-foreground text-sm font-medium">
-                  {user?.name?.charAt(0).toUpperCase() || 'U'}
+              <Avatar className="h-10 w-10 flex-shrink-0 bg-sidebar-accent">
+                <AvatarFallback className="bg-sidebar-accent text-sidebar-foreground">
+                  <User className="h-5 w-5" />
                 </AvatarFallback>
               </Avatar>
               {!sidebarCollapsed && (
@@ -200,7 +215,7 @@ export function Layout({ children }: LayoutProps) {
             )}
           </nav>
 
-          {/* Bottom Section */}
+          {/* Bottom Section - Settings & Logout */}
           <div className="p-3 border-t border-sidebar-border space-y-1">
             {sidebarCollapsed ? (
               <>
@@ -227,18 +242,6 @@ export function Layout({ children }: LayoutProps) {
                   </TooltipTrigger>
                   <TooltipContent side="right">Sair</TooltipContent>
                 </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      data-testid="button-expand-sidebar"
-                      onClick={() => setSidebarCollapsed(false)}
-                      className="w-full flex items-center justify-center p-2.5 rounded-lg text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-                    >
-                      <ChevronLeft className="h-5 w-5 rotate-180" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">Expandir</TooltipContent>
-                </Tooltip>
               </>
             ) : (
               <>
@@ -264,7 +267,7 @@ export function Layout({ children }: LayoutProps) {
       </aside>
 
       {/* Header */}
-      <header className={`fixed top-0 right-0 left-0 ${sidebarCollapsed ? 'lg:left-[72px]' : 'lg:left-72'} h-16 bg-sidebar border-b border-sidebar-border z-30 px-4 lg:px-6 transition-all duration-300 ease-in-out`}>
+      <header className={`fixed top-0 right-0 left-0 ${sidebarCollapsed ? 'lg:left-20' : 'lg:left-72'} h-16 bg-sidebar border-b border-sidebar-border z-30 px-4 lg:px-6 transition-all duration-300 ease-in-out`}>
         <div className="flex items-center justify-between h-full gap-4">
           {/* Left: Mobile menu + Page title */}
           <div className="flex items-center gap-4">
@@ -334,14 +337,19 @@ export function Layout({ children }: LayoutProps) {
               <TooltipContent>Notificações</TooltipContent>
             </Tooltip>
 
-            {/* Profile Avatar */}
-            <div className="ml-2">
-              <Avatar className="h-9 w-9 cursor-pointer">
-                <AvatarFallback className="bg-primary text-primary-foreground text-sm font-medium">
-                  {user?.name?.charAt(0).toUpperCase() || 'U'}
-                </AvatarFallback>
-              </Avatar>
-            </div>
+            {/* Profile Avatar with User Icon */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="ml-2">
+                  <Avatar className="h-9 w-9 cursor-pointer bg-sidebar-accent">
+                    <AvatarFallback className="bg-sidebar-accent text-sidebar-foreground">
+                      <User className="h-5 w-5" />
+                    </AvatarFallback>
+                  </Avatar>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>{user?.name}</TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </header>
