@@ -3,7 +3,36 @@ import { type Server } from "http";
 import { storage } from "./storage";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
+
+const uploadsDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      cb(null, uploadsDir);
+    },
+    filename: (_req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, uniqueSuffix + path.extname(file.originalname));
+    }
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Tipo de arquivo não permitido. Use JPG, PNG, GIF ou WebP.'));
+    }
+  }
+});
 
 const JWT_SECRET = process.env.SESSION_SECRET || 'dev-secret-key';
 
@@ -120,8 +149,51 @@ export async function registerRoutes(
       email: user.email,
       name: user.name,
       role: user.role,
+      photoUrl: user.photoUrl,
     });
   });
+
+  app.put('/api/auth/profile', authenticateToken, async (req, res) => {
+    const userId = (req as any).user.sub;
+    const { name, email } = req.body;
+    
+    const user = await storage.updateUser(userId, { name, email });
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario nao encontrado' });
+    }
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      photoUrl: user.photoUrl,
+    });
+  });
+
+  app.post('/api/auth/upload-photo', authenticateToken, upload.single('photo'), async (req, res) => {
+    const userId = (req as any).user.sub;
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'Nenhum arquivo enviado' });
+    }
+
+    const photoUrl = `/uploads/${req.file.filename}`;
+    const user = await storage.updateUser(userId, { photoUrl });
+    
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario nao encontrado' });
+    }
+
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      photoUrl: user.photoUrl,
+    });
+  });
+
+  app.use('/uploads', (await import('express')).default.static(uploadsDir));
 
   app.get('/api/auth/users', authenticateToken, async (req, res) => {
     const userRole = (req as any).user.role;

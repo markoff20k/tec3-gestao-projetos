@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Link } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { authApi } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
@@ -23,6 +24,7 @@ import {
   Bell,
   Camera,
   Save,
+  Loader2,
 } from 'lucide-react';
 
 const roleLabels: Record<string, string> = {
@@ -34,32 +36,98 @@ const roleLabels: Record<string, string> = {
 };
 
 export default function Settings() {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [notifications, setNotifications] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
-  const handleSave = () => {
-    toast({
-      title: 'Perfil atualizado',
-      description: 'Suas informações foram salvas com sucesso.',
-    });
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const updatedUser = await authApi.updateProfile({ name, email });
+      updateUser(updatedUser);
+      toast({
+        title: 'Perfil atualizado',
+        description: 'Suas informações foram salvas com sucesso.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Erro',
+        description: error instanceof Error ? error.message : 'Erro ao salvar perfil',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handlePhotoClick = () => {
-    toast({
-      title: 'Em breve',
-      description: 'A funcionalidade de upload de foto será implementada em breve.',
-    });
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast({
+        title: 'Arquivo muito grande',
+        description: 'O arquivo deve ter no máximo 2MB.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      toast({
+        title: 'Tipo inválido',
+        description: 'Use apenas arquivos JPG, PNG, GIF ou WebP.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const updatedUser = await authApi.uploadPhoto(file);
+      updateUser(updatedUser);
+      toast({
+        title: 'Foto atualizada',
+        description: 'Sua foto de perfil foi atualizada com sucesso.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Erro ao enviar foto',
+        description: error instanceof Error ? error.message : 'Erro ao enviar foto',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
   };
 
   return (
     <Layout>
       <div className="max-w-4xl mx-auto space-y-6">
-        {/* Header */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          accept="image/jpeg,image/png,image/gif,image/webp"
+          className="hidden"
+          data-testid="input-photo-file"
+        />
+
         <div className="flex items-center gap-4">
           <Link href="/">
             <Button variant="ghost" size="icon" data-testid="button-back">
@@ -76,7 +144,6 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Profile Information */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -88,31 +155,41 @@ export default function Settings() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Avatar Section */}
             <div className="flex items-center gap-6">
               <div className="relative">
-                <Avatar className="h-24 w-24 cursor-pointer" onClick={handlePhotoClick}>
+                <Avatar 
+                  className="h-24 w-24 cursor-pointer" 
+                  onClick={handlePhotoClick}
+                  data-testid="avatar-profile"
+                >
+                  {user?.photoUrl && (
+                    <AvatarImage src={user.photoUrl} alt={user.name} />
+                  )}
                   <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
                     <User className="h-10 w-10" />
                   </AvatarFallback>
                 </Avatar>
                 <button
                   onClick={handlePhotoClick}
+                  disabled={isUploading}
                   data-testid="button-change-photo"
-                  className="absolute bottom-0 right-0 p-2 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                  className="absolute bottom-0 right-0 p-2 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
                 >
-                  <Camera className="h-4 w-4" />
+                  {isUploading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Camera className="h-4 w-4" />
+                  )}
                 </button>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Clique para alterar</p>
-                <p className="text-xs text-muted-foreground mt-1">JPG, PNG ou GIF. Máximo 2MB.</p>
+                <p className="text-xs text-muted-foreground mt-1">JPG, PNG, GIF ou WebP. Máximo 2MB.</p>
               </div>
             </div>
 
             <Separator />
 
-            {/* Form Fields */}
             <div className="grid gap-6 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="name" className="flex items-center gap-2">
@@ -165,15 +242,22 @@ export default function Settings() {
             </div>
 
             <div className="flex justify-end">
-              <Button onClick={handleSave} data-testid="button-save-profile">
-                <Save className="h-4 w-4 mr-2" />
+              <Button 
+                onClick={handleSave} 
+                disabled={isSaving}
+                data-testid="button-save-profile"
+              >
+                {isSaving ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4 mr-2" />
+                )}
                 Salvar Alterações
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        {/* Account Summary */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -206,7 +290,6 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        {/* Preferences */}
         <Card>
           <CardHeader>
             <CardTitle>Preferências</CardTitle>
@@ -215,7 +298,7 @@ export default function Settings() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <Moon className="h-5 w-5 text-muted-foreground" />
                 <div>
@@ -232,7 +315,7 @@ export default function Settings() {
 
             <Separator />
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <Bell className="h-5 w-5 text-muted-foreground" />
                 <div>

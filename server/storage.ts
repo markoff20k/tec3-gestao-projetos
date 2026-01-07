@@ -13,6 +13,7 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  updateUser(id: string, updates: Partial<User>): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
   
   getAllClients(): Promise<Client[]>;
@@ -67,6 +68,7 @@ export class MemStorage implements IStorage {
       name: 'Administrador',
       role: 'owner',
       isActive: true,
+      photoUrl: null,
     };
     this.users.set(adminUser.id, adminUser);
 
@@ -106,13 +108,28 @@ export class MemStorage implements IStorage {
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
     const hashedPassword = await bcrypt.hash(insertUser.password, 10);
-    const user: User = { ...insertUser, id, password: hashedPassword };
+    const user: User = { 
+      ...insertUser, 
+      id, 
+      password: hashedPassword,
+      role: insertUser.role || 'user',
+      isActive: insertUser.isActive ?? true,
+      photoUrl: insertUser.photoUrl ?? null,
+    };
     this.users.set(id, user);
     return user;
   }
 
   async getAllUsers(): Promise<User[]> {
     return Array.from(this.users.values());
+  }
+
+  async updateUser(id: string, updates: Partial<User>): Promise<User | undefined> {
+    const user = this.users.get(id);
+    if (!user) return undefined;
+    const updated = { ...user, ...updates };
+    this.users.set(id, updated);
+    return updated;
   }
 
   async getAllClients(): Promise<Client[]> {
@@ -125,7 +142,16 @@ export class MemStorage implements IStorage {
 
   async createClient(insertClient: InsertClient): Promise<Client> {
     const id = randomUUID();
-    const client: Client = { ...insertClient, id };
+    const client: Client = { 
+      ...insertClient, 
+      id,
+      email: insertClient.email ?? null,
+      tradeName: insertClient.tradeName ?? null,
+      document: insertClient.document ?? null,
+      phone: insertClient.phone ?? null,
+      segment: insertClient.segment ?? null,
+      isActive: insertClient.isActive ?? true,
+    };
     this.clients.set(id, client);
     return client;
   }
@@ -169,6 +195,14 @@ export class MemStorage implements IStorage {
       id,
       code: this.generateProposalCode(),
       status: ProposalStatus.DRAFT,
+      type: insertProposal.type || 'fixed_price',
+      description: insertProposal.description ?? null,
+      coordinatorId: insertProposal.coordinatorId ?? null,
+      totalValue: insertProposal.totalValue ?? '0',
+      estimatedHours: insertProposal.estimatedHours ?? 0,
+      expectedStartDate: insertProposal.expectedStartDate ?? null,
+      expectedEndDate: insertProposal.expectedEndDate ?? null,
+      projectId: insertProposal.projectId ?? null,
       createdAt: new Date(),
     };
     this.proposals.set(id, proposal);
@@ -202,6 +236,12 @@ export class MemStorage implements IStorage {
       id,
       code: this.generateProjectCode(),
       status: ProjectStatus.PLANNING,
+      description: insertProject.description ?? null,
+      coordinatorId: insertProject.coordinatorId ?? null,
+      startDate: insertProject.startDate ?? null,
+      endDate: insertProject.endDate ?? null,
+      budgetHours: insertProject.budgetHours ?? 0,
+      budgetValue: insertProject.budgetValue ?? '0',
       dailyLimitHours: insertProject.dailyLimitHours ?? 8,
       requiresApproval: insertProject.requiresApproval ?? true,
       createdAt: new Date(),
@@ -237,6 +277,7 @@ export class MemStorage implements IStorage {
     const entry: TimeEntry = {
       ...insertEntry,
       id,
+      description: insertEntry.description ?? null,
       status: TimeEntryStatus.PENDING,
       approvedById: null,
       approvedAt: null,

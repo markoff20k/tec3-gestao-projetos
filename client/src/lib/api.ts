@@ -46,6 +46,7 @@ export interface User {
   email: string;
   name: string;
   role: 'owner' | 'admin' | 'coordinator' | 'commercial' | 'user';
+  photoUrl?: string;
 }
 
 export interface AuthResponse {
@@ -59,6 +60,26 @@ export const authApi = {
   register: (email: string, password: string, name: string) =>
     api.post<AuthResponse>('/auth/register', { email, password, name }),
   me: () => api.get<User>('/auth/me'),
+  updateProfile: (data: { name?: string; email?: string }) =>
+    api.put<User>('/auth/profile', data),
+  uploadPhoto: async (file: File): Promise<User> => {
+    const token = localStorage.getItem('token');
+    const formData = new FormData();
+    formData.append('photo', file);
+    
+    const response = await fetch('/api/auth/upload-photo', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Upload failed' }));
+      throw new Error(error.message || 'Upload failed');
+    }
+    
+    return response.json();
+  },
 };
 
 export interface Client {

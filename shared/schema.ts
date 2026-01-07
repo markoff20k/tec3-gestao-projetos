@@ -61,6 +61,7 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   role: text("role").notNull().default('user'),
   isActive: boolean("is_active").notNull().default(true),
+  photoUrl: text("photo_url"),
 });
 
 export const clients = pgTable("clients", {

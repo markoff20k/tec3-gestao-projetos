@@ -118,22 +118,22 @@ export function Layout({ children }: LayoutProps) {
     const isActive = location === item.path;
 
     const menuLink = (
-      <Link key={item.path} href={item.path}>
-        <a
-          data-testid={`nav-${item.path.replace('/', '') || 'dashboard'}`}
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200
-            ${sidebarCollapsed ? 'justify-center' : ''}
-            ${isActive
-              ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-              : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
-            }`}
-          onClick={() => setSidebarOpen(false)}
-        >
-          <Icon className="h-5 w-5 flex-shrink-0" />
-          {!sidebarCollapsed && (
-            <span className="text-sm font-medium">{item.label}</span>
-          )}
-        </a>
+      <Link
+        key={item.path}
+        href={item.path}
+        data-testid={`nav-${item.path.replace('/', '') || 'dashboard'}`}
+        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200
+          ${sidebarCollapsed ? 'justify-center' : ''}
+          ${isActive
+            ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+            : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
+          }`}
+        onClick={() => setSidebarOpen(false)}
+      >
+        <Icon className="h-5 w-5 flex-shrink-0" />
+        {!sidebarCollapsed && (
+          <span className="text-sm font-medium">{item.label}</span>
+        )}
       </Link>
     );
 
