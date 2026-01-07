@@ -14,22 +14,253 @@ Este documento descreve como configurar e executar o sistema localmente em sua m
 
 ---
 
-## 1. Instalação Local (Desenvolvimento)
+## 1. Desenvolvimento no Windows com VS Code
 
-### 1.1 Clonar o Repositório
+Esta seção descreve passo a passo como configurar o ambiente de desenvolvimento no Windows usando Visual Studio Code.
+
+### 1.1 Instalar Ferramentas Necessárias
+
+#### Node.js
+1. Acesse https://nodejs.org/
+2. Baixe a versão **LTS** (recomendada)
+3. Execute o instalador e siga as instruções
+4. Marque a opção "Automatically install necessary tools" se disponível
+5. Verifique a instalação abrindo o **Prompt de Comando** (cmd) ou **PowerShell**:
+   ```cmd
+   node --version
+   npm --version
+   ```
+
+#### Visual Studio Code
+1. Acesse https://code.visualstudio.com/
+2. Baixe e instale a versão para Windows
+3. Instale as extensões recomendadas (veja seção 1.3)
+
+#### Git
+1. Acesse https://git-scm.com/download/win
+2. Baixe e instale o Git para Windows
+3. Durante a instalação, mantenha as opções padrão
+4. Verifique a instalação:
+   ```cmd
+   git --version
+   ```
+
+#### PostgreSQL (Opcional)
+1. Acesse https://www.postgresql.org/download/windows/
+2. Baixe o instalador da EnterpriseDB
+3. Durante a instalação:
+   - Defina a senha do usuário `postgres`
+   - Mantenha a porta padrão `5432`
+   - Marque a opção para instalar o pgAdmin 4
+4. Verifique a instalação:
+   ```cmd
+   psql --version
+   ```
+
+### 1.2 Clonar o Projeto
+
+Abra o **PowerShell** ou **Git Bash** e execute:
+
+```powershell
+# Navegue até a pasta onde deseja salvar o projeto
+cd C:\Projetos
+
+# Clone o repositório
+git clone <url-do-repositorio>
+
+# Entre na pasta do projeto
+cd projeto-gestao
+```
+
+### 1.3 Configurar VS Code
+
+#### Abrir o Projeto
+1. Abra o VS Code
+2. Vá em **File > Open Folder**
+3. Selecione a pasta do projeto
+
+#### Extensões Recomendadas
+Instale as seguintes extensões (Ctrl+Shift+X):
+
+| Extensão | Descrição |
+|----------|-----------|
+| **ESLint** | Linting de JavaScript/TypeScript |
+| **Prettier** | Formatação de código |
+| **TypeScript Vue Plugin (Volar)** | Suporte TypeScript |
+| **Tailwind CSS IntelliSense** | Autocomplete para Tailwind |
+| **PostCSS Language Support** | Suporte a PostCSS |
+| **Thunder Client** | Testar APIs REST |
+| **GitLens** | Integração avançada com Git |
+| **Error Lens** | Exibe erros inline |
+| **PostgreSQL** (cweijan) | Gerenciar banco de dados |
+
+#### Configurações do VS Code
+Crie o arquivo `.vscode/settings.json` com:
+
+```json
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "files.associations": {
+    "*.css": "tailwindcss"
+  },
+  "tailwindCSS.experimental.classRegex": [
+    ["cn\\(([^)]*)\\)", "(?:'|\"|`)([^']*)(?:'|\"|`)"]
+  ]
+}
+```
+
+### 1.4 Instalar Dependências
+
+No terminal integrado do VS Code (Ctrl+`):
+
+```powershell
+npm install
+```
+
+### 1.5 Configurar Variáveis de Ambiente
+
+1. Crie um arquivo `.env` na raiz do projeto
+2. Adicione o conteúdo:
+
+```env
+# Configuração do Servidor
+NODE_ENV=development
+PORT=5000
+
+# Segurança
+SESSION_SECRET=minha-chave-secreta-desenvolvimento-123
+
+# Banco de Dados PostgreSQL (opcional)
+# Descomente e configure se for usar PostgreSQL
+# DATABASE_URL=postgresql://postgres:sua_senha@localhost:5432/tec3_gestao
+```
+
+### 1.6 Configurar Banco de Dados (Opcional)
+
+Se quiser usar PostgreSQL:
+
+1. Abra o **pgAdmin 4**
+2. Conecte no servidor local
+3. Clique com botão direito em "Databases" > "Create" > "Database"
+4. Nome: `tec3_gestao`
+5. Clique em "Save"
+
+Ou via linha de comando (PowerShell como Administrador):
+
+```powershell
+# Definir variável de ambiente temporária
+$env:PGPASSWORD="sua_senha_postgres"
+
+# Criar banco de dados
+psql -U postgres -c "CREATE DATABASE tec3_gestao;"
+```
+
+### 1.7 Executar o Sistema
+
+No terminal do VS Code:
+
+```powershell
+npm run dev
+```
+
+Aguarde a mensagem:
+```
+serving on port 5000
+```
+
+Acesse no navegador: **http://localhost:5000**
+
+### 1.8 Credenciais de Teste
+
+- **Email:** admin@empresa.com
+- **Senha:** admin123
+- **Perfil:** Proprietário (acesso total)
+
+### 1.9 Comandos Úteis no Desenvolvimento
+
+| Comando | Descrição |
+|---------|-----------|
+| `npm run dev` | Inicia o servidor de desenvolvimento |
+| `npm run build` | Gera build de produção |
+| `Ctrl+C` | Para o servidor |
+| `Ctrl+Shift+P` | Paleta de comandos do VS Code |
+| `Ctrl+`` ` | Abre/fecha terminal integrado |
+
+### 1.10 Estrutura de Pastas no VS Code
+
+```
+projeto-gestao/
+├── 📁 client/           # Frontend React
+│   ├── 📁 src/
+│   │   ├── 📁 components/   # Componentes UI
+│   │   ├── 📁 contexts/     # Contextos (Auth, Theme)
+│   │   ├── 📁 pages/        # Páginas da aplicação
+│   │   └── 📁 lib/          # Utilitários
+├── 📁 server/           # Backend Express
+│   ├── 📄 index.ts      # Entrada do servidor
+│   ├── 📄 routes.ts     # Rotas da API
+│   └── 📄 storage.ts    # Camada de dados
+├── 📁 shared/           # Código compartilhado
+│   └── 📄 schema.ts     # Tipos e schemas
+├── 📄 .env              # Variáveis de ambiente
+└── 📄 package.json      # Dependências
+```
+
+### 1.11 Resolução de Problemas no Windows
+
+#### Erro: "npm não é reconhecido"
+- Reinicie o terminal após instalar o Node.js
+- Verifique se Node.js está no PATH do sistema
+
+#### Erro: "Execution Policy" no PowerShell
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+#### Erro: "ENOENT" ou "file not found"
+- Verifique se está na pasta correta do projeto
+- Execute `npm install` novamente
+
+#### Porta 5000 em uso
+```powershell
+# Encontrar processo usando a porta
+netstat -ano | findstr :5000
+
+# Encerrar processo (substitua PID pelo número encontrado)
+taskkill /PID <PID> /F
+```
+
+#### Erro de permissão ao criar arquivos
+- Execute o VS Code como Administrador
+- Ou mude a pasta do projeto para dentro de `C:\Users\SeuUsuario\`
+
+#### Hot Reload não funciona
+- Salve o arquivo (Ctrl+S) para disparar o reload
+- Verifique se o antivírus não está bloqueando
+
+---
+
+## 2. Instalação Local (Linux/Mac)
+
+### 2.1 Clonar o Repositório
 
 ```bash
 git clone <url-do-repositorio>
 cd projeto-gestao
 ```
 
-### 1.2 Instalar Dependências
+### 2.2 Instalar Dependências
 
 ```bash
 npm install
 ```
 
-### 1.3 Configurar Variáveis de Ambiente
+### 2.3 Configurar Variáveis de Ambiente
 
 Crie um arquivo `.env` na raiz do projeto:
 
@@ -48,7 +279,7 @@ DATABASE_URL=postgresql://usuario:senha@localhost:5432/tec3_gestao
 JWT_EXPIRES_IN=24h
 ```
 
-### 1.4 Configurar Banco de Dados (Opcional)
+### 2.4 Configurar Banco de Dados (Opcional)
 
 Se desejar usar PostgreSQL ao invés de armazenamento em memória:
 
@@ -60,7 +291,7 @@ createdb tec3_gestao
 npm run db:push
 ```
 
-### 1.5 Executar o Sistema
+### 2.5 Executar o Sistema
 
 ```bash
 # Modo desenvolvimento (com hot-reload)
@@ -69,7 +300,7 @@ npm run dev
 
 O sistema estará disponível em: **http://localhost:5000**
 
-### 1.6 Credenciais de Acesso Padrão
+### 2.6 Credenciais de Acesso Padrão
 
 - **Email:** admin@empresa.com
 - **Senha:** admin123
@@ -77,15 +308,15 @@ O sistema estará disponível em: **http://localhost:5000**
 
 ---
 
-## 2. Build para Produção
+## 3. Build para Produção
 
-### 2.1 Gerar Build
+### 3.1 Gerar Build
 
 ```bash
 npm run build
 ```
 
-### 2.2 Executar em Produção
+### 3.2 Executar em Produção
 
 ```bash
 NODE_ENV=production npm start
@@ -93,16 +324,16 @@ NODE_ENV=production npm start
 
 ---
 
-## 3. Deploy com Docker
+## 4. Deploy com Docker
 
-### 3.1 Estrutura Docker
+### 4.1 Estrutura Docker
 
 O projeto inclui os seguintes arquivos Docker:
 
 - `Dockerfile` - Imagem principal da aplicação
 - `docker-compose.yml` - Orquestração dos serviços
 
-### 3.2 Dockerfile
+### 4.2 Dockerfile
 
 Crie o arquivo `Dockerfile` na raiz:
 
@@ -132,7 +363,7 @@ EXPOSE 5000
 CMD ["node", "dist/index.js"]
 ```
 
-### 3.3 Docker Compose
+### 4.3 Docker Compose
 
 Crie o arquivo `docker-compose.yml`:
 
@@ -167,7 +398,7 @@ volumes:
   postgres_data:
 ```
 
-### 3.4 Executar com Docker
+### 4.4 Executar com Docker
 
 ```bash
 # Configurar variável de ambiente
@@ -182,15 +413,15 @@ docker-compose logs -f app
 
 ---
 
-## 4. Deploy no Google Cloud Run
+## 5. Deploy no Google Cloud Run
 
-### 4.1 Pré-requisitos
+### 5.1 Pré-requisitos
 
 - Conta Google Cloud com projeto criado
 - Google Cloud CLI (gcloud) instalado
 - Docker instalado localmente
 
-### 4.2 Configurar Google Cloud CLI
+### 5.2 Configurar Google Cloud CLI
 
 ```bash
 # Autenticar
@@ -205,7 +436,7 @@ gcloud services enable cloudbuild.googleapis.com
 gcloud services enable artifactregistry.googleapis.com
 ```
 
-### 4.3 Criar Repositório de Imagens
+### 5.3 Criar Repositório de Imagens
 
 ```bash
 gcloud artifacts repositories create tec3-repo \
@@ -214,7 +445,7 @@ gcloud artifacts repositories create tec3-repo \
     --description="Repositorio TEC3"
 ```
 
-### 4.4 Build e Push da Imagem
+### 5.4 Build e Push da Imagem
 
 ```bash
 # Configurar Docker para usar Google Cloud
@@ -227,7 +458,7 @@ docker build -t southamerica-east1-docker.pkg.dev/SEU_PROJECT_ID/tec3-repo/tec3-
 docker push southamerica-east1-docker.pkg.dev/SEU_PROJECT_ID/tec3-repo/tec3-app:latest
 ```
 
-### 4.5 Deploy no Cloud Run
+### 5.5 Deploy no Cloud Run
 
 ```bash
 gcloud run deploy tec3-app \
@@ -239,7 +470,7 @@ gcloud run deploy tec3-app \
     --set-env-vars "NODE_ENV=production,SESSION_SECRET=sua-chave-secreta"
 ```
 
-### 4.6 Configurar Banco de Dados (Cloud SQL)
+### 5.6 Configurar Banco de Dados (Cloud SQL)
 
 Para ambiente de produção, recomenda-se usar Cloud SQL:
 
@@ -259,7 +490,7 @@ gcloud sql users create tec3_user \
     --password=SUA_SENHA_SEGURA
 ```
 
-### 4.7 Conectar Cloud Run ao Cloud SQL
+### 5.7 Conectar Cloud Run ao Cloud SQL
 
 ```bash
 gcloud run deploy tec3-app \
@@ -274,14 +505,14 @@ gcloud run deploy tec3-app \
 
 ---
 
-## 5. Deploy na AWS (ECS/Fargate)
+## 6. Deploy na AWS (ECS/Fargate)
 
-### 5.1 Pré-requisitos
+### 6.1 Pré-requisitos
 
 - AWS CLI configurado
 - Docker instalado
 
-### 5.2 Push para ECR
+### 6.2 Push para ECR
 
 ```bash
 # Login no ECR
@@ -296,7 +527,7 @@ docker tag tec3-app:latest SEU_ACCOUNT_ID.dkr.ecr.sa-east-1.amazonaws.com/tec3-a
 docker push SEU_ACCOUNT_ID.dkr.ecr.sa-east-1.amazonaws.com/tec3-app:latest
 ```
 
-### 5.3 Criar Task Definition
+### 6.3 Criar Task Definition
 
 Crie um arquivo `task-definition.json`:
 
@@ -342,7 +573,7 @@ Crie um arquivo `task-definition.json`:
 
 ---
 
-## 6. Perfis de Acesso
+## 7. Perfis de Acesso
 
 | Perfil | Descrição | Permissões |
 |--------|-----------|------------|
@@ -354,7 +585,7 @@ Crie um arquivo `task-definition.json`:
 
 ---
 
-## 7. Estrutura do Projeto
+## 8. Estrutura do Projeto
 
 ```
 /
@@ -376,7 +607,7 @@ Crie um arquivo `task-definition.json`:
 
 ---
 
-## 8. Scripts Disponíveis
+## 9. Scripts Disponíveis
 
 | Comando | Descrição |
 |---------|-----------|
@@ -387,7 +618,7 @@ Crie um arquivo `task-definition.json`:
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 ### Erro: "Cannot find module"
 ```bash
@@ -410,7 +641,7 @@ taskkill /PID <PID> /F
 
 ---
 
-## 10. Suporte
+## 11. Suporte
 
 Para dúvidas ou problemas, entre em contato com a equipe de desenvolvimento.
 
