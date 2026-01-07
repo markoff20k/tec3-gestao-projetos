@@ -23,7 +23,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import {
   Tooltip,
@@ -200,6 +200,9 @@ export function Layout({ children }: LayoutProps) {
           <div className="px-4 py-3 border-t border-b border-sidebar-border">
             <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
               <Avatar className="h-10 w-10 flex-shrink-0 bg-sidebar-accent">
+                {user?.photoUrl && (
+                  <AvatarImage src={user.photoUrl} alt={user.name} />
+                )}
                 <AvatarFallback className="bg-sidebar-accent text-sidebar-foreground">
                   <User className="h-5 w-5" />
                 </AvatarFallback>
@@ -366,11 +369,13 @@ export function Layout({ children }: LayoutProps) {
                   data-testid="button-profile-menu"
                   className="ml-2 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-sidebar"
                 >
-                  <Avatar className="h-9 w-9 cursor-pointer bg-sidebar-accent">
-                    <AvatarFallback className="bg-sidebar-accent text-sidebar-foreground">
-                      <User className="h-5 w-5" />
-                    </AvatarFallback>
-                  </Avatar>
+                  {user?.photoUrl ? (
+                      <Avatar className="h-9 w-9 cursor-pointer">
+                        <AvatarImage src={user.photoUrl} alt={user?.name} />
+                      </Avatar>
+                    ) : (
+                      <User className="h-5 w-5 text-muted-foreground" />
+                    )}
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
