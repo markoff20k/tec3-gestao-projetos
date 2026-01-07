@@ -4,3 +4,7 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Local environment and IDE state — do not commit
+.env
+.local/

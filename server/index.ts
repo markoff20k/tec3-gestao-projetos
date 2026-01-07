@@ -17,7 +17,7 @@ app.use(
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
-  }),
+  })
 );
 
 app.use(express.urlencoded({ extended: false }));
@@ -62,7 +62,7 @@ app.use((req, res, next) => {
 (async () => {
   try {
     log("Starting server initialization...");
-    
+
     await registerRoutes(httpServer, app);
     log("Routes registered successfully");
 
@@ -90,16 +90,15 @@ app.use((req, res, next) => {
     // this serves both the API and the client.
     // It is the only port that is not firewalled.
     const port = parseInt(process.env.PORT || "5000", 10);
-    httpServer.listen(
-      {
-        port,
-        host: "0.0.0.0",
-        reusePort: true,
-      },
-      () => {
-        log(`Server successfully started on 0.0.0.0:${port}`);
-      },
-    );
+    const listenOptions: any = { port, host: "0.0.0.0" };
+    // reusePort is not supported on Windows (can cause ENOTSUP). Only enable on non-Windows.
+    if (process.platform !== "win32") {
+      listenOptions.reusePort = true;
+    }
+
+    httpServer.listen(listenOptions, () => {
+      log(`Server successfully started on 0.0.0.0:${port}`);
+    });
   } catch (error) {
     console.error("Fatal error during server initialization:", error);
     process.exit(1);
