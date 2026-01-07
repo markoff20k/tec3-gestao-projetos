@@ -1,55 +1,55 @@
 version: '3.8'
 
 services:
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: pm-backend
-    restart: unless-stopped
+  app:
+    build: .
+    container_name: tec3-app
     ports:
-      - "3000:3000"
+      - "5000:5000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL}
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-24h}
+      - PORT=5000
+      - SESSION_SECRET=${SESSION_SECRET:-change-this-secret-in-production}
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/tec3_gestao
     depends_on:
-      - postgres
-    networks:
-      - pm-network
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: pm-frontend
+      db:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
     restart: unless-stopped
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/api/auth/me"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
-      - pm-network
+      - tec3-network
 
-  postgres:
-    image: postgres:15-alpine
-    container_name: pm-database
+  db:
+    image: postgres:14-alpine
+    container_name: tec3-database
     restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=${POSTGRES_DB:-project_management}
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=tec3_gestao
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
-      - pm-network
+      - tec3-network
 
 volumes:
   postgres_data:
+  uploads_data:
 
 networks:
-  pm-network:
+  tec3-network:
     driver: bridge
