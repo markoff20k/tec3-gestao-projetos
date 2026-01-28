@@ -24,7 +24,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { clientsApi, Client } from '@/lib/api';
-import { formatCNPJ, validateCNPJ, formatCEP, formatPhone } from '@/lib/validators';
+import { formatCNPJ, validateCNPJ, formatPhone } from '@/lib/validators';
+import { CepInput, AddressData } from '@/components/CepInput';
 
 const ESTADOS_BRASIL = [
   { value: 'AC', label: 'Acre' },
@@ -190,6 +191,22 @@ export default function Clients() {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  const handleAddressFound = (address: AddressData) => {
+    setFormData(prev => ({
+      ...prev,
+      rua: address.logradouro || prev.rua,
+      bairro: address.bairro || prev.bairro,
+      cidade: address.localidade || prev.cidade,
+      estado: address.uf || prev.estado,
+      complemento: address.complemento || prev.complemento,
+    }));
+    toast({ title: 'Endereço encontrado', description: `${address.logradouro}, ${address.localidade}/${address.uf}` });
+  };
+
+  const handleCepError = (error: string) => {
+    toast({ title: error, variant: 'destructive' });
+  };
+
   const filteredClients = clients.filter(
     (client) =>
       client.razaoSocial.toLowerCase().includes(search.toLowerCase()) ||
@@ -303,13 +320,13 @@ export default function Clients() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="cep">CEP</Label>
-                        <Input
+                        <CepInput
                           id="cep"
                           data-testid="input-client-cep"
                           value={formData.cep}
-                          onChange={(e) => updateField('cep', formatCEP(e.target.value))}
-                          placeholder="00000-000"
-                          maxLength={9}
+                          onChange={(cep) => updateField('cep', cep)}
+                          onAddressFound={handleAddressFound}
+                          onError={handleCepError}
                         />
                       </div>
                       <div className="space-y-2">
