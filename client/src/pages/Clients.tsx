@@ -89,6 +89,7 @@ export default function Clients() {
   const [formData, setFormData] = useState(emptyFormData);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const { data: clients = [], isLoading } = useQuery<Client[]>({
     queryKey: ['/api/clients'],
@@ -135,6 +136,7 @@ export default function Clients() {
     setDialogOpen(false);
     setEditingClient(null);
     setFormData(emptyFormData);
+    setFieldErrors({});
   };
 
   const openEditDialog = (client: Client) => {
@@ -161,8 +163,11 @@ export default function Clients() {
       emailTecnico: client.emailTecnico || '',
       telefoneTecnico: client.telefoneTecnico || '',
     });
+    setFieldErrors({});
     setDialogOpen(true);
   };
+
+  const hasValidationErrors = Object.keys(fieldErrors).length > 0;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -201,6 +206,40 @@ export default function Clients() {
 
   const updateField = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const validateFieldRealTime = (field: string, value: string) => {
+    let error = '';
+    
+    if (field === 'cnpj' && value && value.replace(/\D/g, '').length > 0) {
+      const numbers = value.replace(/\D/g, '');
+      if (numbers.length === 14 && !validateCNPJ(value)) {
+        error = 'CNPJ inválido';
+      } else if (numbers.length > 0 && numbers.length < 14) {
+        error = 'CNPJ incompleto';
+      }
+    }
+    
+    if (field.includes('email') && value && value.trim() !== '') {
+      if (!validateEmail(value)) {
+        error = 'E-mail inválido';
+      }
+    }
+    
+    setFieldErrors(prev => {
+      if (error) {
+        return { ...prev, [field]: error };
+      } else {
+        const newErrors = { ...prev };
+        delete newErrors[field];
+        return newErrors;
+      }
+    });
+  };
+
+  const handleFieldChange = (field: string, value: string) => {
+    updateField(field, value);
+    validateFieldRealTime(field, value);
   };
 
   const handleAddressFound = (address: AddressData) => {
@@ -290,10 +329,14 @@ export default function Clients() {
                           id="cnpj"
                           data-testid="input-client-cnpj"
                           value={formData.cnpj}
-                          onChange={(e) => updateField('cnpj', formatCNPJ(e.target.value))}
+                          onChange={(e) => handleFieldChange('cnpj', formatCNPJ(e.target.value))}
                           placeholder="00.000.000/0000-00"
                           maxLength={18}
+                          className={fieldErrors.cnpj ? 'border-destructive' : ''}
                         />
+                        {fieldErrors.cnpj && (
+                          <p className="text-xs text-destructive">{fieldErrors.cnpj}</p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="razaoSocial">Razão Social *</Label>
@@ -431,8 +474,12 @@ export default function Clients() {
                             type="email"
                             data-testid="input-client-email-comercial"
                             value={formData.emailComercial}
-                            onChange={(e) => updateField('emailComercial', e.target.value)}
+                            onChange={(e) => handleFieldChange('emailComercial', e.target.value)}
+                            className={fieldErrors.emailComercial ? 'border-destructive' : ''}
                           />
+                          {fieldErrors.emailComercial && (
+                            <p className="text-xs text-destructive">{fieldErrors.emailComercial}</p>
+                          )}
                         </div>
                       </div>
                       <div className="space-y-2">
@@ -467,8 +514,12 @@ export default function Clients() {
                             type="email"
                             data-testid="input-client-email-medicao"
                             value={formData.emailMedicao}
-                            onChange={(e) => updateField('emailMedicao', e.target.value)}
+                            onChange={(e) => handleFieldChange('emailMedicao', e.target.value)}
+                            className={fieldErrors.emailMedicao ? 'border-destructive' : ''}
                           />
+                          {fieldErrors.emailMedicao && (
+                            <p className="text-xs text-destructive">{fieldErrors.emailMedicao}</p>
+                          )}
                         </div>
                       </div>
                       <div className="space-y-2">
@@ -503,8 +554,12 @@ export default function Clients() {
                             type="email"
                             data-testid="input-client-email-tecnico"
                             value={formData.emailTecnico}
-                            onChange={(e) => updateField('emailTecnico', e.target.value)}
+                            onChange={(e) => handleFieldChange('emailTecnico', e.target.value)}
+                            className={fieldErrors.emailTecnico ? 'border-destructive' : ''}
                           />
+                          {fieldErrors.emailTecnico && (
+                            <p className="text-xs text-destructive">{fieldErrors.emailTecnico}</p>
+                          )}
                         </div>
                       </div>
                       <div className="space-y-2">
@@ -529,7 +584,7 @@ export default function Clients() {
                   <Button
                     type="submit"
                     data-testid="button-save-client"
-                    disabled={createMutation.isPending || updateMutation.isPending}
+                    disabled={createMutation.isPending || updateMutation.isPending || hasValidationErrors}
                   >
                     {createMutation.isPending || updateMutation.isPending ? 'Salvando...' : 'Confirmar'}
                   </Button>
