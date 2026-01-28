@@ -8,3 +8,4 @@ vite.config.ts.*
 # Local environment and IDE state — do not commit
 .env
 .local/
+/generated/prisma
