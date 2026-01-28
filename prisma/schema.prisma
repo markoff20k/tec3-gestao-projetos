@@ -1,14 +1,110 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("user")
+  isActive  Boolean  @default(true) @map("is_active")
+  photoUrl  String?  @map("photo_url")
+
+  @@map("users")
+}
+
+model Client {
+  id                String   @id @default(uuid())
+  cnpj              String?
+  razaoSocial       String   @map("razao_social")
+  nomeFantasia      String?  @map("nome_fantasia")
+  pais              String?
+  cep               String?
+  rua               String?
+  numero            String?
+  complemento       String?
+  bairro            String?
+  cidade            String?
+  estado            String?
+  nomeComercial     String?  @map("nome_comercial")
+  emailComercial    String?  @map("email_comercial")
+  telefoneComercial String?  @map("telefone_comercial")
+  nomeMedicao       String?  @map("nome_medicao")
+  emailMedicao      String?  @map("email_medicao")
+  telefoneMedicao   String?  @map("telefone_medicao")
+  nomeTecnico       String?  @map("nome_tecnico")
+  emailTecnico      String?  @map("email_tecnico")
+  telefoneTecnico   String?  @map("telefone_tecnico")
+  isActive          Boolean  @default(true) @map("is_active")
+
+  proposals         Proposal[]
+  projects          Project[]
+
+  @@map("clients")
+}
+
+model Proposal {
+  id                String    @id @default(uuid())
+  code              String    @unique
+  title             String
+  description       String?
+  clientId          String    @map("client_id")
+  coordinatorId     String?   @map("coordinator_id")
+  type              String    @default("fixed_price")
+  status            String    @default("draft")
+  totalValue        Decimal   @default(0) @map("total_value") @db.Decimal(12, 2)
+  estimatedHours    Int       @default(0) @map("estimated_hours")
+  expectedStartDate DateTime? @map("expected_start_date") @db.Date
+  expectedEndDate   DateTime? @map("expected_end_date") @db.Date
+  projectId         String?   @map("project_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  client            Client    @relation(fields: [clientId], references: [id])
+
+  @@map("proposals")
+}
+
+model Project {
+  id               String      @id @default(uuid())
+  code             String      @unique
+  name             String
+  description      String?
+  clientId         String      @map("client_id")
+  coordinatorId    String?     @map("coordinator_id")
+  status           String      @default("planning")
+  startDate        DateTime?   @map("start_date") @db.Date
+  endDate          DateTime?   @map("end_date") @db.Date
+  budgetHours      Int         @default(0) @map("budget_hours")
+  budgetValue      Decimal     @default(0) @map("budget_value") @db.Decimal(12, 2)
+  dailyLimitHours  Int         @default(8) @map("daily_limit_hours")
+  requiresApproval Boolean     @default(true) @map("requires_approval")
+  createdAt        DateTime    @default(now()) @map("created_at")
+
+  client           Client      @relation(fields: [clientId], references: [id])
+  timeEntries      TimeEntry[]
+
+  @@map("projects")
+}
+
+model TimeEntry {
+  id              String    @id @default(uuid())
+  projectId       String    @map("project_id")
+  collaboratorId  String    @map("collaborator_id")
+  entryDate       DateTime  @map("entry_date") @db.Date
+  hours           Decimal   @db.Decimal(4, 2)
+  description     String?
+  status          String    @default("pending")
+  approvedById    String?   @map("approved_by_id")
+  approvedAt      DateTime? @map("approved_at")
+  rejectionReason String?   @map("rejection_reason")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  project         Project   @relation(fields: [projectId], references: [id])
+
+  @@map("time_entries")
 }
