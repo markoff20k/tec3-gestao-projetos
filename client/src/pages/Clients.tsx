@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, Search, Building2, MapPin, Users } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, Building2, MapPin, Users, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -85,6 +85,8 @@ export default function Clients() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [formData, setFormData] = useState(emptyFormData);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(12);
 
   const { data: clients = [], isLoading } = useQuery<Client[]>({
     queryKey: ['/api/clients'],
@@ -184,6 +186,21 @@ export default function Clients() {
       client.cnpj?.toLowerCase().includes(search.toLowerCase())
   );
 
+  const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedClients = filteredClients.slice(startIndex, endIndex);
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleItemsPerPageChange = (value: string) => {
+    setItemsPerPage(Number(value));
+    setCurrentPage(1);
+  };
+
   return (
     <Layout>
       <div className="space-y-6">
@@ -191,7 +208,7 @@ export default function Clients() {
           <div>
             <h1 className="text-2xl font-semibold">Clientes</h1>
             <p className="text-muted-foreground">
-              Mostrando 1 a {filteredClients.length}. Total de {clients.length} registros
+              Mostrando {startIndex + 1} a {Math.min(endIndex, filteredClients.length)} de {filteredClients.length} registros
             </p>
           </div>
 
@@ -484,7 +501,10 @@ export default function Clients() {
             placeholder="Buscar clientes..."
             className="pl-10"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setCurrentPage(1);
+            }}
           />
         </div>
 
@@ -496,18 +516,13 @@ export default function Clients() {
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredClients.map((client) => (
+            {paginatedClients.map((client) => (
               <Card key={client.id} data-testid={`card-client-${client.id}`}>
-                <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
-                  <div>
-                    <CardTitle className="text-lg">{client.razaoSocial}</CardTitle>
-                    {client.nomeFantasia && (
-                      <p className="text-sm text-muted-foreground">{client.nomeFantasia}</p>
-                    )}
-                  </div>
-                  <Badge variant={client.isActive ? 'default' : 'secondary'} className="text-xs">
-                    {client.isActive ? 'Ativo' : 'Inativo'}
-                  </Badge>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">{client.razaoSocial}</CardTitle>
+                  {client.nomeFantasia && (
+                    <p className="text-sm text-muted-foreground">{client.nomeFantasia}</p>
+                  )}
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-1 text-sm">
@@ -549,6 +564,75 @@ export default function Clients() {
                 </CardContent>
               </Card>
             ))}
+          </div>
+        )}
+
+        {filteredClients.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Exibir</span>
+              <Select value={String(itemsPerPage)} onValueChange={handleItemsPerPageChange}>
+                <SelectTrigger className="w-20" data-testid="select-items-per-page">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="6">6</SelectItem>
+                  <SelectItem value="12">12</SelectItem>
+                  <SelectItem value="24">24</SelectItem>
+                  <SelectItem value="48">48</SelectItem>
+                  <SelectItem value="96">96</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground">por página</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                data-testid="button-prev-page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Anterior
+              </Button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                      data-testid={`button-page-${pageNum}`}
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                data-testid="button-next-page"
+              >
+                Próximo
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         )}
       </div>
