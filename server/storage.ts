@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
-import type { User, Client, Proposal, Project, TimeEntry, Prisma } from "@prisma/client";
+import type { User, Client, Proposal, Project, TimeEntry, Prisma } from "../generated/prisma/client";
 
 export const ProposalStatus = {
   DRAFT: 'draft',

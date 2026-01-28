@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 
@@ -11,12 +11,28 @@ if (!connectionString) {
   throw new Error("DATABASE_URL environment variable is not set");
 }
 
-// Configure pool with SSL for production
-const pool = new Pool({ 
+// Create connection pool with production-ready settings
+const pool = new Pool({
   connectionString,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
 
+// Create adapter
 const adapter = new PrismaPg(pool);
 
-export const prisma = new PrismaClient({ adapter });
+// Singleton pattern
+const prismaClientSingleton = () => {
+  return new PrismaClient({ adapter });
+};
+
+declare const globalThis: {
+  prismaGlobal: ReturnType<typeof prismaClientSingleton>;
+} & typeof global;
+
+export const prisma = globalThis.prismaGlobal ?? prismaClientSingleton();
+
+if (process.env.NODE_ENV !== "production") {
+  globalThis.prismaGlobal = prisma;
+}
