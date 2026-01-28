@@ -66,12 +66,32 @@ export const users = pgTable("users", {
 
 export const clients = pgTable("clients", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: text("name").notNull(),
-  tradeName: text("trade_name"),
-  document: text("document"),
-  email: text("email"),
-  phone: text("phone"),
-  segment: text("segment"),
+  // Dados principais
+  cnpj: text("cnpj"),
+  razaoSocial: text("razao_social").notNull(),
+  nomeFantasia: text("nome_fantasia"),
+  pais: text("pais"),
+  // Endereço
+  cep: text("cep"),
+  rua: text("rua"),
+  numero: text("numero"),
+  complemento: text("complemento"),
+  bairro: text("bairro"),
+  cidade: text("cidade"),
+  estado: text("estado"),
+  // Contato Comercial
+  nomeComercial: text("nome_comercial"),
+  emailComercial: text("email_comercial"),
+  telefoneComercial: text("telefone_comercial"),
+  // Contato Medição
+  nomeMedicao: text("nome_medicao"),
+  emailMedicao: text("email_medicao"),
+  telefoneMedicao: text("telefone_medicao"),
+  // Contato Técnico
+  nomeTecnico: text("nome_tecnico"),
+  emailTecnico: text("email_tecnico"),
+  telefoneTecnico: text("telefone_tecnico"),
+  // Status
   isActive: boolean("is_active").notNull().default(true),
 });
 

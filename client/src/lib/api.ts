@@ -84,12 +84,32 @@ export const authApi = {
 
 export interface Client {
   id: string;
-  name: string;
-  tradeName?: string;
-  document?: string;
-  email?: string;
-  phone?: string;
-  segment?: string;
+  // Dados principais
+  cnpj?: string;
+  razaoSocial: string;
+  nomeFantasia?: string;
+  pais?: string;
+  // Endereço
+  cep?: string;
+  rua?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
+  cidade?: string;
+  estado?: string;
+  // Contato Comercial
+  nomeComercial?: string;
+  emailComercial?: string;
+  telefoneComercial?: string;
+  // Contato Medição
+  nomeMedicao?: string;
+  emailMedicao?: string;
+  telefoneMedicao?: string;
+  // Contato Técnico
+  nomeTecnico?: string;
+  emailTecnico?: string;
+  telefoneTecnico?: string;
+  // Status
   isActive: boolean;
 }
 
