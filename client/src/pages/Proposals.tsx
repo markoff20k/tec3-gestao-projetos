@@ -67,6 +67,9 @@ export default function Proposals() {
   const { toast } = useToast();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [formData, setFormData] = useState({
@@ -74,6 +77,16 @@ export default function Proposals() {
     description: '',
     clientId: '',
     type: 'fixed_price',
+    totalValue: '',
+    estimatedHours: '',
+    coordinatorName: '',
+  });
+  const [editFormData, setEditFormData] = useState({
+    title: '',
+    description: '',
+    clientId: '',
+    type: 'fixed_price',
+    status: 'draft',
     totalValue: '',
     estimatedHours: '',
     coordinatorName: '',
@@ -112,6 +125,52 @@ export default function Proposals() {
       toast({ title: 'Erro ao converter proposta', description: error.message, variant: 'destructive' });
     },
   });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<Proposal> }) => proposalsApi.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
+      toast({ title: 'Proposta atualizada com sucesso' });
+      setEditDialogOpen(false);
+      setSelectedProposal(null);
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao atualizar proposta', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const handleViewProposal = (proposal: Proposal) => {
+    setSelectedProposal(proposal);
+    setViewDialogOpen(true);
+  };
+
+  const handleEditProposal = (proposal: Proposal) => {
+    setSelectedProposal(proposal);
+    setEditFormData({
+      title: proposal.title || '',
+      description: proposal.description || '',
+      clientId: proposal.clientId || '',
+      type: proposal.type || 'fixed_price',
+      status: proposal.status || 'draft',
+      totalValue: String(proposal.totalValue || 0),
+      estimatedHours: String(proposal.estimatedHours || 0),
+      coordinatorName: proposal.coordinatorName || '',
+    });
+    setEditDialogOpen(true);
+  };
+
+  const handleEditSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProposal) return;
+    updateMutation.mutate({
+      id: selectedProposal.id,
+      data: {
+        ...editFormData,
+        totalValue: parseFloat(editFormData.totalValue) || 0,
+        estimatedHours: parseInt(editFormData.estimatedHours) || 0,
+      },
+    });
+  };
 
   const closeDialog = () => {
     setDialogOpen(false);
@@ -363,10 +422,22 @@ export default function Proposals() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button size="icon" variant="ghost" data-testid={`button-view-proposal-${proposal.id}`}>
+                        <Button 
+                          size="icon" 
+                          variant="ghost" 
+                          data-testid={`button-view-proposal-${proposal.id}`}
+                          onClick={() => handleViewProposal(proposal)}
+                          title="Visualizar"
+                        >
                           <Eye className="h-4 w-4" />
                         </Button>
-                        <Button size="icon" variant="ghost" data-testid={`button-edit-proposal-${proposal.id}`}>
+                        <Button 
+                          size="icon" 
+                          variant="ghost" 
+                          data-testid={`button-edit-proposal-${proposal.id}`}
+                          onClick={() => handleEditProposal(proposal)}
+                          title="Editar"
+                        >
                           <Pencil className="h-4 w-4" />
                         </Button>
                         {proposal.status === 'approved' && (
@@ -458,6 +529,216 @@ export default function Proposals() {
             </div>
           </div>
         )}
+
+        {/* View Dialog */}
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Detalhes da Proposta</DialogTitle>
+            </DialogHeader>
+            {selectedProposal && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Código</Label>
+                    <p className="font-medium">{selectedProposal.code}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Revisão</Label>
+                    <p className="font-medium">{selectedProposal.revision || 0}</p>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground text-sm">Título</Label>
+                  <p className="font-medium">{selectedProposal.title}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground text-sm">Descrição</Label>
+                  <p className="font-medium">{selectedProposal.description || '-'}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Cliente</Label>
+                    <p className="font-medium">{selectedProposal.client?.razaoSocial || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground text-sm">CNPJ</Label>
+                    <p className="font-medium">{selectedProposal.client?.cnpj || '-'}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Tipo</Label>
+                    <Badge variant="outline">{typeLabels[selectedProposal.type] || selectedProposal.type}</Badge>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Status</Label>
+                    <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
+                      {statusLabels[selectedProposal.status] || selectedProposal.status}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Valor Total</Label>
+                    <p className="font-medium">{formatCurrency(selectedProposal.totalValue)}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Horas Estimadas</Label>
+                    <p className="font-medium">{selectedProposal.estimatedHours || 0}h</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Coordenador</Label>
+                    <p className="font-medium">{selectedProposal.coordinatorName || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Data de Criação</Label>
+                    <p className="font-medium">{formatDate(selectedProposal.createdAt)}</p>
+                  </div>
+                </div>
+                {selectedProposal.sentDate && (
+                  <div>
+                    <Label className="text-muted-foreground text-sm">Data de Envio</Label>
+                    <p className="font-medium">{formatDate(selectedProposal.sentDate)}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Dialog */}
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Editar Proposta {selectedProposal?.code}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleEditSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-title">Título *</Label>
+                <Input
+                  id="edit-title"
+                  data-testid="input-edit-proposal-title"
+                  value={editFormData.title}
+                  onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-description">Descrição</Label>
+                <Textarea
+                  id="edit-description"
+                  data-testid="input-edit-proposal-description"
+                  value={editFormData.description}
+                  onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Cliente</Label>
+                  <Select
+                    value={editFormData.clientId}
+                    onValueChange={(v) => setEditFormData({ ...editFormData, clientId: v })}
+                  >
+                    <SelectTrigger data-testid="select-edit-client">
+                      <SelectValue placeholder="Selecione o cliente" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clients.map((client) => (
+                        <SelectItem key={client.id} value={client.id}>
+                          {client.razaoSocial}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Tipo</Label>
+                  <Select
+                    value={editFormData.type}
+                    onValueChange={(v) => setEditFormData({ ...editFormData, type: v })}
+                  >
+                    <SelectTrigger data-testid="select-edit-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fixed_price">Preço Fixo</SelectItem>
+                      <SelectItem value="appropriation">Apropriação</SelectItem>
+                      <SelectItem value="umbrella">Guarda-Chuva</SelectItem>
+                      <SelectItem value="service_order">Ordem de Serviço</SelectItem>
+                      <SelectItem value="additive">Aditivo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select
+                    value={editFormData.status}
+                    onValueChange={(v) => setEditFormData({ ...editFormData, status: v })}
+                  >
+                    <SelectTrigger data-testid="select-edit-status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="draft">Rascunho</SelectItem>
+                      <SelectItem value="in_review">Em Revisão</SelectItem>
+                      <SelectItem value="sent">Enviada</SelectItem>
+                      <SelectItem value="negotiating">Negociação</SelectItem>
+                      <SelectItem value="approved">Aprovada</SelectItem>
+                      <SelectItem value="rejected">Rejeitada</SelectItem>
+                      <SelectItem value="cancelled">Cancelada</SelectItem>
+                      <SelectItem value="converted">Convertida</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-coordinator">Coordenador</Label>
+                  <Input
+                    id="edit-coordinator"
+                    data-testid="input-edit-coordinator"
+                    value={editFormData.coordinatorName}
+                    onChange={(e) => setEditFormData({ ...editFormData, coordinatorName: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-value">Valor Total (R$)</Label>
+                  <Input
+                    id="edit-value"
+                    type="number"
+                    step="0.01"
+                    data-testid="input-edit-value"
+                    value={editFormData.totalValue}
+                    onChange={(e) => setEditFormData({ ...editFormData, totalValue: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-hours">Horas Estimadas</Label>
+                  <Input
+                    id="edit-hours"
+                    type="number"
+                    data-testid="input-edit-hours"
+                    value={editFormData.estimatedHours}
+                    onChange={(e) => setEditFormData({ ...editFormData, estimatedHours: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-4">
+                <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={updateMutation.isPending} data-testid="button-save-proposal">
+                  {updateMutation.isPending ? 'Salvando...' : 'Salvar'}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
     </Layout>
   );
