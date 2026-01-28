@@ -24,7 +24,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { clientsApi, Client } from '@/lib/api';
-import { formatCNPJ, validateCNPJ } from '@/lib/validators';
+import { formatCNPJ, validateCNPJ, formatCEP, formatPhone } from '@/lib/validators';
 
 const ESTADOS_BRASIL = [
   { value: 'AC', label: 'Acre' },
@@ -307,8 +307,9 @@ export default function Clients() {
                           id="cep"
                           data-testid="input-client-cep"
                           value={formData.cep}
-                          onChange={(e) => updateField('cep', e.target.value)}
+                          onChange={(e) => updateField('cep', formatCEP(e.target.value))}
                           placeholder="00000-000"
+                          maxLength={9}
                         />
                       </div>
                       <div className="space-y-2">
@@ -411,8 +412,9 @@ export default function Clients() {
                           id="telefoneComercial"
                           data-testid="input-client-telefone-comercial"
                           value={formData.telefoneComercial}
-                          onChange={(e) => updateField('telefoneComercial', e.target.value)}
-                          placeholder="Cel. ou fixo"
+                          onChange={(e) => updateField('telefoneComercial', formatPhone(e.target.value))}
+                          placeholder="(00) 00000-0000"
+                          maxLength={15}
                         />
                       </div>
                     </div>
@@ -446,8 +448,9 @@ export default function Clients() {
                           id="telefoneMedicao"
                           data-testid="input-client-telefone-medicao"
                           value={formData.telefoneMedicao}
-                          onChange={(e) => updateField('telefoneMedicao', e.target.value)}
-                          placeholder="Cel. ou fixo"
+                          onChange={(e) => updateField('telefoneMedicao', formatPhone(e.target.value))}
+                          placeholder="(00) 00000-0000"
+                          maxLength={15}
                         />
                       </div>
                     </div>
@@ -481,8 +484,9 @@ export default function Clients() {
                           id="telefoneTecnico"
                           data-testid="input-client-telefone-tecnico"
                           value={formData.telefoneTecnico}
-                          onChange={(e) => updateField('telefoneTecnico', e.target.value)}
-                          placeholder="Cel. ou fixo"
+                          onChange={(e) => updateField('telefoneTecnico', formatPhone(e.target.value))}
+                          placeholder="(00) 00000-0000"
+                          maxLength={15}
                         />
                       </div>
                     </div>
