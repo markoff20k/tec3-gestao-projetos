@@ -139,6 +139,8 @@ export interface Project {
   endDate?: string;
   budgetHours: number;
   budgetValue: number;
+  dailyLimitHours?: number;
+  requiresApproval?: boolean;
   createdAt: string;
 }
 

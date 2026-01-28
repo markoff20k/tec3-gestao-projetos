@@ -186,7 +186,7 @@ export default function Proposals() {
                       <SelectContent>
                         {clients.map((client) => (
                           <SelectItem key={client.id} value={client.id}>
-                            {client.name}
+                            {client.razaoSocial}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -274,7 +274,7 @@ export default function Proposals() {
                       </Badge>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      {proposal.client?.name} | {typeLabels[proposal.type] || proposal.type}
+                      {proposal.client?.razaoSocial} | {typeLabels[proposal.type] || proposal.type}
                     </p>
                   </div>
                   <Badge className={`text-xs text-white ${statusColors[proposal.status]}`}>

@@ -161,7 +161,7 @@ export default function Projects() {
                     <SelectContent>
                       {clients.map((client) => (
                         <SelectItem key={client.id} value={client.id}>
-                          {client.name}
+                          {client.razaoSocial}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -240,7 +240,7 @@ export default function Projects() {
                         {project.code}
                       </Badge>
                     </div>
-                    <p className="text-sm text-muted-foreground">{project.client?.name}</p>
+                    <p className="text-sm text-muted-foreground">{project.client?.razaoSocial}</p>
                   </div>
                   <Badge className={`text-xs text-white ${statusColors[project.status]}`}>
                     {statusLabels[project.status] || project.status}
