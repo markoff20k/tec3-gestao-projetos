@@ -25,6 +25,39 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { clientsApi, Client } from '@/lib/api';
 
+const formatCNPJ = (value: string): string => {
+  const numbers = value.replace(/\D/g, '').slice(0, 14);
+  return numbers
+    .replace(/(\d{2})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1/$2')
+    .replace(/(\d{4})(\d)/, '$1-$2');
+};
+
+const validateCNPJ = (cnpj: string): boolean => {
+  const numbers = cnpj.replace(/\D/g, '');
+  if (numbers.length !== 14) return false;
+  if (/^(\d)\1{13}$/.test(numbers)) return false;
+
+  let sum = 0;
+  let weight = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  for (let i = 0; i < 12; i++) {
+    sum += parseInt(numbers[i]) * weight[i];
+  }
+  let digit1 = sum % 11 < 2 ? 0 : 11 - (sum % 11);
+  if (parseInt(numbers[12]) !== digit1) return false;
+
+  sum = 0;
+  weight = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  for (let i = 0; i < 13; i++) {
+    sum += parseInt(numbers[i]) * weight[i];
+  }
+  let digit2 = sum % 11 < 2 ? 0 : 11 - (sum % 11);
+  if (parseInt(numbers[13]) !== digit2) return false;
+
+  return true;
+};
+
 const ESTADOS_BRASIL = [
   { value: 'AC', label: 'Acre' },
   { value: 'AL', label: 'Alagoas' },
@@ -168,6 +201,16 @@ export default function Clients() {
       toast({ title: 'Razão Social é obrigatória', variant: 'destructive' });
       return;
     }
+    if (formData.cnpj && formData.cnpj.replace(/\D/g, '').length > 0) {
+      if (formData.cnpj.replace(/\D/g, '').length !== 14) {
+        toast({ title: 'CNPJ deve ter 14 dígitos', variant: 'destructive' });
+        return;
+      }
+      if (!validateCNPJ(formData.cnpj)) {
+        toast({ title: 'CNPJ inválido', description: 'Verifique os dígitos do CNPJ informado', variant: 'destructive' });
+        return;
+      }
+    }
     if (editingClient) {
       updateMutation.mutate({ id: editingClient.id, data: formData });
     } else {
@@ -250,8 +293,9 @@ export default function Clients() {
                           id="cnpj"
                           data-testid="input-client-cnpj"
                           value={formData.cnpj}
-                          onChange={(e) => updateField('cnpj', e.target.value)}
+                          onChange={(e) => updateField('cnpj', formatCNPJ(e.target.value))}
                           placeholder="00.000.000/0000-00"
+                          maxLength={18}
                         />
                       </div>
                       <div className="space-y-2">
