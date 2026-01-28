@@ -60,16 +60,27 @@ async function buildAll() {
     entryPoints: ["server/index.ts"],
     platform: "node",
     bundle: true,
-    format: "cjs",
-    outfile: "dist/index.cjs",
+    format: "esm",
+    outfile: "dist/index.js",
     minify: true,
     external: externals,
     logLevel: "info",
+    banner: {
+      js: `import { createRequire } from 'module'; const require = createRequire(import.meta.url);`,
+    },
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
   });
 
   // Copy generated Prisma client to dist
   console.log("copying generated prisma client...");
   await cp("generated", "dist/generated", { recursive: true });
+
+  // Create CJS wrapper for ESM module
+  console.log("creating CJS wrapper...");
+  const { writeFile } = await import("fs/promises");
+  await writeFile("dist/index.cjs", `import("./index.js");`);
 }
 
 buildAll().catch((err) => {

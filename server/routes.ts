@@ -1,4 +1,4 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
 import bcrypt from "bcryptjs";
@@ -193,7 +193,7 @@ export async function registerRoutes(
     });
   });
 
-  app.use('/uploads', (await import('express')).default.static(uploadsDir));
+  app.use('/uploads', express.static(uploadsDir));
 
   app.get('/api/auth/users', authenticateToken, async (req, res) => {
     const userRole = (req as any).user.role;
