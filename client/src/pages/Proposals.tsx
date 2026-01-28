@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, ArrowRight } from 'lucide-react';
+import { Plus, Search, Eye, ArrowRight, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
@@ -22,6 +21,14 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { proposalsApi, clientsApi, Proposal, Client } from '@/lib/api';
 
@@ -60,6 +67,8 @@ export default function Proposals() {
   const { toast } = useToast();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(12);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -67,6 +76,7 @@ export default function Proposals() {
     type: 'fixed_price',
     totalValue: '',
     estimatedHours: '',
+    coordinatorName: '',
   });
 
   const { data: proposals = [], isLoading } = useQuery<Proposal[]>({
@@ -112,6 +122,7 @@ export default function Proposals() {
       type: 'fixed_price',
       totalValue: '',
       estimatedHours: '',
+      coordinatorName: '',
     });
   };
 
@@ -127,11 +138,32 @@ export default function Proposals() {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    return new Date(dateStr).toLocaleDateString('pt-BR');
+  };
+
   const filteredProposals = proposals.filter(
     (p) =>
       p.title.toLowerCase().includes(search.toLowerCase()) ||
-      p.code.toLowerCase().includes(search.toLowerCase())
+      p.code.toLowerCase().includes(search.toLowerCase()) ||
+      p.client?.razaoSocial?.toLowerCase().includes(search.toLowerCase()) ||
+      p.client?.cnpj?.toLowerCase().includes(search.toLowerCase())
   );
+
+  const totalPages = Math.ceil(filteredProposals.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedProposals = filteredProposals.slice(startIndex, endIndex);
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+  };
+
+  const handleItemsPerPageChange = (value: string) => {
+    setItemsPerPage(Number(value));
+    setCurrentPage(1);
+  };
 
   return (
     <Layout>
@@ -139,7 +171,9 @@ export default function Proposals() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">Propostas</h1>
-            <p className="text-muted-foreground">Gerencie as propostas comerciais</p>
+            <p className="text-muted-foreground">
+              Mostrando {startIndex + 1} a {Math.min(endIndex, filteredProposals.length)} de {filteredProposals.length} registros
+            </p>
           </div>
 
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -206,6 +240,7 @@ export default function Proposals() {
                         <SelectItem value="appropriation">Apropriação</SelectItem>
                         <SelectItem value="umbrella">Guarda-Chuva</SelectItem>
                         <SelectItem value="service_order">Ordem de Serviço</SelectItem>
+                        <SelectItem value="additive">Aditivo</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -233,6 +268,15 @@ export default function Proposals() {
                     />
                   </div>
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="coordinatorName">Coordenador</Label>
+                  <Input
+                    id="coordinatorName"
+                    data-testid="input-proposal-coordinator"
+                    value={formData.coordinatorName}
+                    onChange={(e) => setFormData({ ...formData, coordinatorName: e.target.value })}
+                  />
+                </div>
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="outline" onClick={closeDialog}>
                     Cancelar
@@ -253,7 +297,10 @@ export default function Proposals() {
             placeholder="Buscar propostas..."
             className="pl-10"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setCurrentPage(1);
+            }}
           />
         </div>
 
@@ -262,58 +309,153 @@ export default function Proposals() {
         ) : filteredProposals.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">Nenhuma proposta encontrada</div>
         ) : (
-          <div className="space-y-4">
-            {filteredProposals.map((proposal) => (
-              <Card key={proposal.id} data-testid={`card-proposal-${proposal.id}`}>
-                <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <CardTitle className="text-lg">{proposal.title}</CardTitle>
+          <div className="rounded-md border overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[120px]">Código</TableHead>
+                  <TableHead className="w-[50px]">Rev</TableHead>
+                  <TableHead className="w-[100px]">Tipo</TableHead>
+                  <TableHead>Cliente</TableHead>
+                  <TableHead>CNPJ</TableHead>
+                  <TableHead>Descrição</TableHead>
+                  <TableHead className="w-[120px]">Tipo Proposta</TableHead>
+                  <TableHead className="w-[100px]">Status</TableHead>
+                  <TableHead className="w-[100px]">Data</TableHead>
+                  <TableHead className="w-[100px]">Coordenador</TableHead>
+                  <TableHead className="w-[120px] text-right">Valor</TableHead>
+                  <TableHead className="w-[100px]">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedProposals.map((proposal) => (
+                  <TableRow key={proposal.id} data-testid={`row-proposal-${proposal.id}`}>
+                    <TableCell className="font-medium">{proposal.code}</TableCell>
+                    <TableCell>{proposal.revision || 0}</TableCell>
+                    <TableCell>
                       <Badge variant="outline" className="text-xs">
-                        {proposal.code}
+                        {typeLabels[proposal.type] || proposal.type}
                       </Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      {proposal.client?.razaoSocial} | {typeLabels[proposal.type] || proposal.type}
-                    </p>
-                  </div>
-                  <Badge className={`text-xs text-white ${statusColors[proposal.status]}`}>
-                    {statusLabels[proposal.status] || proposal.status}
-                  </Badge>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-wrap items-center justify-between gap-4">
-                    <div className="flex gap-6 text-sm">
-                      <div>
-                        <span className="text-muted-foreground">Valor:</span>{' '}
-                        <span className="font-medium">{formatCurrency(proposal.totalValue)}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Horas:</span>{' '}
-                        <span className="font-medium">{proposal.estimatedHours}h</span>
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" data-testid={`button-view-proposal-${proposal.id}`}>
-                        <Eye className="h-3 w-3 mr-1" />
-                        Ver
-                      </Button>
-                      {proposal.status === 'approved' && (
-                        <Button
-                          size="sm"
-                          data-testid={`button-convert-proposal-${proposal.id}`}
-                          onClick={() => convertMutation.mutate(proposal.id)}
-                          disabled={convertMutation.isPending}
-                        >
-                          <ArrowRight className="h-3 w-3 mr-1" />
-                          Converter em Projeto
+                    </TableCell>
+                    <TableCell className="max-w-[200px] truncate" title={proposal.client?.razaoSocial}>
+                      {proposal.client?.razaoSocial || '-'}
+                    </TableCell>
+                    <TableCell className="text-xs">{proposal.client?.cnpj || '-'}</TableCell>
+                    <TableCell className="max-w-[250px] truncate" title={proposal.title}>
+                      {proposal.title}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="text-xs">
+                        {typeLabels[proposal.type] || proposal.type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={`text-xs text-white ${statusColors[proposal.status]}`}>
+                        {statusLabels[proposal.status] || proposal.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs">{formatDate(proposal.createdAt)}</TableCell>
+                    <TableCell className="text-xs truncate max-w-[100px]" title={proposal.coordinatorName || '-'}>
+                      {proposal.coordinatorName || '-'}
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      {formatCurrency(proposal.totalValue)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button size="icon" variant="ghost" data-testid={`button-view-proposal-${proposal.id}`}>
+                          <Eye className="h-4 w-4" />
                         </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                        <Button size="icon" variant="ghost" data-testid={`button-edit-proposal-${proposal.id}`}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        {proposal.status === 'approved' && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            data-testid={`button-convert-proposal-${proposal.id}`}
+                            onClick={() => convertMutation.mutate(proposal.id)}
+                            disabled={convertMutation.isPending}
+                            title="Converter em Projeto"
+                          >
+                            <ArrowRight className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        {filteredProposals.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Exibir</span>
+              <Select value={String(itemsPerPage)} onValueChange={handleItemsPerPageChange}>
+                <SelectTrigger className="w-20" data-testid="select-items-per-page">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="6">6</SelectItem>
+                  <SelectItem value="12">12</SelectItem>
+                  <SelectItem value="24">24</SelectItem>
+                  <SelectItem value="48">48</SelectItem>
+                  <SelectItem value="96">96</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground">por página</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                data-testid="button-prev-page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Anterior
+              </Button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                      data-testid={`button-page-${pageNum}`}
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                data-testid="button-next-page"
+              >
+                Próximo
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         )}
       </div>

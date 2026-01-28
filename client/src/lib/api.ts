@@ -116,14 +116,20 @@ export interface Client {
 export interface Proposal {
   id: string;
   code: string;
+  revision: number;
   title: string;
   description?: string;
   clientId: string;
   client?: Client;
+  coordinatorId?: string;
+  coordinatorName?: string;
   type: string;
   status: string;
   totalValue: number;
   estimatedHours: number;
+  expectedStartDate?: string;
+  expectedEndDate?: string;
+  sentDate?: string;
   createdAt: string;
 }
 

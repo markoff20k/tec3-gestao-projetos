@@ -51,10 +51,12 @@ model Client {
 model Proposal {
   id                String    @id @default(uuid())
   code              String    @unique
+  revision          Int       @default(0)
   title             String
   description       String?
   clientId          String    @map("client_id")
   coordinatorId     String?   @map("coordinator_id")
+  coordinatorName   String?   @map("coordinator_name")
   type              String    @default("fixed_price")
   status            String    @default("draft")
   totalValue        Decimal   @default(0) @map("total_value") @db.Decimal(12, 2)
@@ -63,6 +65,7 @@ model Proposal {
   expectedEndDate   DateTime? @map("expected_end_date") @db.Date
   projectId         String?   @map("project_id")
   createdAt         DateTime  @default(now()) @map("created_at")
+  sentDate          DateTime? @map("sent_date") @db.Date
 
   client            Client    @relation(fields: [clientId], references: [id])
 
