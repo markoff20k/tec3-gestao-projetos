@@ -24,7 +24,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { clientsApi, Client } from '@/lib/api';
-import { formatCNPJ, validateCNPJ, formatPhone } from '@/lib/validators';
+import { formatCNPJ, validateCNPJ, formatPhone, validateEmail } from '@/lib/validators';
 import { CepInput, AddressData } from '@/components/CepInput';
 
 const ESTADOS_BRASIL = [
@@ -179,6 +179,18 @@ export default function Clients() {
         toast({ title: 'CNPJ inválido', description: 'Verifique os dígitos do CNPJ informado', variant: 'destructive' });
         return;
       }
+    }
+    if (!validateEmail(formData.emailComercial)) {
+      toast({ title: 'E-mail comercial inválido', description: 'Verifique o formato do e-mail informado', variant: 'destructive' });
+      return;
+    }
+    if (!validateEmail(formData.emailMedicao)) {
+      toast({ title: 'E-mail de medição inválido', description: 'Verifique o formato do e-mail informado', variant: 'destructive' });
+      return;
+    }
+    if (!validateEmail(formData.emailTecnico)) {
+      toast({ title: 'E-mail técnico inválido', description: 'Verifique o formato do e-mail informado', variant: 'destructive' });
+      return;
     }
     if (editingClient) {
       updateMutation.mutate({ id: editingClient.id, data: formData });

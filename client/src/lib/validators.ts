@@ -79,3 +79,9 @@ export const formatCEP = (value: string): string => {
   const numbers = value.replace(/\D/g, '').slice(0, 8);
   return numbers.replace(/(\d{5})(\d)/, '$1-$2');
 };
+
+export const validateEmail = (email: string): boolean => {
+  if (!email || email.trim() === '') return true;
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  return emailRegex.test(email.trim());
+};
