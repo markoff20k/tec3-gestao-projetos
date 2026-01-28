@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "fs/promises";
+import { rm, readFile, cp } from "fs/promises";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -23,13 +23,20 @@ const allowlist = [
   "openai",
   "passport",
   "passport-local",
-  "pg",
   "stripe",
   "uuid",
-  "ws",
   "xlsx",
   "zod",
   "zod-validation-error",
+];
+
+// These packages should NEVER be bundled - they need runtime access to env vars
+const forceExternals = [
+  "pg",
+  "@prisma/client",
+  "@prisma/adapter-pg",
+  "@neondatabase/serverless",
+  "ws",
 ];
 
 async function buildAll() {
@@ -44,7 +51,10 @@ async function buildAll() {
     ...Object.keys(pkg.dependencies || {}),
     ...Object.keys(pkg.devDependencies || {}),
   ];
-  const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  const externals = [
+    ...allDeps.filter((dep) => !allowlist.includes(dep)),
+    ...forceExternals,
+  ];
 
   await esbuild({
     entryPoints: ["server/index.ts"],
@@ -52,13 +62,14 @@ async function buildAll() {
     bundle: true,
     format: "cjs",
     outfile: "dist/index.cjs",
-    define: {
-      "process.env.NODE_ENV": '"production"',
-    },
     minify: true,
     external: externals,
     logLevel: "info",
   });
+
+  // Copy generated Prisma client to dist
+  console.log("copying generated prisma client...");
+  await cp("generated", "dist/generated", { recursive: true });
 }
 
 buildAll().catch((err) => {
