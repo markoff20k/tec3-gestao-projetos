@@ -847,13 +847,13 @@ export default function Proposals() {
                     <TableCell className="text-xs truncate max-w-[120px]">{proposal.specialist || '-'}</TableCell>
                     <TableCell className="text-xs truncate max-w-[120px]">{proposal.mainType || '-'}</TableCell>
                     <TableCell className="text-xs text-right">{proposal.quantity || 0}</TableCell>
-                    <TableCell className="text-xs text-right">{proposal.hourJustification?.toFixed(2) || '0.00'}</TableCell>
-                    <TableCell className="text-xs text-right">{proposal.rehabilitation?.toFixed(2) || '0.00'}</TableCell>
-                    <TableCell className="text-xs text-right">{proposal.subcontracted?.toFixed(2) || '0.00'}</TableCell>
-                    <TableCell className="text-xs text-right">{proposal.paymentBook?.toFixed(2) || '0.00'}</TableCell>
-                    <TableCell className="text-xs text-right">{proposal.expense?.toFixed(2) || '0.00'}</TableCell>
-                    <TableCell className="text-xs text-right">{proposal.additiveValue?.toFixed(2) || '0.00'}</TableCell>
-                    <TableCell className="text-xs text-right">{proposal.resource?.toFixed(2) || '0.00'}</TableCell>
+                    <TableCell className="text-xs text-right">{Number(proposal.hourJustification || 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-xs text-right">{Number(proposal.rehabilitation || 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-xs text-right">{Number(proposal.subcontracted || 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-xs text-right">{Number(proposal.paymentBook || 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-xs text-right">{Number(proposal.expense || 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-xs text-right">{Number(proposal.additiveValue || 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-xs text-right">{Number(proposal.resource || 0).toFixed(2)}</TableCell>
                     <TableCell className="text-right font-medium text-xs">
                       {formatCurrency(proposal.totalValue)}
                     </TableCell>
@@ -1114,31 +1114,31 @@ export default function Proposals() {
                     </div>
                     <div>
                       <Label className="text-muted-foreground text-xs">Justif. Horas</Label>
-                      <p className="font-medium">{selectedProposal.hourJustification?.toFixed(2) || '0.00'}</p>
+                      <p className="font-medium">{Number(selectedProposal.hourJustification || 0).toFixed(2)}</p>
                     </div>
                     <div>
                       <Label className="text-muted-foreground text-xs">Reabilitação</Label>
-                      <p className="font-medium">{selectedProposal.rehabilitation?.toFixed(2) || '0.00'}</p>
+                      <p className="font-medium">{Number(selectedProposal.rehabilitation || 0).toFixed(2)}</p>
                     </div>
                     <div>
                       <Label className="text-muted-foreground text-xs">Subcontratada</Label>
-                      <p className="font-medium">{selectedProposal.subcontracted?.toFixed(2) || '0.00'}</p>
+                      <p className="font-medium">{Number(selectedProposal.subcontracted || 0).toFixed(2)}</p>
                     </div>
                     <div>
                       <Label className="text-muted-foreground text-xs">Liv. Pagto</Label>
-                      <p className="font-medium">{selectedProposal.paymentBook?.toFixed(2) || '0.00'}</p>
+                      <p className="font-medium">{Number(selectedProposal.paymentBook || 0).toFixed(2)}</p>
                     </div>
                     <div>
                       <Label className="text-muted-foreground text-xs">Despesa</Label>
-                      <p className="font-medium">{selectedProposal.expense?.toFixed(2) || '0.00'}</p>
+                      <p className="font-medium">{Number(selectedProposal.expense || 0).toFixed(2)}</p>
                     </div>
                     <div>
                       <Label className="text-muted-foreground text-xs">Aditivo</Label>
-                      <p className="font-medium">{selectedProposal.additiveValue?.toFixed(2) || '0.00'}</p>
+                      <p className="font-medium">{Number(selectedProposal.additiveValue || 0).toFixed(2)}</p>
                     </div>
                     <div>
                       <Label className="text-muted-foreground text-xs">Recurso</Label>
-                      <p className="font-medium">{selectedProposal.resource?.toFixed(2) || '0.00'}</p>
+                      <p className="font-medium">{Number(selectedProposal.resource || 0).toFixed(2)}</p>
                     </div>
                   </div>
                 </div>
