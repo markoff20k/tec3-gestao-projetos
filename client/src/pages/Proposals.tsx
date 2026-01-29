@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, ArrowRight, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
+import { Plus, Search, Eye, ArrowRight, ChevronLeft, ChevronRight, Pencil, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, RotateCcw } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +31,14 @@ import {
 } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { proposalsApi, clientsApi, Proposal, Client } from '@/lib/api';
+import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { Separator } from '@/components/ui/separator';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-500',
@@ -91,6 +99,17 @@ export default function Proposals() {
     estimatedHours: '',
     coordinatorName: '',
   });
+
+  // Filter states
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  const [typeFilters, setTypeFilters] = useState<string[]>([]);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [valueMin, setValueMin] = useState('');
+  const [valueMax, setValueMax] = useState('');
+  const [coordinatorFilter, setCoordinatorFilter] = useState('');
+  const [clientFilter, setClientFilter] = useState('');
 
   const { data: proposals = [], isLoading } = useQuery<Proposal[]>({
     queryKey: ['/api/proposals'],
@@ -202,13 +221,106 @@ export default function Proposals() {
     return new Date(dateStr).toLocaleDateString('pt-BR');
   };
 
-  const filteredProposals = proposals.filter(
-    (p) =>
-      p.title.toLowerCase().includes(search.toLowerCase()) ||
-      p.code.toLowerCase().includes(search.toLowerCase()) ||
-      p.client?.razaoSocial?.toLowerCase().includes(search.toLowerCase()) ||
-      p.client?.cnpj?.toLowerCase().includes(search.toLowerCase())
-  );
+  // Get unique coordinators for filter dropdown
+  const uniqueCoordinators = useMemo(() => {
+    const coords = new Set<string>();
+    proposals.forEach((p) => {
+      if (p.coordinatorName) coords.add(p.coordinatorName);
+    });
+    return Array.from(coords).sort();
+  }, [proposals]);
+
+  // Count active filters
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (statusFilters.length > 0) count++;
+    if (typeFilters.length > 0) count++;
+    if (dateFrom || dateTo) count++;
+    if (valueMin || valueMax) count++;
+    if (coordinatorFilter) count++;
+    if (clientFilter) count++;
+    return count;
+  }, [statusFilters, typeFilters, dateFrom, dateTo, valueMin, valueMax, coordinatorFilter, clientFilter]);
+
+  // Clear all filters
+  const clearAllFilters = () => {
+    setStatusFilters([]);
+    setTypeFilters([]);
+    setDateFrom('');
+    setDateTo('');
+    setValueMin('');
+    setValueMax('');
+    setCoordinatorFilter('');
+    setClientFilter('');
+    setSearch('');
+    setCurrentPage(1);
+  };
+
+  // Toggle filter helpers
+  const toggleStatusFilter = (status: string) => {
+    setStatusFilters((prev) =>
+      prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
+    );
+    setCurrentPage(1);
+  };
+
+  const toggleTypeFilter = (type: string) => {
+    setTypeFilters((prev) =>
+      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+    );
+    setCurrentPage(1);
+  };
+
+  const filteredProposals = useMemo(() => {
+    return proposals.filter((p) => {
+      // Text search
+      const searchMatch =
+        !search ||
+        p.title.toLowerCase().includes(search.toLowerCase()) ||
+        p.code.toLowerCase().includes(search.toLowerCase()) ||
+        p.client?.razaoSocial?.toLowerCase().includes(search.toLowerCase()) ||
+        p.client?.cnpj?.toLowerCase().includes(search.toLowerCase());
+
+      // Status filter
+      const statusMatch = statusFilters.length === 0 || statusFilters.includes(p.status);
+
+      // Type filter
+      const typeMatch = typeFilters.length === 0 || typeFilters.includes(p.type);
+
+      // Date range filter
+      const createdDate = p.createdAt ? new Date(p.createdAt) : null;
+      const dateFromMatch = !dateFrom || (createdDate && createdDate >= new Date(dateFrom));
+      const dateToMatch = !dateTo || (createdDate && createdDate <= new Date(dateTo + 'T23:59:59'));
+
+      // Value range filter
+      const value = p.totalValue || 0;
+      const valueMinMatch = !valueMin || value >= parseFloat(valueMin);
+      const valueMaxMatch = !valueMax || value <= parseFloat(valueMax);
+
+      // Coordinator filter
+      const coordMatch =
+        !coordinatorFilter ||
+        p.coordinatorName?.toLowerCase().includes(coordinatorFilter.toLowerCase());
+
+      // Client filter
+      const clientMatch =
+        !clientFilter ||
+        p.client?.razaoSocial?.toLowerCase().includes(clientFilter.toLowerCase()) ||
+        p.clientId === clientFilter;
+
+      return (
+        searchMatch &&
+        statusMatch &&
+        typeMatch &&
+        dateFromMatch &&
+        dateToMatch &&
+        valueMinMatch &&
+        valueMaxMatch &&
+        coordMatch &&
+        clientMatch
+      );
+    });
+  }, [proposals, search, statusFilters, typeFilters, dateFrom, dateTo, valueMin, valueMax, coordinatorFilter, clientFilter]);
 
   const totalPages = Math.ceil(filteredProposals.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -349,18 +461,324 @@ export default function Proposals() {
           </Dialog>
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            data-testid="input-search-proposals"
-            placeholder="Buscar propostas..."
-            className="pl-10"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setCurrentPage(1);
-            }}
-          />
+        {/* Search and Filter Bar */}
+        <Card className="border-muted">
+          <CardContent className="p-4">
+            <div className="flex flex-col gap-4">
+              {/* Search Row */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    data-testid="input-search-proposals"
+                    placeholder="Buscar por código, título, cliente ou CNPJ..."
+                    className="pl-10"
+                    value={search}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant={filtersOpen ? 'default' : 'outline'}
+                    onClick={() => setFiltersOpen(!filtersOpen)}
+                    data-testid="button-toggle-filters"
+                    className="relative"
+                  >
+                    <SlidersHorizontal className="h-4 w-4 mr-2" />
+                    Filtros
+                    {activeFilterCount > 0 && (
+                      <Badge className="ml-2 h-5 w-5 p-0 flex items-center justify-center text-xs bg-primary text-primary-foreground">
+                        {activeFilterCount}
+                      </Badge>
+                    )}
+                    <ChevronDown className={`h-4 w-4 ml-1 transition-transform ${filtersOpen ? 'rotate-180' : ''}`} />
+                  </Button>
+                  {(activeFilterCount > 0 || search) && (
+                    <Button
+                      variant="ghost"
+                      onClick={clearAllFilters}
+                      data-testid="button-clear-all-filters"
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <RotateCcw className="h-4 w-4 mr-2" />
+                      Limpar
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Active Filter Chips */}
+              {activeFilterCount > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {statusFilters.map((status) => (
+                    <Badge
+                      key={status}
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => toggleStatusFilter(status)}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${statusColors[status]}`} />
+                      {statusLabels[status]}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  ))}
+                  {typeFilters.map((type) => (
+                    <Badge
+                      key={type}
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => toggleTypeFilter(type)}
+                    >
+                      {typeLabels[type]}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  ))}
+                  {(dateFrom || dateTo) && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => {
+                        setDateFrom('');
+                        setDateTo('');
+                      }}
+                    >
+                      <Calendar className="h-3 w-3" />
+                      {dateFrom && dateTo
+                        ? `${new Date(dateFrom).toLocaleDateString('pt-BR')} - ${new Date(dateTo).toLocaleDateString('pt-BR')}`
+                        : dateFrom
+                        ? `A partir de ${new Date(dateFrom).toLocaleDateString('pt-BR')}`
+                        : `Até ${new Date(dateTo).toLocaleDateString('pt-BR')}`}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                  {(valueMin || valueMax) && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => {
+                        setValueMin('');
+                        setValueMax('');
+                      }}
+                    >
+                      <DollarSign className="h-3 w-3" />
+                      {valueMin && valueMax
+                        ? `${formatCurrency(parseFloat(valueMin))} - ${formatCurrency(parseFloat(valueMax))}`
+                        : valueMin
+                        ? `Mín: ${formatCurrency(parseFloat(valueMin))}`
+                        : `Máx: ${formatCurrency(parseFloat(valueMax))}`}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                  {coordinatorFilter && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => setCoordinatorFilter('')}
+                    >
+                      Coord: {coordinatorFilter}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                  {clientFilter && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => setClientFilter('')}
+                    >
+                      Cliente: {clients.find((c) => c.id === clientFilter)?.razaoSocial || clientFilter}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                </div>
+              )}
+
+              {/* Expandable Filter Panel */}
+              <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
+                <CollapsibleContent className="space-y-4">
+                  <Separator className="my-2" />
+
+                  {/* Status Filters */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Filter className="h-4 w-4 text-muted-foreground" />
+                      <Label className="font-medium">Status</Label>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(statusLabels).map(([key, label]) => (
+                        <Button
+                          key={key}
+                          variant={statusFilters.includes(key) ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => toggleStatusFilter(key)}
+                          data-testid={`filter-status-${key}`}
+                          className={`gap-2 ${statusFilters.includes(key) ? '' : 'text-muted-foreground'}`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${statusColors[key]}`} />
+                          {label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Type Filters */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Filter className="h-4 w-4 text-muted-foreground" />
+                      <Label className="font-medium">Tipo de Proposta</Label>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(typeLabels).map(([key, label]) => (
+                        <Button
+                          key={key}
+                          variant={typeFilters.includes(key) ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => toggleTypeFilter(key)}
+                          data-testid={`filter-type-${key}`}
+                          className={typeFilters.includes(key) ? '' : 'text-muted-foreground'}
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Date and Value Range */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Date Range */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <Label className="font-medium">Data Inicial</Label>
+                      </div>
+                      <Input
+                        type="date"
+                        value={dateFrom}
+                        onChange={(e) => {
+                          setDateFrom(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        data-testid="filter-date-from"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <Label className="font-medium">Data Final</Label>
+                      </div>
+                      <Input
+                        type="date"
+                        value={dateTo}
+                        onChange={(e) => {
+                          setDateTo(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        data-testid="filter-date-to"
+                      />
+                    </div>
+
+                    {/* Value Range */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="h-4 w-4 text-muted-foreground" />
+                        <Label className="font-medium">Valor Mínimo</Label>
+                      </div>
+                      <Input
+                        type="number"
+                        placeholder="R$ 0,00"
+                        value={valueMin}
+                        onChange={(e) => {
+                          setValueMin(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        data-testid="filter-value-min"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="h-4 w-4 text-muted-foreground" />
+                        <Label className="font-medium">Valor Máximo</Label>
+                      </div>
+                      <Input
+                        type="number"
+                        placeholder="R$ 999.999,00"
+                        value={valueMax}
+                        onChange={(e) => {
+                          setValueMax(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        data-testid="filter-value-max"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Coordinator and Client */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="font-medium">Coordenador</Label>
+                      <Select
+                        value={coordinatorFilter}
+                        onValueChange={(v) => {
+                          setCoordinatorFilter(v === '_all' ? '' : v);
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger data-testid="filter-coordinator">
+                          <SelectValue placeholder="Todos os coordenadores" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_all">Todos os coordenadores</SelectItem>
+                          {uniqueCoordinators.map((coord) => (
+                            <SelectItem key={coord} value={coord}>
+                              {coord}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="font-medium">Cliente</Label>
+                      <Select
+                        value={clientFilter}
+                        onValueChange={(v) => {
+                          setClientFilter(v === '_all' ? '' : v);
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger data-testid="filter-client">
+                          <SelectValue placeholder="Todos os clientes" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_all">Todos os clientes</SelectItem>
+                          {clients.slice(0, 100).map((client) => (
+                            <SelectItem key={client.id} value={client.id}>
+                              {client.razaoSocial}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Results Summary */}
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <span>
+            {filteredProposals.length === proposals.length
+              ? `${proposals.length} propostas`
+              : `${filteredProposals.length} de ${proposals.length} propostas`}
+          </span>
+          {activeFilterCount > 0 && (
+            <span className="text-primary">
+              {activeFilterCount} filtro{activeFilterCount > 1 ? 's' : ''} ativo{activeFilterCount > 1 ? 's' : ''}
+            </span>
+          )}
         </div>
 
         {isLoading ? (
