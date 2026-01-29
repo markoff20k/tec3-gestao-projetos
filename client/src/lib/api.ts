@@ -131,6 +131,23 @@ export interface Proposal {
   expectedEndDate?: string;
   sentDate?: string;
   createdAt: string;
+  updatedAt?: string;
+  // Campos adicionais do sistema legado
+  activityType?: string;
+  umbrellaRef?: string;
+  utility?: string;
+  sentByName?: string;
+  specialist?: string;
+  mainType?: string;
+  quantity?: number;
+  hourJustification?: number;
+  rehabilitation?: number;
+  subcontracted?: number;
+  paymentBook?: number;
+  expense?: number;
+  additiveValue?: number;
+  resource?: number;
+  workOrders?: string;
 }
 
 export interface Project {

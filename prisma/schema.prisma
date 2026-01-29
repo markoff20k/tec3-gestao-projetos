@@ -66,7 +66,25 @@ model Proposal {
   expectedEndDate   DateTime? @map("expected_end_date") @db.Date
   projectId         String?   @map("project_id")
   createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime? @updatedAt @map("updated_at")
   sentDate          DateTime? @map("sent_date") @db.Date
+
+  // Campos adicionais do sistema legado
+  activityType      String?   @map("activity_type")
+  umbrellaRef       String?   @map("umbrella_ref")
+  utility           String?
+  sentByName        String?   @map("sent_by_name")
+  specialist        String?
+  mainType          String?   @map("main_type")
+  quantity          Int?      @default(0)
+  hourJustification Decimal?  @map("hour_justification") @db.Decimal(10, 2)
+  rehabilitation    Decimal?  @default(0) @db.Decimal(10, 2)
+  subcontracted     Decimal?  @default(0) @db.Decimal(10, 2)
+  paymentBook       Decimal?  @map("payment_book") @default(0) @db.Decimal(10, 2)
+  expense           Decimal?  @default(0) @db.Decimal(10, 2)
+  additiveValue     Decimal?  @map("additive_value") @default(0) @db.Decimal(10, 2)
+  resource          Decimal?  @default(0) @db.Decimal(10, 2)
+  workOrders        String?   @map("work_orders")
 
   client            Client    @relation(fields: [clientId], references: [id])
 

@@ -787,58 +787,78 @@ export default function Proposals() {
           <div className="text-center py-8 text-muted-foreground">Nenhuma proposta encontrada</div>
         ) : (
           <div className="rounded-md border overflow-x-auto">
-            <Table>
+            <Table className="min-w-[2400px]">
               <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[120px]">Código</TableHead>
+                <TableRow className="bg-muted/50">
+                  <TableHead className="w-[100px] sticky left-0 bg-muted/50 z-10">Cód. Proposta</TableHead>
                   <TableHead className="w-[50px]">Rev</TableHead>
-                  <TableHead className="w-[100px]">Tipo</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead>CNPJ</TableHead>
-                  <TableHead>Descrição</TableHead>
-                  <TableHead className="w-[120px]">Tipo Proposta</TableHead>
-                  <TableHead className="w-[100px]">Status</TableHead>
-                  <TableHead className="w-[100px]">Data</TableHead>
-                  <TableHead className="w-[100px]">Coordenador</TableHead>
-                  <TableHead className="w-[120px] text-right">Valor</TableHead>
-                  <TableHead className="w-[100px]">Ações</TableHead>
+                  <TableHead className="w-[100px]">Tipo Proposta</TableHead>
+                  <TableHead className="w-[120px]">Tipo Atividade</TableHead>
+                  <TableHead className="w-[100px]">Guarda-chuva</TableHead>
+                  <TableHead className="w-[180px]">Cliente</TableHead>
+                  <TableHead className="w-[250px]">Título</TableHead>
+                  <TableHead className="w-[100px]">Dt. Atualização</TableHead>
+                  <TableHead className="w-[120px]">Utilidade</TableHead>
+                  <TableHead className="w-[100px]">Dt. Envio</TableHead>
+                  <TableHead className="w-[100px]">Usuário/Enviou</TableHead>
+                  <TableHead className="w-[100px]">Situação</TableHead>
+                  <TableHead className="w-[120px]">Especialista</TableHead>
+                  <TableHead className="w-[120px]">Tipo Principal</TableHead>
+                  <TableHead className="w-[60px] text-right">Qtn</TableHead>
+                  <TableHead className="w-[100px] text-right">Justif. Horas</TableHead>
+                  <TableHead className="w-[100px] text-right">Reabilitação</TableHead>
+                  <TableHead className="w-[100px] text-right">Subcontratada</TableHead>
+                  <TableHead className="w-[100px] text-right">Liv. Pagto</TableHead>
+                  <TableHead className="w-[100px] text-right">Despesa</TableHead>
+                  <TableHead className="w-[100px] text-right">Aditivo</TableHead>
+                  <TableHead className="w-[100px] text-right">Recurso</TableHead>
+                  <TableHead className="w-[120px] text-right">Valor Proposta</TableHead>
+                  <TableHead className="w-[80px]">OAs</TableHead>
+                  <TableHead className="w-[100px] sticky right-0 bg-muted/50 z-10">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paginatedProposals.map((proposal) => (
                   <TableRow key={proposal.id} data-testid={`row-proposal-${proposal.id}`}>
-                    <TableCell className="font-medium">{proposal.code}</TableCell>
+                    <TableCell className="font-medium sticky left-0 bg-background z-10">{proposal.code}</TableCell>
                     <TableCell>{proposal.revision || 0}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className="text-xs">
+                      <Badge variant="outline" className="text-xs whitespace-nowrap">
                         {typeLabels[proposal.type] || proposal.type}
                       </Badge>
                     </TableCell>
-                    <TableCell className="max-w-[200px] truncate" title={proposal.client?.razaoSocial}>
+                    <TableCell className="text-xs">{proposal.activityType || '-'}</TableCell>
+                    <TableCell className="text-xs">{proposal.umbrellaRef || '-'}</TableCell>
+                    <TableCell className="max-w-[180px] truncate text-xs" title={proposal.client?.razaoSocial}>
                       {proposal.client?.razaoSocial || '-'}
                     </TableCell>
-                    <TableCell className="text-xs">{proposal.client?.cnpj || '-'}</TableCell>
-                    <TableCell className="max-w-[250px] truncate" title={proposal.title}>
+                    <TableCell className="max-w-[250px] truncate text-xs" title={proposal.title}>
                       {proposal.title}
                     </TableCell>
+                    <TableCell className="text-xs">{formatDate(proposal.updatedAt)}</TableCell>
+                    <TableCell className="text-xs truncate max-w-[120px]">{proposal.utility || '-'}</TableCell>
+                    <TableCell className="text-xs">{formatDate(proposal.sentDate)}</TableCell>
+                    <TableCell className="text-xs truncate max-w-[100px]">{proposal.sentByName || '-'}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary" className="text-xs">
-                        {typeLabels[proposal.type] || proposal.type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={`text-xs text-white ${statusColors[proposal.status]}`}>
+                      <Badge className={`text-xs text-white whitespace-nowrap ${statusColors[proposal.status]}`}>
                         {statusLabels[proposal.status] || proposal.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-xs">{formatDate(proposal.createdAt)}</TableCell>
-                    <TableCell className="text-xs truncate max-w-[100px]" title={proposal.coordinatorName || '-'}>
-                      {proposal.coordinatorName || '-'}
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
+                    <TableCell className="text-xs truncate max-w-[120px]">{proposal.specialist || '-'}</TableCell>
+                    <TableCell className="text-xs truncate max-w-[120px]">{proposal.mainType || '-'}</TableCell>
+                    <TableCell className="text-xs text-right">{proposal.quantity || 0}</TableCell>
+                    <TableCell className="text-xs text-right">{proposal.hourJustification?.toFixed(2) || '0.00'}</TableCell>
+                    <TableCell className="text-xs text-right">{proposal.rehabilitation?.toFixed(2) || '0.00'}</TableCell>
+                    <TableCell className="text-xs text-right">{proposal.subcontracted?.toFixed(2) || '0.00'}</TableCell>
+                    <TableCell className="text-xs text-right">{proposal.paymentBook?.toFixed(2) || '0.00'}</TableCell>
+                    <TableCell className="text-xs text-right">{proposal.expense?.toFixed(2) || '0.00'}</TableCell>
+                    <TableCell className="text-xs text-right">{proposal.additiveValue?.toFixed(2) || '0.00'}</TableCell>
+                    <TableCell className="text-xs text-right">{proposal.resource?.toFixed(2) || '0.00'}</TableCell>
+                    <TableCell className="text-right font-medium text-xs">
                       {formatCurrency(proposal.totalValue)}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="text-xs">{proposal.workOrders || '-'}</TableCell>
+                    <TableCell className="sticky right-0 bg-background z-10">
                       <div className="flex gap-1">
                         <Button 
                           size="icon" 
@@ -950,78 +970,178 @@ export default function Proposals() {
 
         {/* View Dialog */}
         <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Detalhes da Proposta</DialogTitle>
             </DialogHeader>
             {selectedProposal && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Código</Label>
-                    <p className="font-medium">{selectedProposal.code}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Revisão</Label>
-                    <p className="font-medium">{selectedProposal.revision || 0}</p>
-                  </div>
-                </div>
+              <div className="space-y-6">
+                {/* Informações Básicas */}
                 <div>
-                  <Label className="text-muted-foreground text-sm">Título</Label>
-                  <p className="font-medium">{selectedProposal.title}</p>
+                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Informações Básicas</h3>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Código</Label>
+                      <p className="font-medium">{selectedProposal.code}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Revisão</Label>
+                      <p className="font-medium">{selectedProposal.revision || 0}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Status</Label>
+                      <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
+                        {statusLabels[selectedProposal.status] || selectedProposal.status}
+                      </Badge>
+                    </div>
+                  </div>
                 </div>
+
+                <Separator />
+
+                {/* Título e Descrição */}
                 <div>
-                  <Label className="text-muted-foreground text-sm">Descrição</Label>
-                  <p className="font-medium">{selectedProposal.description || '-'}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Cliente</Label>
-                    <p className="font-medium">{selectedProposal.client?.razaoSocial || '-'}</p>
+                  <div className="mb-3">
+                    <Label className="text-muted-foreground text-xs">Título</Label>
+                    <p className="font-medium">{selectedProposal.title}</p>
                   </div>
                   <div>
-                    <Label className="text-muted-foreground text-sm">CNPJ</Label>
-                    <p className="font-medium">{selectedProposal.client?.cnpj || '-'}</p>
+                    <Label className="text-muted-foreground text-xs">Descrição</Label>
+                    <p className="text-sm">{selectedProposal.description || '-'}</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Tipo</Label>
-                    <Badge variant="outline">{typeLabels[selectedProposal.type] || selectedProposal.type}</Badge>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Status</Label>
-                    <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
-                      {statusLabels[selectedProposal.status] || selectedProposal.status}
-                    </Badge>
+
+                <Separator />
+
+                {/* Cliente e Tipos */}
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Cliente e Classificação</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Cliente</Label>
+                      <p className="font-medium">{selectedProposal.client?.razaoSocial || '-'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">CNPJ</Label>
+                      <p className="font-medium">{selectedProposal.client?.cnpj || '-'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Tipo Proposta</Label>
+                      <Badge variant="outline">{typeLabels[selectedProposal.type] || selectedProposal.type}</Badge>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Tipo Atividade</Label>
+                      <p className="font-medium">{selectedProposal.activityType || '-'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Guarda-chuva</Label>
+                      <p className="font-medium">{selectedProposal.umbrellaRef || '-'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Tipo Principal</Label>
+                      <p className="font-medium">{selectedProposal.mainType || '-'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Utilidade</Label>
+                      <p className="font-medium">{selectedProposal.utility || '-'}</p>
+                    </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Valor Total</Label>
-                    <p className="font-medium">{formatCurrency(selectedProposal.totalValue)}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Horas Estimadas</Label>
-                    <p className="font-medium">{selectedProposal.estimatedHours || 0}h</p>
+
+                <Separator />
+
+                {/* Responsáveis */}
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Responsáveis</h3>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Coordenador</Label>
+                      <p className="font-medium">{selectedProposal.coordinatorName || '-'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Especialista</Label>
+                      <p className="font-medium">{selectedProposal.specialist || '-'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Enviado por</Label>
+                      <p className="font-medium">{selectedProposal.sentByName || '-'}</p>
+                    </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Coordenador</Label>
-                    <p className="font-medium">{selectedProposal.coordinatorName || '-'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Data de Criação</Label>
-                    <p className="font-medium">{formatDate(selectedProposal.createdAt)}</p>
+
+                <Separator />
+
+                {/* Datas */}
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Datas</h3>
+                  <div className="grid grid-cols-4 gap-4">
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Data de Criação</Label>
+                      <p className="font-medium">{formatDate(selectedProposal.createdAt)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Última Atualização</Label>
+                      <p className="font-medium">{formatDate(selectedProposal.updatedAt)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Data de Envio</Label>
+                      <p className="font-medium">{formatDate(selectedProposal.sentDate)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">OAs</Label>
+                      <p className="font-medium">{selectedProposal.workOrders || '-'}</p>
+                    </div>
                   </div>
                 </div>
-                {selectedProposal.sentDate && (
-                  <div>
-                    <Label className="text-muted-foreground text-sm">Data de Envio</Label>
-                    <p className="font-medium">{formatDate(selectedProposal.sentDate)}</p>
+
+                <Separator />
+
+                {/* Valores Financeiros */}
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Valores Financeiros</h3>
+                  <div className="grid grid-cols-4 gap-4">
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Valor Proposta</Label>
+                      <p className="font-medium text-lg">{formatCurrency(selectedProposal.totalValue)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Horas Estimadas</Label>
+                      <p className="font-medium">{selectedProposal.estimatedHours || 0}h</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Quantidade</Label>
+                      <p className="font-medium">{selectedProposal.quantity || 0}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Justif. Horas</Label>
+                      <p className="font-medium">{selectedProposal.hourJustification?.toFixed(2) || '0.00'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Reabilitação</Label>
+                      <p className="font-medium">{selectedProposal.rehabilitation?.toFixed(2) || '0.00'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Subcontratada</Label>
+                      <p className="font-medium">{selectedProposal.subcontracted?.toFixed(2) || '0.00'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Liv. Pagto</Label>
+                      <p className="font-medium">{selectedProposal.paymentBook?.toFixed(2) || '0.00'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Despesa</Label>
+                      <p className="font-medium">{selectedProposal.expense?.toFixed(2) || '0.00'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Aditivo</Label>
+                      <p className="font-medium">{selectedProposal.additiveValue?.toFixed(2) || '0.00'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Recurso</Label>
+                      <p className="font-medium">{selectedProposal.resource?.toFixed(2) || '0.00'}</p>
+                    </div>
                   </div>
-                )}
+                </div>
               </div>
             )}
           </DialogContent>
