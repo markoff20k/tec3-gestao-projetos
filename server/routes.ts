@@ -150,6 +150,44 @@ export async function registerRoutes(
       name: user.name,
       role: user.role,
       photoUrl: user.photoUrl,
+      preferences: {
+        theme: user.theme || 'light',
+        sidebarCollapsed: user.sidebarCollapsed || false,
+        language: user.language || 'pt-BR',
+      },
+    });
+  });
+
+  app.get('/api/auth/preferences', authenticateToken, async (req, res) => {
+    const userId = (req as any).user.sub;
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario nao encontrado' });
+    }
+    res.json({
+      theme: user.theme || 'light',
+      sidebarCollapsed: user.sidebarCollapsed || false,
+      language: user.language || 'pt-BR',
+    });
+  });
+
+  app.put('/api/auth/preferences', authenticateToken, async (req, res) => {
+    const userId = (req as any).user.sub;
+    const { theme, sidebarCollapsed, language } = req.body;
+    
+    const updateData: any = {};
+    if (theme !== undefined) updateData.theme = theme;
+    if (sidebarCollapsed !== undefined) updateData.sidebarCollapsed = sidebarCollapsed;
+    if (language !== undefined) updateData.language = language;
+    
+    const user = await storage.updateUser(userId, updateData);
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario nao encontrado' });
+    }
+    res.json({
+      theme: user.theme || 'light',
+      sidebarCollapsed: user.sidebarCollapsed || false,
+      language: user.language || 'pt-BR',
     });
   });
 

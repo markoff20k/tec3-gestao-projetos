@@ -24,6 +24,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { authApi } from "@/lib/api"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -73,6 +74,22 @@ function SidebarProvider({
   // We use openProp and setOpenProp for control from outside the component.
   const [_open, _setOpen] = React.useState(defaultOpen)
   const open = openProp ?? _open
+
+  // Load sidebar state from database on mount
+  React.useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      authApi.getPreferences()
+        .then((prefs) => {
+          if (prefs.sidebarCollapsed !== undefined) {
+            _setOpen(!prefs.sidebarCollapsed)
+          }
+        })
+        .catch(() => {
+        })
+    }
+  }, [])
+
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
       const openState = typeof value === "function" ? value(open) : value
@@ -84,6 +101,12 @@ function SidebarProvider({
 
       // This sets the cookie to keep the sidebar state.
       document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+      
+      // Sync with database if authenticated
+      const token = localStorage.getItem('token')
+      if (token) {
+        authApi.updatePreferences({ sidebarCollapsed: !openState }).catch(() => {})
+      }
     },
     [setOpenProp, open]
   )

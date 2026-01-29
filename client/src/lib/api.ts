@@ -41,12 +41,19 @@ export const api = {
   delete: <T>(endpoint: string) => request<T>(endpoint, { method: 'DELETE' }),
 };
 
+export interface UserPreferences {
+  theme: 'light' | 'dark';
+  sidebarCollapsed: boolean;
+  language: string;
+}
+
 export interface User {
   id: string;
   email: string;
   name: string;
   role: 'owner' | 'admin' | 'coordinator' | 'commercial' | 'user';
   photoUrl?: string;
+  preferences?: UserPreferences;
 }
 
 export interface AuthResponse {
@@ -80,6 +87,9 @@ export const authApi = {
     
     return response.json();
   },
+  getPreferences: () => api.get<UserPreferences>('/auth/preferences'),
+  updatePreferences: (data: Partial<UserPreferences>) =>
+    api.put<UserPreferences>('/auth/preferences', data),
 };
 
 export interface Client {

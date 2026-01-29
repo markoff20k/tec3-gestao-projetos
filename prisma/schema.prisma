@@ -8,13 +8,18 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  role      String   @default("user")
-  isActive  Boolean  @default(true) @map("is_active")
-  photoUrl  String?  @map("photo_url")
+  id               String   @id @default(uuid())
+  email            String   @unique
+  password         String
+  name             String
+  role             String   @default("user")
+  isActive         Boolean  @default(true) @map("is_active")
+  photoUrl         String?  @map("photo_url")
+  
+  // Preferências do usuário
+  theme            String   @default("light")
+  sidebarCollapsed Boolean  @default(false) @map("sidebar_collapsed")
+  language         String   @default("pt-BR")
 
   @@map("users")
 }

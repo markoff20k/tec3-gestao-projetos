@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { authApi } from '@/lib/api';
 
 type Theme = 'light' | 'dark';
 
@@ -6,6 +7,7 @@ interface ThemeContextType {
   theme: Theme;
   toggleTheme: () => void;
   setTheme: (theme: Theme) => void;
+  isLoading: boolean;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -19,6 +21,25 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
     return 'light';
   });
+  const [isLoading, setIsLoading] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    setIsAuthenticated(!!token);
+    
+    if (token) {
+      authApi.getPreferences()
+        .then((prefs) => {
+          if (prefs.theme) {
+            setThemeState(prefs.theme);
+            localStorage.setItem('theme', prefs.theme);
+          }
+        })
+        .catch(() => {
+        });
+    }
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -30,16 +51,32 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  const toggleTheme = () => {
-    setThemeState(prev => prev === 'light' ? 'dark' : 'light');
-  };
+  const syncWithServer = useCallback(async (newTheme: Theme) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      setIsLoading(true);
+      try {
+        await authApi.updatePreferences({ theme: newTheme });
+      } catch (error) {
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  }, []);
 
-  const setTheme = (newTheme: Theme) => {
+  const toggleTheme = useCallback(() => {
+    const newTheme = theme === 'light' ? 'dark' : 'light';
     setThemeState(newTheme);
-  };
+    syncWithServer(newTheme);
+  }, [theme, syncWithServer]);
+
+  const setTheme = useCallback((newTheme: Theme) => {
+    setThemeState(newTheme);
+    syncWithServer(newTheme);
+  }, [syncWithServer]);
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
+    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme, isLoading }}>
       {children}
     </ThemeContext.Provider>
   );
