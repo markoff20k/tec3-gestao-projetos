@@ -365,19 +365,20 @@ export function Layout({ children }: LayoutProps) {
             {/* Profile Avatar with Dropdown Menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon"
                   data-testid="button-profile-menu"
-                  className="ml-2 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-sidebar"
+                  className="text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
                 >
-                  <Avatar className="h-9 w-9 cursor-pointer">
                   {user?.photoUrl ? (
-                    <AvatarImage src={user.photoUrl} alt={user?.name} />
-                  ) : null}
-                  <AvatarFallback className="bg-primary/10 text-primary">
+                    <Avatar className="h-7 w-7">
+                      <AvatarImage src={user.photoUrl} alt={user?.name} />
+                    </Avatar>
+                  ) : (
                     <User className="h-5 w-5" />
-                  </AvatarFallback>
-                </Avatar>
-                </button>
+                  )}
+                </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
