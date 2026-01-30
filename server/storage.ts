@@ -38,6 +38,8 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | null>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User | null>;
+  updateUserPhoto(id: string, photoData: Buffer, photoMimeType: string, photoUrl: string): Promise<User | null>;
+  getUserPhoto(id: string): Promise<{ data: Buffer | null; mimeType: string | null } | null>;
   getAllUsers(): Promise<User[]>;
   
   getAllClients(): Promise<Client[]>;
@@ -110,7 +112,26 @@ export class PrismaStorage implements IStorage {
     if (updates.password) {
       updates.password = await bcrypt.hash(updates.password, 10);
     }
-    return prisma.user.update({ where: { id }, data: updates });
+    return prisma.user.update({ where: { id }, data: updates as any });
+  }
+
+  async updateUserPhoto(id: string, photoData: Buffer, photoMimeType: string, photoUrl: string): Promise<User | null> {
+    return prisma.user.update({
+      where: { id },
+      data: { photoData, photoMimeType, photoUrl }
+    });
+  }
+
+  async getUserPhoto(id: string): Promise<{ data: Buffer | null; mimeType: string | null } | null> {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: { photoData: true, photoMimeType: true }
+    });
+    if (!user) return null;
+    return { 
+      data: user.photoData ? Buffer.from(user.photoData) : null, 
+      mimeType: user.photoMimeType 
+    };
   }
 
   async getAllUsers(): Promise<User[]> {

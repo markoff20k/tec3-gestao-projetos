@@ -8,21 +8,8 @@ import path from "path";
 import fs from "fs";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 
-const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => {
-      cb(null, uploadsDir);
-    },
-    filename: (_req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      cb(null, uniqueSuffix + path.extname(file.originalname));
-    }
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -211,26 +198,18 @@ export async function registerRoutes(
     });
   });
 
-  app.post('/api/auth/request-photo-upload', authenticateToken, async (req, res) => {
-    try {
-      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
-      const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
-      res.json({ uploadURL, objectPath });
-    } catch (error) {
-      console.error('Error generating upload URL:', error);
-      res.status(500).json({ message: 'Erro ao gerar URL de upload' });
-    }
-  });
-
-  app.post('/api/auth/update-photo', authenticateToken, async (req, res) => {
+  app.post('/api/auth/upload-photo', authenticateToken, upload.single('photo'), async (req, res) => {
     const userId = (req as any).user.sub;
-    const { objectPath } = req.body;
     
-    if (!objectPath) {
-      return res.status(400).json({ message: 'Caminho do arquivo é obrigatório' });
+    if (!req.file) {
+      return res.status(400).json({ message: 'Nenhum arquivo enviado' });
     }
 
-    const user = await storage.updateUser(userId, { photoUrl: objectPath });
+    const photoData = req.file.buffer;
+    const photoMimeType = req.file.mimetype;
+    const photoUrl = `/api/auth/photo/${userId}`;
+
+    const user = await storage.updateUserPhoto(userId, photoData, photoMimeType, photoUrl);
     
     if (!user) {
       return res.status(404).json({ message: 'Usuario nao encontrado' });
@@ -245,7 +224,18 @@ export async function registerRoutes(
     });
   });
 
-  registerObjectStorageRoutes(app);
+  app.get('/api/auth/photo/:userId', async (req, res) => {
+    const { userId } = req.params;
+    const photoData = await storage.getUserPhoto(userId);
+    
+    if (!photoData || !photoData.data) {
+      return res.status(404).json({ message: 'Foto nao encontrada' });
+    }
+
+    res.set('Content-Type', photoData.mimeType || 'image/jpeg');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(photoData.data);
+  });
 
   app.get('/api/auth/users', authenticateToken, async (req, res) => {
     const userRole = (req as any).user.role;
