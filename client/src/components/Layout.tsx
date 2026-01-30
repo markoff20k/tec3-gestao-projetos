@@ -334,7 +334,7 @@ export function Layout({ children }: LayoutProps) {
                   size="icon"
                   data-testid="button-theme-toggle"
                   onClick={toggleTheme}
-                  className="text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+                  className="text-white/70 hover:text-white hover:bg-white/10"
                 >
                   {theme === 'dark' ? (
                     <Sun className="h-5 w-5" />
@@ -353,7 +353,7 @@ export function Layout({ children }: LayoutProps) {
                   variant="ghost"
                   size="icon"
                   data-testid="button-notifications"
-                  className="relative text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+                  className="relative text-white/70 hover:text-white hover:bg-white/10"
                 >
                   <Bell className="h-5 w-5" />
                   <span className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full" />
@@ -369,15 +369,9 @@ export function Layout({ children }: LayoutProps) {
                   variant="ghost"
                   size="icon"
                   data-testid="button-profile-menu"
-                  className="text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+                  className="text-white/70 hover:text-white hover:bg-white/10"
                 >
-                  {user?.photoUrl ? (
-                    <Avatar className="h-7 w-7">
-                      <AvatarImage src={user.photoUrl} alt={user?.name} />
-                    </Avatar>
-                  ) : (
-                    <User className="h-5 w-5" />
-                  )}
+                  <User className="h-5 w-5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
