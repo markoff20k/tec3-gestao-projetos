@@ -374,7 +374,7 @@ export function Layout({ children }: LayoutProps) {
                         <AvatarImage src={user.photoUrl} alt={user?.name} />
                       </Avatar>
                     ) : (
-                      <User className="h-5 w-5 text-muted-foreground" />
+                      <User className="h-5 w-5 text-sidebar-foreground/70 hover:text-sidebar-foreground" />
                     )}
                 </button>
               </DropdownMenuTrigger>
