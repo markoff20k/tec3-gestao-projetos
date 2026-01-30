@@ -80,21 +80,40 @@ export const authApi = {
     api.put<User>('/auth/profile', data),
   uploadPhoto: async (file: File): Promise<User> => {
     const token = localStorage.getItem('token');
-    const formData = new FormData();
-    formData.append('photo', file);
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
     
-    const response = await fetch('/api/auth/upload-photo', {
+    const urlResponse = await fetch('/api/auth/request-photo-upload', {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: formData,
+      headers: { ...headers, 'Content-Type': 'application/json' },
     });
     
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Upload failed' }));
-      throw new Error(error.message || 'Upload failed');
+    if (!urlResponse.ok) {
+      throw new Error('Falha ao obter URL de upload');
     }
     
-    return response.json();
+    const { uploadURL, objectPath } = await urlResponse.json();
+    
+    const uploadResponse = await fetch(uploadURL, {
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': file.type || 'image/jpeg' },
+    });
+    
+    if (!uploadResponse.ok) {
+      throw new Error('Falha ao enviar arquivo');
+    }
+    
+    const updateResponse = await fetch('/api/auth/update-photo', {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ objectPath }),
+    });
+    
+    if (!updateResponse.ok) {
+      throw new Error('Falha ao atualizar perfil');
+    }
+    
+    return updateResponse.json();
   },
   getPreferences: () => api.get<UserPreferences>('/auth/preferences'),
   updatePreferences: (data: Partial<UserPreferences>) =>

@@ -3,36 +3,10 @@ import { type Server } from "http";
 import { storage } from "./storage";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import multer from "multer";
-import path from "path";
-import fs from "fs";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
+import { registerObjectStorageRoutes, ObjectStorageService } from "./replit_integrations/object_storage";
 
-const uploadsDir = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => {
-      cb(null, uploadsDir);
-    },
-    filename: (_req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      cb(null, uniqueSuffix + path.extname(file.originalname));
-    }
-  }),
-  limits: { fileSize: 2 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Tipo de arquivo não permitido. Use JPG, PNG, GIF ou WebP.'));
-    }
-  }
-});
+const objectStorageService = new ObjectStorageService();
 
 const JWT_SECRET = process.env.SESSION_SECRET || 'dev-secret-key';
 
@@ -211,15 +185,26 @@ export async function registerRoutes(
     });
   });
 
-  app.post('/api/auth/upload-photo', authenticateToken, upload.single('photo'), async (req, res) => {
+  app.post('/api/auth/request-photo-upload', authenticateToken, async (req, res) => {
+    try {
+      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
+      const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
+      res.json({ uploadURL, objectPath });
+    } catch (error) {
+      console.error('Error generating upload URL:', error);
+      res.status(500).json({ message: 'Erro ao gerar URL de upload' });
+    }
+  });
+
+  app.post('/api/auth/update-photo', authenticateToken, async (req, res) => {
     const userId = (req as any).user.sub;
+    const { objectPath } = req.body;
     
-    if (!req.file) {
-      return res.status(400).json({ message: 'Nenhum arquivo enviado' });
+    if (!objectPath) {
+      return res.status(400).json({ message: 'Caminho do arquivo é obrigatório' });
     }
 
-    const photoUrl = `/uploads/${req.file.filename}`;
-    const user = await storage.updateUser(userId, { photoUrl });
+    const user = await storage.updateUser(userId, { photoUrl: objectPath });
     
     if (!user) {
       return res.status(404).json({ message: 'Usuario nao encontrado' });
@@ -234,7 +219,7 @@ export async function registerRoutes(
     });
   });
 
-  app.use('/uploads', express.static(uploadsDir));
+  registerObjectStorageRoutes(app);
 
   app.get('/api/auth/users', authenticateToken, async (req, res) => {
     const userRole = (req as any).user.role;
