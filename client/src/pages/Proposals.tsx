@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, ArrowRight, ChevronLeft, ChevronRight, Pencil, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, RotateCcw } from 'lucide-react';
+import { Plus, Search, Eye, ArrowRight, ChevronLeft, ChevronRight, Pencil, X, RotateCcw, Settings2, GripVertical, Check } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,16 +29,30 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from '@/components/ui/sheet';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { useToast } from '@/hooks/use-toast';
-import { proposalsApi, clientsApi, Proposal, Client } from '@/lib/api';
+import { proposalsApi, clientsApi, authApi, Proposal, Client } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
 import { Separator } from '@/components/ui/separator';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-500',
@@ -70,16 +84,64 @@ const typeLabels: Record<string, string> = {
   additive: 'Aditivo',
 };
 
+interface ColumnConfig {
+  id: string;
+  label: string;
+  visible: boolean;
+  width?: string;
+  category: 'basic' | 'classification' | 'values' | 'dates' | 'people';
+}
+
+const defaultColumns: ColumnConfig[] = [
+  { id: 'code', label: 'Código', visible: true, width: 'w-28', category: 'basic' },
+  { id: 'revision', label: 'Rev', visible: true, width: 'w-16', category: 'basic' },
+  { id: 'client', label: 'Cliente', visible: true, width: 'w-48', category: 'basic' },
+  { id: 'title', label: 'Título', visible: true, width: 'w-64', category: 'basic' },
+  { id: 'status', label: 'Situação', visible: true, width: 'w-28', category: 'basic' },
+  { id: 'totalValue', label: 'Valor', visible: true, width: 'w-32', category: 'values' },
+  { id: 'type', label: 'Tipo Proposta', visible: false, width: 'w-28', category: 'classification' },
+  { id: 'activityType', label: 'Tipo Atividade', visible: false, width: 'w-32', category: 'classification' },
+  { id: 'umbrellaRef', label: 'Guarda-chuva', visible: false, width: 'w-28', category: 'classification' },
+  { id: 'mainType', label: 'Tipo Principal', visible: false, width: 'w-32', category: 'classification' },
+  { id: 'utility', label: 'Utilidade', visible: false, width: 'w-32', category: 'classification' },
+  { id: 'coordinatorName', label: 'Coordenador', visible: false, width: 'w-32', category: 'people' },
+  { id: 'specialist', label: 'Especialista', visible: false, width: 'w-32', category: 'people' },
+  { id: 'sentByName', label: 'Enviado por', visible: false, width: 'w-28', category: 'people' },
+  { id: 'createdAt', label: 'Dt. Criação', visible: false, width: 'w-28', category: 'dates' },
+  { id: 'updatedAt', label: 'Dt. Atualização', visible: false, width: 'w-28', category: 'dates' },
+  { id: 'sentDate', label: 'Dt. Envio', visible: false, width: 'w-28', category: 'dates' },
+  { id: 'quantity', label: 'Quantidade', visible: false, width: 'w-24', category: 'values' },
+  { id: 'hourJustification', label: 'Justif. Horas', visible: false, width: 'w-28', category: 'values' },
+  { id: 'rehabilitation', label: 'Reabilitação', visible: false, width: 'w-28', category: 'values' },
+  { id: 'subcontracted', label: 'Subcontratada', visible: false, width: 'w-28', category: 'values' },
+  { id: 'paymentBook', label: 'Liv. Pagto', visible: false, width: 'w-28', category: 'values' },
+  { id: 'expense', label: 'Despesa', visible: false, width: 'w-28', category: 'values' },
+  { id: 'additiveValue', label: 'Aditivo', visible: false, width: 'w-28', category: 'values' },
+  { id: 'resource', label: 'Recurso', visible: false, width: 'w-28', category: 'values' },
+  { id: 'workOrders', label: 'OAs', visible: false, width: 'w-20', category: 'basic' },
+];
+
+const categoryLabels: Record<string, string> = {
+  basic: 'Informações Básicas',
+  classification: 'Classificação',
+  values: 'Valores',
+  dates: 'Datas',
+  people: 'Responsáveis',
+};
+
 export default function Proposals() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(12);
+  const [itemsPerPage, setItemsPerPage] = useState(15);
+  const [columns, setColumns] = useState<ColumnConfig[]>(defaultColumns);
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
+  
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -101,15 +163,40 @@ export default function Proposals() {
   });
 
   // Filter states
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [statusFilters, setStatusFilters] = useState<string[]>([]);
-  const [typeFilters, setTypeFilters] = useState<string[]>([]);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [valueMin, setValueMin] = useState('');
-  const [valueMax, setValueMax] = useState('');
-  const [coordinatorFilter, setCoordinatorFilter] = useState('');
-  const [clientFilter, setClientFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
+
+  // Load column preferences from localStorage on mount
+  useEffect(() => {
+    const savedColumns = localStorage.getItem('proposalColumns');
+    if (savedColumns) {
+      try {
+        const parsed = JSON.parse(savedColumns);
+        setColumns(parsed);
+      } catch (e) {
+        console.error('Failed to parse saved columns');
+      }
+    }
+  }, []);
+
+  // Save column preferences when they change
+  const saveColumnPreferences = (newColumns: ColumnConfig[]) => {
+    setColumns(newColumns);
+    localStorage.setItem('proposalColumns', JSON.stringify(newColumns));
+  };
+
+  const toggleColumn = (columnId: string) => {
+    const newColumns = columns.map(col => 
+      col.id === columnId ? { ...col, visible: !col.visible } : col
+    );
+    saveColumnPreferences(newColumns);
+  };
+
+  const resetColumns = () => {
+    saveColumnPreferences(defaultColumns);
+  };
+
+  const visibleColumns = columns.filter(col => col.visible);
 
   const { data: proposals = [], isLoading } = useQuery<Proposal[]>({
     queryKey: ['/api/proposals'],
@@ -139,6 +226,7 @@ export default function Proposals() {
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       toast({ title: 'Proposta convertida em projeto com sucesso' });
+      setDetailSheetOpen(false);
     },
     onError: (error) => {
       toast({ title: 'Erro ao converter proposta', description: error.message, variant: 'destructive' });
@@ -158,12 +246,13 @@ export default function Proposals() {
     },
   });
 
-  const handleViewProposal = (proposal: Proposal) => {
+  const handleRowClick = (proposal: Proposal) => {
     setSelectedProposal(proposal);
-    setViewDialogOpen(true);
+    setDetailSheetOpen(true);
   };
 
-  const handleEditProposal = (proposal: Proposal) => {
+  const handleEditProposal = (proposal: Proposal, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     setSelectedProposal(proposal);
     setEditFormData({
       title: proposal.title || '',
@@ -213,67 +302,18 @@ export default function Proposals() {
     });
   };
 
-  const formatCurrency = (value: number) =>
-    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+  const formatCurrency = (value: number | string | null | undefined) => {
+    const numValue = typeof value === 'string' ? parseFloat(value) : (value || 0);
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(numValue);
+  };
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString('pt-BR');
   };
 
-  // Get unique coordinators for filter dropdown
-  const uniqueCoordinators = useMemo(() => {
-    const coords = new Set<string>();
-    proposals.forEach((p) => {
-      if (p.coordinatorName) coords.add(p.coordinatorName);
-    });
-    return Array.from(coords).sort();
-  }, [proposals]);
-
-  // Count active filters
-  const activeFilterCount = useMemo(() => {
-    let count = 0;
-    if (statusFilters.length > 0) count++;
-    if (typeFilters.length > 0) count++;
-    if (dateFrom || dateTo) count++;
-    if (valueMin || valueMax) count++;
-    if (coordinatorFilter) count++;
-    if (clientFilter) count++;
-    return count;
-  }, [statusFilters, typeFilters, dateFrom, dateTo, valueMin, valueMax, coordinatorFilter, clientFilter]);
-
-  // Clear all filters
-  const clearAllFilters = () => {
-    setStatusFilters([]);
-    setTypeFilters([]);
-    setDateFrom('');
-    setDateTo('');
-    setValueMin('');
-    setValueMax('');
-    setCoordinatorFilter('');
-    setClientFilter('');
-    setSearch('');
-    setCurrentPage(1);
-  };
-
-  // Toggle filter helpers
-  const toggleStatusFilter = (status: string) => {
-    setStatusFilters((prev) =>
-      prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
-    );
-    setCurrentPage(1);
-  };
-
-  const toggleTypeFilter = (type: string) => {
-    setTypeFilters((prev) =>
-      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
-    );
-    setCurrentPage(1);
-  };
-
   const filteredProposals = useMemo(() => {
     return proposals.filter((p) => {
-      // Text search
       const searchMatch =
         !search ||
         p.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -281,46 +321,12 @@ export default function Proposals() {
         p.client?.razaoSocial?.toLowerCase().includes(search.toLowerCase()) ||
         p.client?.cnpj?.toLowerCase().includes(search.toLowerCase());
 
-      // Status filter
-      const statusMatch = statusFilters.length === 0 || statusFilters.includes(p.status);
+      const statusMatch = statusFilter === 'all' || p.status === statusFilter;
+      const typeMatch = typeFilter === 'all' || p.type === typeFilter;
 
-      // Type filter
-      const typeMatch = typeFilters.length === 0 || typeFilters.includes(p.type);
-
-      // Date range filter
-      const createdDate = p.createdAt ? new Date(p.createdAt) : null;
-      const dateFromMatch = !dateFrom || (createdDate && createdDate >= new Date(dateFrom));
-      const dateToMatch = !dateTo || (createdDate && createdDate <= new Date(dateTo + 'T23:59:59'));
-
-      // Value range filter
-      const value = p.totalValue || 0;
-      const valueMinMatch = !valueMin || value >= parseFloat(valueMin);
-      const valueMaxMatch = !valueMax || value <= parseFloat(valueMax);
-
-      // Coordinator filter
-      const coordMatch =
-        !coordinatorFilter ||
-        p.coordinatorName?.toLowerCase().includes(coordinatorFilter.toLowerCase());
-
-      // Client filter
-      const clientMatch =
-        !clientFilter ||
-        p.client?.razaoSocial?.toLowerCase().includes(clientFilter.toLowerCase()) ||
-        p.clientId === clientFilter;
-
-      return (
-        searchMatch &&
-        statusMatch &&
-        typeMatch &&
-        dateFromMatch &&
-        dateToMatch &&
-        valueMinMatch &&
-        valueMaxMatch &&
-        coordMatch &&
-        clientMatch
-      );
+      return searchMatch && statusMatch && typeMatch;
     });
-  }, [proposals, search, statusFilters, typeFilters, dateFrom, dateTo, valueMin, valueMax, coordinatorFilter, clientFilter]);
+  }, [proposals, search, statusFilter, typeFilter]);
 
   const totalPages = Math.ceil(filteredProposals.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -336,14 +342,99 @@ export default function Proposals() {
     setCurrentPage(1);
   };
 
+  const getCellValue = (proposal: Proposal, columnId: string) => {
+    switch (columnId) {
+      case 'code':
+        return <span className="font-medium text-primary">{proposal.code}</span>;
+      case 'revision':
+        return proposal.revision || 0;
+      case 'client':
+        return (
+          <span className="truncate block max-w-[180px]" title={proposal.client?.razaoSocial}>
+            {proposal.client?.razaoSocial || '-'}
+          </span>
+        );
+      case 'title':
+        return (
+          <span className="truncate block max-w-[240px]" title={proposal.title}>
+            {proposal.title}
+          </span>
+        );
+      case 'status':
+        return (
+          <Badge className={`text-xs text-white whitespace-nowrap ${statusColors[proposal.status]}`}>
+            {statusLabels[proposal.status] || proposal.status}
+          </Badge>
+        );
+      case 'type':
+        return (
+          <Badge variant="outline" className="text-xs whitespace-nowrap">
+            {typeLabels[proposal.type] || proposal.type}
+          </Badge>
+        );
+      case 'totalValue':
+        return <span className="font-medium">{formatCurrency(proposal.totalValue)}</span>;
+      case 'coordinatorName':
+        return proposal.coordinatorName || '-';
+      case 'specialist':
+        return proposal.specialist || '-';
+      case 'sentByName':
+        return proposal.sentByName || '-';
+      case 'activityType':
+        return proposal.activityType || '-';
+      case 'umbrellaRef':
+        return proposal.umbrellaRef || '-';
+      case 'mainType':
+        return proposal.mainType || '-';
+      case 'utility':
+        return proposal.utility || '-';
+      case 'workOrders':
+        return proposal.workOrders || '-';
+      case 'createdAt':
+        return formatDate(proposal.createdAt);
+      case 'updatedAt':
+        return formatDate(proposal.updatedAt);
+      case 'sentDate':
+        return formatDate(proposal.sentDate);
+      case 'quantity':
+        return proposal.quantity || 0;
+      case 'hourJustification':
+        return Number(proposal.hourJustification || 0).toFixed(2);
+      case 'rehabilitation':
+        return Number(proposal.rehabilitation || 0).toFixed(2);
+      case 'subcontracted':
+        return Number(proposal.subcontracted || 0).toFixed(2);
+      case 'paymentBook':
+        return Number(proposal.paymentBook || 0).toFixed(2);
+      case 'expense':
+        return Number(proposal.expense || 0).toFixed(2);
+      case 'additiveValue':
+        return Number(proposal.additiveValue || 0).toFixed(2);
+      case 'resource':
+        return Number(proposal.resource || 0).toFixed(2);
+      default:
+        return '-';
+    }
+  };
+
+  const groupedColumns = useMemo(() => {
+    const groups: Record<string, ColumnConfig[]> = {};
+    columns.forEach(col => {
+      if (!groups[col.category]) groups[col.category] = [];
+      groups[col.category].push(col);
+    });
+    return groups;
+  }, [columns]);
+
   return (
     <Layout>
-      <div className="space-y-6">
+      <div className="space-y-4">
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">Propostas</h1>
-            <p className="text-muted-foreground">
-              Mostrando {startIndex + 1} a {Math.min(endIndex, filteredProposals.length)} de {filteredProposals.length} registros
+            <p className="text-sm text-muted-foreground">
+              {filteredProposals.length} propostas encontradas
             </p>
           </div>
 
@@ -461,464 +552,199 @@ export default function Proposals() {
           </Dialog>
         </div>
 
-        {/* Search and Filter Bar */}
-        <Card className="border-muted">
+        {/* Filters Bar */}
+        <Card>
           <CardContent className="p-4">
-            <div className="flex flex-col gap-4">
-              {/* Search Row */}
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    data-testid="input-search-proposals"
-                    placeholder="Buscar por código, título, cliente ou CNPJ..."
-                    className="pl-10"
-                    value={search}
-                    onChange={(e) => {
-                      setSearch(e.target.value);
-                      setCurrentPage(1);
-                    }}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant={filtersOpen ? 'default' : 'outline'}
-                    onClick={() => setFiltersOpen(!filtersOpen)}
-                    data-testid="button-toggle-filters"
-                    className="relative"
-                  >
-                    <SlidersHorizontal className="h-4 w-4 mr-2" />
-                    Filtros
-                    {activeFilterCount > 0 && (
-                      <Badge className="ml-2 h-5 w-5 p-0 flex items-center justify-center text-xs bg-primary text-primary-foreground">
-                        {activeFilterCount}
-                      </Badge>
-                    )}
-                    <ChevronDown className={`h-4 w-4 ml-1 transition-transform ${filtersOpen ? 'rotate-180' : ''}`} />
-                  </Button>
-                  {(activeFilterCount > 0 || search) && (
-                    <Button
-                      variant="ghost"
-                      onClick={clearAllFilters}
-                      data-testid="button-clear-all-filters"
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      <RotateCcw className="h-4 w-4 mr-2" />
-                      Limpar
-                    </Button>
-                  )}
-                </div>
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  data-testid="input-search-proposals"
+                  placeholder="Buscar por código, título ou cliente..."
+                  className="pl-10"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                />
               </div>
+              
+              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
+                <SelectTrigger className="w-[160px]" data-testid="select-status-filter">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os Status</SelectItem>
+                  {Object.entries(statusLabels).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-              {/* Active Filter Chips */}
-              {activeFilterCount > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {statusFilters.map((status) => (
-                    <Badge
-                      key={status}
-                      variant="secondary"
-                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => toggleStatusFilter(status)}
-                    >
-                      <span className={`w-2 h-2 rounded-full ${statusColors[status]}`} />
-                      {statusLabels[status]}
-                      <X className="h-3 w-3 ml-1" />
-                    </Badge>
+              <Select value={typeFilter} onValueChange={(v) => { setTypeFilter(v); setCurrentPage(1); }}>
+                <SelectTrigger className="w-[160px]" data-testid="select-type-filter">
+                  <SelectValue placeholder="Tipo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os Tipos</SelectItem>
+                  {Object.entries(typeLabels).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
                   ))}
-                  {typeFilters.map((type) => (
-                    <Badge
-                      key={type}
-                      variant="secondary"
-                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => toggleTypeFilter(type)}
-                    >
-                      {typeLabels[type]}
-                      <X className="h-3 w-3 ml-1" />
-                    </Badge>
-                  ))}
-                  {(dateFrom || dateTo) && (
-                    <Badge
-                      variant="secondary"
-                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => {
-                        setDateFrom('');
-                        setDateTo('');
-                      }}
-                    >
-                      <Calendar className="h-3 w-3" />
-                      {dateFrom && dateTo
-                        ? `${new Date(dateFrom).toLocaleDateString('pt-BR')} - ${new Date(dateTo).toLocaleDateString('pt-BR')}`
-                        : dateFrom
-                        ? `A partir de ${new Date(dateFrom).toLocaleDateString('pt-BR')}`
-                        : `Até ${new Date(dateTo).toLocaleDateString('pt-BR')}`}
-                      <X className="h-3 w-3 ml-1" />
-                    </Badge>
-                  )}
-                  {(valueMin || valueMax) && (
-                    <Badge
-                      variant="secondary"
-                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => {
-                        setValueMin('');
-                        setValueMax('');
-                      }}
-                    >
-                      <DollarSign className="h-3 w-3" />
-                      {valueMin && valueMax
-                        ? `${formatCurrency(parseFloat(valueMin))} - ${formatCurrency(parseFloat(valueMax))}`
-                        : valueMin
-                        ? `Mín: ${formatCurrency(parseFloat(valueMin))}`
-                        : `Máx: ${formatCurrency(parseFloat(valueMax))}`}
-                      <X className="h-3 w-3 ml-1" />
-                    </Badge>
-                  )}
-                  {coordinatorFilter && (
-                    <Badge
-                      variant="secondary"
-                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => setCoordinatorFilter('')}
-                    >
-                      Coord: {coordinatorFilter}
-                      <X className="h-3 w-3 ml-1" />
-                    </Badge>
-                  )}
-                  {clientFilter && (
-                    <Badge
-                      variant="secondary"
-                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => setClientFilter('')}
-                    >
-                      Cliente: {clients.find((c) => c.id === clientFilter)?.razaoSocial || clientFilter}
-                      <X className="h-3 w-3 ml-1" />
-                    </Badge>
-                  )}
-                </div>
+                </SelectContent>
+              </Select>
+
+              {(search || statusFilter !== 'all' || typeFilter !== 'all') && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSearch('');
+                    setStatusFilter('all');
+                    setTypeFilter('all');
+                    setCurrentPage(1);
+                  }}
+                  data-testid="button-clear-filters"
+                >
+                  <RotateCcw className="h-4 w-4 mr-1" />
+                  Limpar
+                </Button>
               )}
 
-              {/* Expandable Filter Panel */}
-              <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
-                <CollapsibleContent className="space-y-4">
-                  <Separator className="my-2" />
-
-                  {/* Status Filters */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Filter className="h-4 w-4 text-muted-foreground" />
-                      <Label className="font-medium">Status</Label>
+              <Popover open={columnConfigOpen} onOpenChange={setColumnConfigOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" data-testid="button-configure-columns">
+                    <Settings2 className="h-4 w-4 mr-2" />
+                    Colunas
+                    <Badge variant="secondary" className="ml-2 h-5 px-1.5">
+                      {visibleColumns.length}
+                    </Badge>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80" align="end">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium">Configurar Colunas</h4>
+                      <Button variant="ghost" size="sm" onClick={resetColumns}>
+                        <RotateCcw className="h-3 w-3 mr-1" />
+                        Resetar
+                      </Button>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {Object.entries(statusLabels).map(([key, label]) => (
-                        <Button
-                          key={key}
-                          variant={statusFilters.includes(key) ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => toggleStatusFilter(key)}
-                          data-testid={`filter-status-${key}`}
-                          className={`gap-2 ${statusFilters.includes(key) ? '' : 'text-muted-foreground'}`}
-                        >
-                          <span className={`w-2 h-2 rounded-full ${statusColors[key]}`} />
-                          {label}
-                        </Button>
+                    <Separator />
+                    <ScrollArea className="h-[300px] pr-4">
+                      {Object.entries(groupedColumns).map(([category, cols]) => (
+                        <div key={category} className="mb-4">
+                          <h5 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+                            {categoryLabels[category]}
+                          </h5>
+                          <div className="space-y-2">
+                            {cols.map(col => (
+                              <div
+                                key={col.id}
+                                className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded px-2 py-1.5"
+                                onClick={() => toggleColumn(col.id)}
+                              >
+                                <div className={`w-4 h-4 rounded border flex items-center justify-center ${col.visible ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
+                                  {col.visible && <Check className="h-3 w-3 text-primary-foreground" />}
+                                </div>
+                                <span className="text-sm">{col.label}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       ))}
-                    </div>
+                    </ScrollArea>
                   </div>
-
-                  {/* Type Filters */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Filter className="h-4 w-4 text-muted-foreground" />
-                      <Label className="font-medium">Tipo de Proposta</Label>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {Object.entries(typeLabels).map(([key, label]) => (
-                        <Button
-                          key={key}
-                          variant={typeFilters.includes(key) ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => toggleTypeFilter(key)}
-                          data-testid={`filter-type-${key}`}
-                          className={typeFilters.includes(key) ? '' : 'text-muted-foreground'}
-                        >
-                          {label}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Date and Value Range */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {/* Date Range */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-muted-foreground" />
-                        <Label className="font-medium">Data Inicial</Label>
-                      </div>
-                      <Input
-                        type="date"
-                        value={dateFrom}
-                        onChange={(e) => {
-                          setDateFrom(e.target.value);
-                          setCurrentPage(1);
-                        }}
-                        data-testid="filter-date-from"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-muted-foreground" />
-                        <Label className="font-medium">Data Final</Label>
-                      </div>
-                      <Input
-                        type="date"
-                        value={dateTo}
-                        onChange={(e) => {
-                          setDateTo(e.target.value);
-                          setCurrentPage(1);
-                        }}
-                        data-testid="filter-date-to"
-                      />
-                    </div>
-
-                    {/* Value Range */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <DollarSign className="h-4 w-4 text-muted-foreground" />
-                        <Label className="font-medium">Valor Mínimo</Label>
-                      </div>
-                      <Input
-                        type="number"
-                        placeholder="R$ 0,00"
-                        value={valueMin}
-                        onChange={(e) => {
-                          setValueMin(e.target.value);
-                          setCurrentPage(1);
-                        }}
-                        data-testid="filter-value-min"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <DollarSign className="h-4 w-4 text-muted-foreground" />
-                        <Label className="font-medium">Valor Máximo</Label>
-                      </div>
-                      <Input
-                        type="number"
-                        placeholder="R$ 999.999,00"
-                        value={valueMax}
-                        onChange={(e) => {
-                          setValueMax(e.target.value);
-                          setCurrentPage(1);
-                        }}
-                        data-testid="filter-value-max"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Coordinator and Client */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label className="font-medium">Coordenador</Label>
-                      <Select
-                        value={coordinatorFilter}
-                        onValueChange={(v) => {
-                          setCoordinatorFilter(v === '_all' ? '' : v);
-                          setCurrentPage(1);
-                        }}
-                      >
-                        <SelectTrigger data-testid="filter-coordinator">
-                          <SelectValue placeholder="Todos os coordenadores" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_all">Todos os coordenadores</SelectItem>
-                          {uniqueCoordinators.map((coord) => (
-                            <SelectItem key={coord} value={coord}>
-                              {coord}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="font-medium">Cliente</Label>
-                      <Select
-                        value={clientFilter}
-                        onValueChange={(v) => {
-                          setClientFilter(v === '_all' ? '' : v);
-                          setCurrentPage(1);
-                        }}
-                      >
-                        <SelectTrigger data-testid="filter-client">
-                          <SelectValue placeholder="Todos os clientes" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_all">Todos os clientes</SelectItem>
-                          {clients.slice(0, 100).map((client) => (
-                            <SelectItem key={client.id} value={client.id}>
-                              {client.razaoSocial}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
+                </PopoverContent>
+              </Popover>
             </div>
           </CardContent>
         </Card>
 
-        {/* Results Summary */}
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            {filteredProposals.length === proposals.length
-              ? `${proposals.length} propostas`
-              : `${filteredProposals.length} de ${proposals.length} propostas`}
-          </span>
-          {activeFilterCount > 0 && (
-            <span className="text-primary">
-              {activeFilterCount} filtro{activeFilterCount > 1 ? 's' : ''} ativo{activeFilterCount > 1 ? 's' : ''}
-            </span>
-          )}
-        </div>
-
+        {/* Table */}
         {isLoading ? (
-          <div className="text-center py-8 text-muted-foreground">Carregando...</div>
+          <div className="text-center py-12 text-muted-foreground">Carregando propostas...</div>
         ) : filteredProposals.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">Nenhuma proposta encontrada</div>
+          <Card>
+            <CardContent className="py-12 text-center text-muted-foreground">
+              <p>Nenhuma proposta encontrada</p>
+              {(search || statusFilter !== 'all' || typeFilter !== 'all') && (
+                <Button variant="ghost" onClick={() => { setSearch(''); setStatusFilter('all'); setTypeFilter('all'); }}>
+                  Limpar filtros
+                </Button>
+              )}
+            </CardContent>
+          </Card>
         ) : (
-          <div className="rounded-md border overflow-x-auto">
-            <Table className="min-w-[2400px]">
-              <TableHeader>
-                <TableRow className="bg-muted/50">
-                  <TableHead className="w-[100px] sticky left-0 bg-muted/50 z-10">Cód. Proposta</TableHead>
-                  <TableHead className="w-[50px]">Rev</TableHead>
-                  <TableHead className="w-[100px]">Tipo Proposta</TableHead>
-                  <TableHead className="w-[120px]">Tipo Atividade</TableHead>
-                  <TableHead className="w-[100px]">Guarda-chuva</TableHead>
-                  <TableHead className="w-[180px]">Cliente</TableHead>
-                  <TableHead className="w-[250px]">Título</TableHead>
-                  <TableHead className="w-[100px]">Dt. Atualização</TableHead>
-                  <TableHead className="w-[120px]">Utilidade</TableHead>
-                  <TableHead className="w-[100px]">Dt. Envio</TableHead>
-                  <TableHead className="w-[100px]">Usuário/Enviou</TableHead>
-                  <TableHead className="w-[100px]">Situação</TableHead>
-                  <TableHead className="w-[120px]">Especialista</TableHead>
-                  <TableHead className="w-[120px]">Tipo Principal</TableHead>
-                  <TableHead className="w-[60px] text-right">Qtn</TableHead>
-                  <TableHead className="w-[100px] text-right">Justif. Horas</TableHead>
-                  <TableHead className="w-[100px] text-right">Reabilitação</TableHead>
-                  <TableHead className="w-[100px] text-right">Subcontratada</TableHead>
-                  <TableHead className="w-[100px] text-right">Liv. Pagto</TableHead>
-                  <TableHead className="w-[100px] text-right">Despesa</TableHead>
-                  <TableHead className="w-[100px] text-right">Aditivo</TableHead>
-                  <TableHead className="w-[100px] text-right">Recurso</TableHead>
-                  <TableHead className="w-[120px] text-right">Valor Proposta</TableHead>
-                  <TableHead className="w-[80px]">OAs</TableHead>
-                  <TableHead className="w-[100px] sticky right-0 bg-muted/50 z-10">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedProposals.map((proposal) => (
-                  <TableRow key={proposal.id} data-testid={`row-proposal-${proposal.id}`}>
-                    <TableCell className="font-medium sticky left-0 bg-background z-10">{proposal.code}</TableCell>
-                    <TableCell>{proposal.revision || 0}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs whitespace-nowrap">
-                        {typeLabels[proposal.type] || proposal.type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs">{proposal.activityType || '-'}</TableCell>
-                    <TableCell className="text-xs">{proposal.umbrellaRef || '-'}</TableCell>
-                    <TableCell className="max-w-[180px] truncate text-xs" title={proposal.client?.razaoSocial}>
-                      {proposal.client?.razaoSocial || '-'}
-                    </TableCell>
-                    <TableCell className="max-w-[250px] truncate text-xs" title={proposal.title}>
-                      {proposal.title}
-                    </TableCell>
-                    <TableCell className="text-xs">{formatDate(proposal.updatedAt)}</TableCell>
-                    <TableCell className="text-xs truncate max-w-[120px]">{proposal.utility || '-'}</TableCell>
-                    <TableCell className="text-xs">{formatDate(proposal.sentDate)}</TableCell>
-                    <TableCell className="text-xs truncate max-w-[100px]">{proposal.sentByName || '-'}</TableCell>
-                    <TableCell>
-                      <Badge className={`text-xs text-white whitespace-nowrap ${statusColors[proposal.status]}`}>
-                        {statusLabels[proposal.status] || proposal.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs truncate max-w-[120px]">{proposal.specialist || '-'}</TableCell>
-                    <TableCell className="text-xs truncate max-w-[120px]">{proposal.mainType || '-'}</TableCell>
-                    <TableCell className="text-xs text-right">{proposal.quantity || 0}</TableCell>
-                    <TableCell className="text-xs text-right">{Number(proposal.hourJustification || 0).toFixed(2)}</TableCell>
-                    <TableCell className="text-xs text-right">{Number(proposal.rehabilitation || 0).toFixed(2)}</TableCell>
-                    <TableCell className="text-xs text-right">{Number(proposal.subcontracted || 0).toFixed(2)}</TableCell>
-                    <TableCell className="text-xs text-right">{Number(proposal.paymentBook || 0).toFixed(2)}</TableCell>
-                    <TableCell className="text-xs text-right">{Number(proposal.expense || 0).toFixed(2)}</TableCell>
-                    <TableCell className="text-xs text-right">{Number(proposal.additiveValue || 0).toFixed(2)}</TableCell>
-                    <TableCell className="text-xs text-right">{Number(proposal.resource || 0).toFixed(2)}</TableCell>
-                    <TableCell className="text-right font-medium text-xs">
-                      {formatCurrency(proposal.totalValue)}
-                    </TableCell>
-                    <TableCell className="text-xs">{proposal.workOrders || '-'}</TableCell>
-                    <TableCell className="sticky right-0 bg-background z-10">
-                      <div className="flex gap-1">
-                        <Button 
-                          size="icon" 
-                          variant="ghost" 
-                          data-testid={`button-view-proposal-${proposal.id}`}
-                          onClick={() => handleViewProposal(proposal)}
-                          title="Visualizar"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button 
-                          size="icon" 
-                          variant="ghost" 
-                          data-testid={`button-edit-proposal-${proposal.id}`}
-                          onClick={() => handleEditProposal(proposal)}
-                          title="Editar"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {proposal.status === 'approved' && (
+          <Card>
+            <div className="rounded-md">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50 hover:bg-muted/50">
+                    {visibleColumns.map((col) => (
+                      <TableHead key={col.id} className={`${col.width} text-xs font-medium`}>
+                        {col.label}
+                      </TableHead>
+                    ))}
+                    <TableHead className="w-20 text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paginatedProposals.map((proposal) => (
+                    <TableRow
+                      key={proposal.id}
+                      data-testid={`row-proposal-${proposal.id}`}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleRowClick(proposal)}
+                    >
+                      {visibleColumns.map((col) => (
+                        <TableCell key={col.id} className="text-sm py-3">
+                          {getCellValue(proposal, col.id)}
+                        </TableCell>
+                      ))}
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
                           <Button
                             size="icon"
                             variant="ghost"
-                            data-testid={`button-convert-proposal-${proposal.id}`}
-                            onClick={() => convertMutation.mutate(proposal.id)}
-                            disabled={convertMutation.isPending}
-                            title="Converter em Projeto"
+                            data-testid={`button-edit-proposal-${proposal.id}`}
+                            onClick={(e) => handleEditProposal(proposal, e)}
+                            title="Editar"
                           >
-                            <ArrowRight className="h-4 w-4" />
+                            <Pencil className="h-4 w-4" />
                           </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
         )}
 
+        {/* Pagination */}
         {filteredProposals.length > 0 && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Exibir</span>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>Mostrando {startIndex + 1}-{Math.min(endIndex, filteredProposals.length)} de {filteredProposals.length}</span>
+              <span className="mx-2">|</span>
+              <span>Exibir</span>
               <Select value={String(itemsPerPage)} onValueChange={handleItemsPerPageChange}>
-                <SelectTrigger className="w-20" data-testid="select-items-per-page">
+                <SelectTrigger className="w-16 h-8" data-testid="select-items-per-page">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="6">6</SelectItem>
-                  <SelectItem value="12">12</SelectItem>
-                  <SelectItem value="24">24</SelectItem>
-                  <SelectItem value="48">48</SelectItem>
-                  <SelectItem value="96">96</SelectItem>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="15">15</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
                 </SelectContent>
               </Select>
-              <span className="text-sm text-muted-foreground">por página</span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <Button
                 variant="outline"
                 size="sm"
@@ -927,33 +753,31 @@ export default function Proposals() {
                 data-testid="button-prev-page"
               >
                 <ChevronLeft className="h-4 w-4" />
-                Anterior
               </Button>
-              <div className="flex items-center gap-1">
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                  let pageNum;
-                  if (totalPages <= 5) {
-                    pageNum = i + 1;
-                  } else if (currentPage <= 3) {
-                    pageNum = i + 1;
-                  } else if (currentPage >= totalPages - 2) {
-                    pageNum = totalPages - 4 + i;
-                  } else {
-                    pageNum = currentPage - 2 + i;
-                  }
-                  return (
-                    <Button
-                      key={pageNum}
-                      variant={currentPage === pageNum ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => handlePageChange(pageNum)}
-                      data-testid={`button-page-${pageNum}`}
-                    >
-                      {pageNum}
-                    </Button>
-                  );
-                })}
-              </div>
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum;
+                if (totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1;
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i;
+                } else {
+                  pageNum = currentPage - 2 + i;
+                }
+                return (
+                  <Button
+                    key={pageNum}
+                    variant={currentPage === pageNum ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => handlePageChange(pageNum)}
+                    data-testid={`button-page-${pageNum}`}
+                    className="w-8"
+                  >
+                    {pageNum}
+                  </Button>
+                );
+              })}
               <Button
                 variant="outline"
                 size="sm"
@@ -961,197 +785,243 @@ export default function Proposals() {
                 disabled={currentPage === totalPages}
                 data-testid="button-next-page"
               >
-                Próximo
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
           </div>
         )}
 
-        {/* View Dialog */}
-        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Detalhes da Proposta</DialogTitle>
-            </DialogHeader>
+        {/* Detail Sheet (Side Panel) */}
+        <Sheet open={detailSheetOpen} onOpenChange={setDetailSheetOpen}>
+          <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+            <SheetHeader className="pb-4">
+              <SheetTitle className="flex items-center gap-2">
+                <span className="text-primary font-mono">{selectedProposal?.code}</span>
+                {selectedProposal && (
+                  <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
+                    {statusLabels[selectedProposal.status]}
+                  </Badge>
+                )}
+              </SheetTitle>
+              <SheetDescription className="text-base font-medium text-foreground">
+                {selectedProposal?.title}
+              </SheetDescription>
+            </SheetHeader>
+
             {selectedProposal && (
               <div className="space-y-6">
-                {/* Informações Básicas */}
-                <div>
-                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Informações Básicas</h3>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Código</Label>
-                      <p className="font-medium">{selectedProposal.code}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Revisão</Label>
-                      <p className="font-medium">{selectedProposal.revision || 0}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Status</Label>
-                      <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
-                        {statusLabels[selectedProposal.status] || selectedProposal.status}
-                      </Badge>
-                    </div>
-                  </div>
+                {/* Quick Actions */}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => handleEditProposal(selectedProposal)}
+                    data-testid="button-edit-from-sheet"
+                  >
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Editar
+                  </Button>
+                  {selectedProposal.status === 'approved' && (
+                    <Button
+                      className="flex-1"
+                      onClick={() => convertMutation.mutate(selectedProposal.id)}
+                      disabled={convertMutation.isPending}
+                      data-testid="button-convert-from-sheet"
+                    >
+                      <ArrowRight className="h-4 w-4 mr-2" />
+                      Converter em Projeto
+                    </Button>
+                  )}
                 </div>
 
                 <Separator />
 
-                {/* Título e Descrição */}
-                <div>
-                  <div className="mb-3">
-                    <Label className="text-muted-foreground text-xs">Título</Label>
-                    <p className="font-medium">{selectedProposal.title}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground text-xs">Descrição</Label>
-                    <p className="text-sm">{selectedProposal.description || '-'}</p>
-                  </div>
-                </div>
+                {/* Accordion Sections */}
+                <Accordion type="multiple" defaultValue={['basic', 'client', 'values']} className="w-full">
+                  {/* Basic Info */}
+                  <AccordionItem value="basic">
+                    <AccordionTrigger className="text-sm font-medium">
+                      Informações Básicas
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Código</Label>
+                          <p className="font-mono">{selectedProposal.code}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Revisão</Label>
+                          <p>{selectedProposal.revision || 0}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Tipo Proposta</Label>
+                          <Badge variant="outline">{typeLabels[selectedProposal.type]}</Badge>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Tipo Atividade</Label>
+                          <p>{selectedProposal.activityType || '-'}</p>
+                        </div>
+                        <div className="col-span-2">
+                          <Label className="text-xs text-muted-foreground">Descrição</Label>
+                          <p className="text-sm">{selectedProposal.description || '-'}</p>
+                        </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
 
-                <Separator />
+                  {/* Client */}
+                  <AccordionItem value="client">
+                    <AccordionTrigger className="text-sm font-medium">
+                      Cliente
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div className="col-span-2">
+                          <Label className="text-xs text-muted-foreground">Razão Social</Label>
+                          <p className="font-medium">{selectedProposal.client?.razaoSocial || '-'}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">CNPJ</Label>
+                          <p>{selectedProposal.client?.cnpj || '-'}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Guarda-chuva</Label>
+                          <p>{selectedProposal.umbrellaRef || '-'}</p>
+                        </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
 
-                {/* Cliente e Tipos */}
-                <div>
-                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Cliente e Classificação</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Cliente</Label>
-                      <p className="font-medium">{selectedProposal.client?.razaoSocial || '-'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">CNPJ</Label>
-                      <p className="font-medium">{selectedProposal.client?.cnpj || '-'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Tipo Proposta</Label>
-                      <Badge variant="outline">{typeLabels[selectedProposal.type] || selectedProposal.type}</Badge>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Tipo Atividade</Label>
-                      <p className="font-medium">{selectedProposal.activityType || '-'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Guarda-chuva</Label>
-                      <p className="font-medium">{selectedProposal.umbrellaRef || '-'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Tipo Principal</Label>
-                      <p className="font-medium">{selectedProposal.mainType || '-'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Utilidade</Label>
-                      <p className="font-medium">{selectedProposal.utility || '-'}</p>
-                    </div>
-                  </div>
-                </div>
+                  {/* Values */}
+                  <AccordionItem value="values">
+                    <AccordionTrigger className="text-sm font-medium">
+                      Valores
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div className="col-span-2 bg-primary/10 rounded-lg p-3">
+                          <Label className="text-xs text-muted-foreground">Valor Total</Label>
+                          <p className="text-xl font-bold text-primary">{formatCurrency(selectedProposal.totalValue)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Quantidade</Label>
+                          <p>{selectedProposal.quantity || 0}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Horas Estimadas</Label>
+                          <p>{selectedProposal.estimatedHours || 0}h</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Justif. Horas</Label>
+                          <p>{formatCurrency(selectedProposal.hourJustification)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Reabilitação</Label>
+                          <p>{formatCurrency(selectedProposal.rehabilitation)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Subcontratada</Label>
+                          <p>{formatCurrency(selectedProposal.subcontracted)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Liv. Pagto</Label>
+                          <p>{formatCurrency(selectedProposal.paymentBook)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Despesa</Label>
+                          <p>{formatCurrency(selectedProposal.expense)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Aditivo</Label>
+                          <p>{formatCurrency(selectedProposal.additiveValue)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Recurso</Label>
+                          <p>{formatCurrency(selectedProposal.resource)}</p>
+                        </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
 
-                <Separator />
+                  {/* People */}
+                  <AccordionItem value="people">
+                    <AccordionTrigger className="text-sm font-medium">
+                      Responsáveis
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Coordenador</Label>
+                          <p>{selectedProposal.coordinatorName || '-'}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Especialista</Label>
+                          <p>{selectedProposal.specialist || '-'}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Enviado por</Label>
+                          <p>{selectedProposal.sentByName || '-'}</p>
+                        </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
 
-                {/* Responsáveis */}
-                <div>
-                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Responsáveis</h3>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Coordenador</Label>
-                      <p className="font-medium">{selectedProposal.coordinatorName || '-'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Especialista</Label>
-                      <p className="font-medium">{selectedProposal.specialist || '-'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Enviado por</Label>
-                      <p className="font-medium">{selectedProposal.sentByName || '-'}</p>
-                    </div>
-                  </div>
-                </div>
+                  {/* Dates */}
+                  <AccordionItem value="dates">
+                    <AccordionTrigger className="text-sm font-medium">
+                      Datas
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Criação</Label>
+                          <p>{formatDate(selectedProposal.createdAt)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Atualização</Label>
+                          <p>{formatDate(selectedProposal.updatedAt)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Envio</Label>
+                          <p>{formatDate(selectedProposal.sentDate)}</p>
+                        </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
 
-                <Separator />
-
-                {/* Datas */}
-                <div>
-                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Datas</h3>
-                  <div className="grid grid-cols-4 gap-4">
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Data de Criação</Label>
-                      <p className="font-medium">{formatDate(selectedProposal.createdAt)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Última Atualização</Label>
-                      <p className="font-medium">{formatDate(selectedProposal.updatedAt)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Data de Envio</Label>
-                      <p className="font-medium">{formatDate(selectedProposal.sentDate)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">OAs</Label>
-                      <p className="font-medium">{selectedProposal.workOrders || '-'}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <Separator />
-
-                {/* Valores Financeiros */}
-                <div>
-                  <h3 className="font-semibold text-sm text-muted-foreground mb-3">Valores Financeiros</h3>
-                  <div className="grid grid-cols-4 gap-4">
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Valor Proposta</Label>
-                      <p className="font-medium text-lg">{formatCurrency(selectedProposal.totalValue)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Horas Estimadas</Label>
-                      <p className="font-medium">{selectedProposal.estimatedHours || 0}h</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Quantidade</Label>
-                      <p className="font-medium">{selectedProposal.quantity || 0}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Justif. Horas</Label>
-                      <p className="font-medium">{Number(selectedProposal.hourJustification || 0).toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Reabilitação</Label>
-                      <p className="font-medium">{Number(selectedProposal.rehabilitation || 0).toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Subcontratada</Label>
-                      <p className="font-medium">{Number(selectedProposal.subcontracted || 0).toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Liv. Pagto</Label>
-                      <p className="font-medium">{Number(selectedProposal.paymentBook || 0).toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Despesa</Label>
-                      <p className="font-medium">{Number(selectedProposal.expense || 0).toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Aditivo</Label>
-                      <p className="font-medium">{Number(selectedProposal.additiveValue || 0).toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground text-xs">Recurso</Label>
-                      <p className="font-medium">{Number(selectedProposal.resource || 0).toFixed(2)}</p>
-                    </div>
-                  </div>
-                </div>
+                  {/* Classification */}
+                  <AccordionItem value="classification">
+                    <AccordionTrigger className="text-sm font-medium">
+                      Classificação
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Tipo Principal</Label>
+                          <p>{selectedProposal.mainType || '-'}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Utilidade</Label>
+                          <p>{selectedProposal.utility || '-'}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">OAs</Label>
+                          <p>{selectedProposal.workOrders || '-'}</p>
+                        </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
               </div>
             )}
-          </DialogContent>
-        </Dialog>
+          </SheetContent>
+        </Sheet>
 
         {/* Edit Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Editar Proposta {selectedProposal?.code}</DialogTitle>
+              <DialogTitle>Editar Proposta - {selectedProposal?.code}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleEditSubmit} className="space-y-4">
               <div className="space-y-2">
@@ -1178,10 +1048,10 @@ export default function Proposals() {
                   <Label>Cliente</Label>
                   <Select
                     value={editFormData.clientId}
-                    onValueChange={(v) => setEditFormData({ ...editFormData, clientId: v })}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, clientId: value })}
                   >
-                    <SelectTrigger data-testid="select-edit-client">
-                      <SelectValue placeholder="Selecione o cliente" />
+                    <SelectTrigger data-testid="select-edit-proposal-client">
+                      <SelectValue placeholder="Selecione um cliente" />
                     </SelectTrigger>
                     <SelectContent>
                       {clients.map((client) => (
@@ -1196,9 +1066,9 @@ export default function Proposals() {
                   <Label>Tipo</Label>
                   <Select
                     value={editFormData.type}
-                    onValueChange={(v) => setEditFormData({ ...editFormData, type: v })}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, type: value })}
                   >
-                    <SelectTrigger data-testid="select-edit-type">
+                    <SelectTrigger data-testid="select-edit-proposal-type">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1216,62 +1086,57 @@ export default function Proposals() {
                   <Label>Status</Label>
                   <Select
                     value={editFormData.status}
-                    onValueChange={(v) => setEditFormData({ ...editFormData, status: v })}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, status: value })}
                   >
-                    <SelectTrigger data-testid="select-edit-status">
+                    <SelectTrigger data-testid="select-edit-proposal-status">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="draft">Rascunho</SelectItem>
-                      <SelectItem value="in_review">Em Revisão</SelectItem>
-                      <SelectItem value="sent">Enviada</SelectItem>
-                      <SelectItem value="negotiating">Negociação</SelectItem>
-                      <SelectItem value="approved">Aprovada</SelectItem>
-                      <SelectItem value="rejected">Rejeitada</SelectItem>
-                      <SelectItem value="cancelled">Cancelada</SelectItem>
-                      <SelectItem value="converted">Convertida</SelectItem>
+                      {Object.entries(statusLabels).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-coordinator">Coordenador</Label>
+                  <Label htmlFor="edit-totalValue">Valor Total (R$)</Label>
                   <Input
-                    id="edit-coordinator"
-                    data-testid="input-edit-coordinator"
-                    value={editFormData.coordinatorName}
-                    onChange={(e) => setEditFormData({ ...editFormData, coordinatorName: e.target.value })}
+                    id="edit-totalValue"
+                    type="number"
+                    step="0.01"
+                    data-testid="input-edit-proposal-value"
+                    value={editFormData.totalValue}
+                    onChange={(e) => setEditFormData({ ...editFormData, totalValue: e.target.value })}
                   />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="edit-value">Valor Total (R$)</Label>
+                  <Label htmlFor="edit-estimatedHours">Horas Estimadas</Label>
                   <Input
-                    id="edit-value"
+                    id="edit-estimatedHours"
                     type="number"
-                    step="0.01"
-                    data-testid="input-edit-value"
-                    value={editFormData.totalValue}
-                    onChange={(e) => setEditFormData({ ...editFormData, totalValue: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-hours">Horas Estimadas</Label>
-                  <Input
-                    id="edit-hours"
-                    type="number"
-                    data-testid="input-edit-hours"
+                    data-testid="input-edit-proposal-hours"
                     value={editFormData.estimatedHours}
                     onChange={(e) => setEditFormData({ ...editFormData, estimatedHours: e.target.value })}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-coordinatorName">Coordenador</Label>
+                  <Input
+                    id="edit-coordinatorName"
+                    data-testid="input-edit-proposal-coordinator"
+                    value={editFormData.coordinatorName}
+                    onChange={(e) => setEditFormData({ ...editFormData, coordinatorName: e.target.value })}
+                  />
+                </div>
               </div>
-              <div className="flex justify-end gap-2 pt-4">
+              <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
                   Cancelar
                 </Button>
-                <Button type="submit" disabled={updateMutation.isPending} data-testid="button-save-proposal">
-                  {updateMutation.isPending ? 'Salvando...' : 'Salvar'}
+                <Button type="submit" data-testid="button-save-edit-proposal" disabled={updateMutation.isPending}>
+                  {updateMutation.isPending ? 'Salvando...' : 'Salvar Alterações'}
                 </Button>
               </div>
             </form>
