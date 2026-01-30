@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, Search, Building2, MapPin, Users, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, Building2, MapPin, Users, ChevronLeft, ChevronRight, LayoutGrid, List } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,6 +80,8 @@ const emptyFormData = {
   telefoneTecnico: '',
 };
 
+type ViewMode = 'cards' | 'table';
+
 export default function Clients() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -90,6 +92,19 @@ export default function Clients() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [viewMode, setViewMode] = useState<ViewMode>('cards');
+
+  useEffect(() => {
+    const savedViewMode = localStorage.getItem('clientsViewMode') as ViewMode;
+    if (savedViewMode && (savedViewMode === 'cards' || savedViewMode === 'table')) {
+      setViewMode(savedViewMode);
+    }
+  }, []);
+
+  const handleViewModeChange = (mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem('clientsViewMode', mode);
+  };
 
   const { data: clients = [], isLoading } = useQuery<Client[]>({
     queryKey: ['/api/clients'],
@@ -594,18 +609,40 @@ export default function Clients() {
           </Dialog>
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            data-testid="input-search-clients"
-            placeholder="Buscar clientes..."
-            className="pl-10"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setCurrentPage(1);
-            }}
-          />
+        <div className="flex items-center gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              data-testid="input-search-clients"
+              placeholder="Buscar clientes..."
+              className="pl-10"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setCurrentPage(1);
+              }}
+            />
+          </div>
+          <div className="flex items-center border rounded-md">
+            <Button
+              variant={viewMode === 'cards' ? 'default' : 'ghost'}
+              size="sm"
+              data-testid="button-view-cards"
+              onClick={() => handleViewModeChange('cards')}
+              className="rounded-r-none"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === 'table' ? 'default' : 'ghost'}
+              size="sm"
+              data-testid="button-view-table"
+              onClick={() => handleViewModeChange('table')}
+              className="rounded-l-none"
+            >
+              <List className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         {isLoading ? (
@@ -614,10 +651,68 @@ export default function Clients() {
           <div className="text-center py-8 text-muted-foreground">
             Nenhum cliente encontrado
           </div>
+        ) : viewMode === 'table' ? (
+          <div className="border rounded-md overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="text-left p-3 font-medium">Razão Social</th>
+                    <th className="text-left p-3 font-medium">Nome Fantasia</th>
+                    <th className="text-left p-3 font-medium">CNPJ</th>
+                    <th className="text-left p-3 font-medium">Cidade/UF</th>
+                    <th className="text-left p-3 font-medium">Email Comercial</th>
+                    <th className="text-left p-3 font-medium">Telefone</th>
+                    <th className="text-right p-3 font-medium">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedClients.map((client, index) => (
+                    <tr
+                      key={client.id}
+                      data-testid={`row-client-${client.id}`}
+                      className={`border-t hover-elevate ${index % 2 === 0 ? '' : 'bg-muted/20'}`}
+                    >
+                      <td className="p-3 font-medium">{client.razaoSocial}</td>
+                      <td className="p-3 text-muted-foreground">{client.nomeFantasia || '-'}</td>
+                      <td className="p-3">{client.cnpj || '-'}</td>
+                      <td className="p-3">{client.cidade && client.estado ? `${client.cidade}/${client.estado}` : '-'}</td>
+                      <td className="p-3">{client.emailComercial || '-'}</td>
+                      <td className="p-3">{client.telefoneComercial || '-'}</td>
+                      <td className="p-3">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            data-testid={`button-edit-client-${client.id}`}
+                            onClick={() => openEditDialog(client)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            data-testid={`button-delete-client-${client.id}`}
+                            onClick={() => {
+                              if (confirm('Deseja excluir este cliente?')) {
+                                deleteMutation.mutate(client.id);
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {paginatedClients.map((client) => (
-              <Card key={client.id} data-testid={`card-client-${client.id}`}>
+              <Card key={client.id} data-testid={`card-client-${client.id}`} className="hover-elevate">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">{client.razaoSocial}</CardTitle>
                   {client.nomeFantasia && (
