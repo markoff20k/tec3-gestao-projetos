@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, Check } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -53,6 +53,11 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-500',
@@ -162,9 +167,16 @@ export default function Proposals() {
     coordinatorName: '',
   });
 
-  // Filter states
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
+  // Advanced Filter states
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  const [typeFilters, setTypeFilters] = useState<string[]>([]);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [valueMin, setValueMin] = useState('');
+  const [valueMax, setValueMax] = useState('');
+  const [coordinatorFilter, setCoordinatorFilter] = useState('');
+  const [clientFilter, setClientFilter] = useState('');
 
   // Sort states
   const [sortColumn, setSortColumn] = useState<string>('code');
@@ -187,6 +199,44 @@ export default function Proposals() {
       ? <ArrowUp className="h-4 w-4 ml-1" />
       : <ArrowDown className="h-4 w-4 ml-1" />;
   };
+
+  // Filter helper functions
+  const toggleStatusFilter = (status: string) => {
+    setStatusFilters((prev) =>
+      prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
+    );
+    setCurrentPage(1);
+  };
+
+  const toggleTypeFilter = (type: string) => {
+    setTypeFilters((prev) =>
+      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+    );
+    setCurrentPage(1);
+  };
+
+  const clearAllFilters = () => {
+    setSearch('');
+    setStatusFilters([]);
+    setTypeFilters([]);
+    setDateFrom('');
+    setDateTo('');
+    setValueMin('');
+    setValueMax('');
+    setCoordinatorFilter('');
+    setClientFilter('');
+    setCurrentPage(1);
+  };
+
+  const activeFilterCount =
+    statusFilters.length +
+    typeFilters.length +
+    (dateFrom ? 1 : 0) +
+    (dateTo ? 1 : 0) +
+    (valueMin ? 1 : 0) +
+    (valueMax ? 1 : 0) +
+    (coordinatorFilter ? 1 : 0) +
+    (clientFilter ? 1 : 0);
 
   // Load column preferences from server on mount
   useEffect(() => {
@@ -350,6 +400,15 @@ export default function Proposals() {
     return new Date(dateStr).toLocaleDateString('pt-BR');
   };
 
+  // Get unique coordinators for filter dropdown
+  const uniqueCoordinators = useMemo(() => {
+    const coords = new Set<string>();
+    proposals.forEach((p) => {
+      if (p.coordinatorName) coords.add(p.coordinatorName);
+    });
+    return Array.from(coords).sort();
+  }, [proposals]);
+
   const filteredProposals = useMemo(() => {
     const filtered = proposals.filter((p) => {
       const searchMatch =
@@ -359,10 +418,35 @@ export default function Proposals() {
         p.client?.razaoSocial?.toLowerCase().includes(search.toLowerCase()) ||
         p.client?.cnpj?.toLowerCase().includes(search.toLowerCase());
 
-      const statusMatch = statusFilter === 'all' || p.status === statusFilter;
-      const typeMatch = typeFilter === 'all' || p.type === typeFilter;
+      const statusMatch = statusFilters.length === 0 || statusFilters.includes(p.status);
+      const typeMatch = typeFilters.length === 0 || typeFilters.includes(p.type);
+      
+      // Date filter
+      const dateMatch = (() => {
+        if (!dateFrom && !dateTo) return true;
+        const proposalDate = p.createdAt ? new Date(p.createdAt) : null;
+        if (!proposalDate) return false;
+        if (dateFrom && proposalDate < new Date(dateFrom)) return false;
+        if (dateTo && proposalDate > new Date(dateTo + 'T23:59:59')) return false;
+        return true;
+      })();
 
-      return searchMatch && statusMatch && typeMatch;
+      // Value filter
+      const valueMatch = (() => {
+        if (!valueMin && !valueMax) return true;
+        const value = p.totalValue || 0;
+        if (valueMin && value < parseFloat(valueMin)) return false;
+        if (valueMax && value > parseFloat(valueMax)) return false;
+        return true;
+      })();
+
+      // Coordinator filter
+      const coordMatch = !coordinatorFilter || p.coordinatorName === coordinatorFilter;
+
+      // Client filter
+      const clientMatch = !clientFilter || p.clientId === clientFilter;
+
+      return searchMatch && statusMatch && typeMatch && dateMatch && valueMatch && coordMatch && clientMatch;
     });
 
     // Sort the filtered results
@@ -436,7 +520,7 @@ export default function Proposals() {
         return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
       }
     });
-  }, [proposals, search, statusFilter, typeFilter, sortColumn, sortDirection]);
+  }, [proposals, search, statusFilters, typeFilters, dateFrom, dateTo, valueMin, valueMax, coordinatorFilter, clientFilter, sortColumn, sortDirection]);
 
   const totalPages = Math.ceil(filteredProposals.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -665,113 +749,337 @@ export default function Proposals() {
         {/* Filters Bar */}
         <Card className="flex-shrink-0 mt-4">
           <CardContent className="p-4">
-            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  data-testid="input-search-proposals"
-                  placeholder="Buscar por código, título ou cliente..."
-                  className="pl-10"
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                />
+            <div className="space-y-4">
+              {/* Top Row: Search + Filter Controls + Column Config */}
+              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    data-testid="input-search-proposals"
+                    placeholder="Buscar por código, título ou cliente..."
+                    className="pl-10"
+                    value={search}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  />
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={filtersOpen ? 'default' : 'outline'}
+                    onClick={() => setFiltersOpen(!filtersOpen)}
+                    data-testid="button-toggle-filters"
+                    className="relative"
+                  >
+                    <SlidersHorizontal className="h-4 w-4 mr-2" />
+                    Filtros
+                    {activeFilterCount > 0 && (
+                      <Badge className="ml-2 h-5 w-5 p-0 flex items-center justify-center text-xs bg-primary text-primary-foreground">
+                        {activeFilterCount}
+                      </Badge>
+                    )}
+                    <ChevronDown className={`h-4 w-4 ml-1 transition-transform ${filtersOpen ? 'rotate-180' : ''}`} />
+                  </Button>
+                  
+                  {(activeFilterCount > 0 || search) && (
+                    <Button
+                      variant="ghost"
+                      onClick={clearAllFilters}
+                      data-testid="button-clear-all-filters"
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <RotateCcw className="h-4 w-4 mr-2" />
+                      Limpar
+                    </Button>
+                  )}
+                </div>
+
+                <Popover open={columnConfigOpen} onOpenChange={setColumnConfigOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" data-testid="button-configure-columns">
+                      <Settings2 className="h-4 w-4 mr-2" />
+                      Colunas
+                      <Badge variant="secondary" className="ml-2 h-5 px-1.5">
+                        {Math.min(visibleColumns.length, 8)}
+                      </Badge>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80" align="end">
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium">Configurar Colunas</h4>
+                        <Button variant="ghost" size="sm" onClick={resetColumns} data-testid="button-reset-columns">
+                          <RotateCcw className="h-3 w-3 mr-1" />
+                          Resetar
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Máximo de 8 colunas na tabela. Clique na linha para ver todos os detalhes.
+                      </p>
+                      <Separator />
+                      <ScrollArea className="h-[300px] pr-4">
+                        {Object.entries(groupedColumns).map(([category, cols]) => (
+                          <div key={category} className="mb-4">
+                            <h5 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+                              {categoryLabels[category]}
+                            </h5>
+                            <div className="space-y-2">
+                              {cols.map(col => (
+                                <label
+                                  key={col.id}
+                                  className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded px-2 py-1.5"
+                                  data-testid={`column-toggle-${col.id}`}
+                                >
+                                  <Checkbox
+                                    checked={col.visible}
+                                    onCheckedChange={() => toggleColumn(col.id)}
+                                    data-testid={`checkbox-column-${col.id}`}
+                                  />
+                                  <span className="text-sm">{col.label}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </ScrollArea>
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
-              
-              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
-                <SelectTrigger className="w-[160px]" data-testid="select-status-filter">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos os Status</SelectItem>
-                  {Object.entries(statusLabels).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>{label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
 
-              <Select value={typeFilter} onValueChange={(v) => { setTypeFilter(v); setCurrentPage(1); }}>
-                <SelectTrigger className="w-[160px]" data-testid="select-type-filter">
-                  <SelectValue placeholder="Tipo" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos os Tipos</SelectItem>
-                  {Object.entries(typeLabels).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>{label}</SelectItem>
+              {/* Active Filter Chips */}
+              {activeFilterCount > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {statusFilters.map((status) => (
+                    <Badge
+                      key={status}
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => toggleStatusFilter(status)}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${statusColors[status]}`} />
+                      {statusLabels[status]}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
                   ))}
-                </SelectContent>
-              </Select>
-
-              {(search || statusFilter !== 'all' || typeFilter !== 'all') && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setSearch('');
-                    setStatusFilter('all');
-                    setTypeFilter('all');
-                    setCurrentPage(1);
-                  }}
-                  data-testid="button-clear-filters"
-                >
-                  <RotateCcw className="h-4 w-4 mr-1" />
-                  Limpar
-                </Button>
+                  {typeFilters.map((type) => (
+                    <Badge
+                      key={type}
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => toggleTypeFilter(type)}
+                    >
+                      {typeLabels[type]}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  ))}
+                  {(dateFrom || dateTo) && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => { setDateFrom(''); setDateTo(''); }}
+                    >
+                      <Calendar className="h-3 w-3" />
+                      {dateFrom && dateTo
+                        ? `${formatDate(dateFrom)} - ${formatDate(dateTo)}`
+                        : dateFrom
+                        ? `A partir de ${formatDate(dateFrom)}`
+                        : `Até ${formatDate(dateTo)}`}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                  {(valueMin || valueMax) && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => { setValueMin(''); setValueMax(''); }}
+                    >
+                      <DollarSign className="h-3 w-3" />
+                      {valueMin && valueMax
+                        ? `${formatCurrency(parseFloat(valueMin))} - ${formatCurrency(parseFloat(valueMax))}`
+                        : valueMin
+                        ? `Mín: ${formatCurrency(parseFloat(valueMin))}`
+                        : `Máx: ${formatCurrency(parseFloat(valueMax))}`}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                  {coordinatorFilter && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => setCoordinatorFilter('')}
+                    >
+                      Coord: {coordinatorFilter}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                  {clientFilter && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => setClientFilter('')}
+                    >
+                      Cliente: {clients.find((c) => c.id === clientFilter)?.razaoSocial || clientFilter}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                </div>
               )}
 
-              <Popover open={columnConfigOpen} onOpenChange={setColumnConfigOpen}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" data-testid="button-configure-columns">
-                    <Settings2 className="h-4 w-4 mr-2" />
-                    Colunas
-                    <Badge variant="secondary" className="ml-2 h-5 px-1.5">
-                      {Math.min(visibleColumns.length, 8)}
-                    </Badge>
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80" align="end">
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-medium">Configurar Colunas</h4>
-                      <Button variant="ghost" size="sm" onClick={resetColumns} data-testid="button-reset-columns">
-                        <RotateCcw className="h-3 w-3 mr-1" />
-                        Resetar
-                      </Button>
+              {/* Expandable Filter Panel */}
+              <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
+                <CollapsibleContent className="space-y-4">
+                  <Separator className="my-2" />
+
+                  {/* Status Filters */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Filter className="h-4 w-4 text-muted-foreground" />
+                      <Label className="font-medium">Status</Label>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Máximo de 8 colunas na tabela. Clique na linha para ver todos os detalhes.
-                    </p>
-                    <Separator />
-                    <ScrollArea className="h-[300px] pr-4">
-                      {Object.entries(groupedColumns).map(([category, cols]) => (
-                        <div key={category} className="mb-4">
-                          <h5 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
-                            {categoryLabels[category]}
-                          </h5>
-                          <div className="space-y-2">
-                            {cols.map(col => (
-                              <label
-                                key={col.id}
-                                className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded px-2 py-1.5"
-                                data-testid={`column-toggle-${col.id}`}
-                              >
-                                <Checkbox
-                                  checked={col.visible}
-                                  onCheckedChange={() => toggleColumn(col.id)}
-                                  data-testid={`checkbox-column-${col.id}`}
-                                />
-                                <span className="text-sm">{col.label}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(statusLabels).map(([key, label]) => (
+                        <Button
+                          key={key}
+                          variant={statusFilters.includes(key) ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => toggleStatusFilter(key)}
+                          data-testid={`filter-status-${key}`}
+                          className={`gap-2 ${statusFilters.includes(key) ? '' : 'text-muted-foreground'}`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${statusColors[key]}`} />
+                          {label}
+                        </Button>
                       ))}
-                    </ScrollArea>
+                    </div>
                   </div>
-                </PopoverContent>
-              </Popover>
+
+                  {/* Type Filters */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Filter className="h-4 w-4 text-muted-foreground" />
+                      <Label className="font-medium">Tipo de Proposta</Label>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(typeLabels).map(([key, label]) => (
+                        <Button
+                          key={key}
+                          variant={typeFilters.includes(key) ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => toggleTypeFilter(key)}
+                          data-testid={`filter-type-${key}`}
+                          className={typeFilters.includes(key) ? '' : 'text-muted-foreground'}
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Date and Value Range + Coordinator + Client */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Date Range */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <Label className="font-medium">Período</Label>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          type="date"
+                          value={dateFrom}
+                          onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }}
+                          data-testid="filter-date-from"
+                          className="flex-1"
+                        />
+                        <Input
+                          type="date"
+                          value={dateTo}
+                          onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }}
+                          data-testid="filter-date-to"
+                          className="flex-1"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Value Range */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="h-4 w-4 text-muted-foreground" />
+                        <Label className="font-medium">Valor (R$)</Label>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          type="number"
+                          placeholder="Mín"
+                          value={valueMin}
+                          onChange={(e) => { setValueMin(e.target.value); setCurrentPage(1); }}
+                          data-testid="filter-value-min"
+                          className="flex-1"
+                        />
+                        <Input
+                          type="number"
+                          placeholder="Máx"
+                          value={valueMax}
+                          onChange={(e) => { setValueMax(e.target.value); setCurrentPage(1); }}
+                          data-testid="filter-value-max"
+                          className="flex-1"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Coordinator */}
+                    <div className="space-y-2">
+                      <Label className="font-medium">Coordenador</Label>
+                      <Select
+                        value={coordinatorFilter}
+                        onValueChange={(v) => {
+                          setCoordinatorFilter(v === '_all' ? '' : v);
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger data-testid="filter-coordinator">
+                          <SelectValue placeholder="Todos os coordenadores" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_all">Todos os coordenadores</SelectItem>
+                          {uniqueCoordinators.map((coord) => (
+                            <SelectItem key={coord} value={coord}>
+                              {coord}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Client */}
+                    <div className="space-y-2">
+                      <Label className="font-medium">Cliente</Label>
+                      <Select
+                        value={clientFilter}
+                        onValueChange={(v) => {
+                          setClientFilter(v === '_all' ? '' : v);
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger data-testid="filter-client">
+                          <SelectValue placeholder="Todos os clientes" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_all">Todos os clientes</SelectItem>
+                          {clients.slice(0, 100).map((client) => (
+                            <SelectItem key={client.id} value={client.id}>
+                              {client.razaoSocial}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </div>
           </CardContent>
         </Card>
@@ -783,8 +1091,8 @@ export default function Proposals() {
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground">
               <p>Nenhuma proposta encontrada</p>
-              {(search || statusFilter !== 'all' || typeFilter !== 'all') && (
-                <Button variant="ghost" onClick={() => { setSearch(''); setStatusFilter('all'); setTypeFilter('all'); }}>
+              {(search || activeFilterCount > 0) && (
+                <Button variant="ghost" onClick={clearAllFilters}>
                   Limpar filtros
                 </Button>
               )}
