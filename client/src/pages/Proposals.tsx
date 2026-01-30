@@ -538,9 +538,9 @@ export default function Proposals() {
 
   return (
     <Layout>
-      <div className="space-y-4">
+      <div className="flex flex-col h-full">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 flex-shrink-0">
           <div>
             <h1 className="text-2xl font-semibold">Propostas</h1>
             <p className="text-sm text-muted-foreground">
@@ -663,7 +663,7 @@ export default function Proposals() {
         </div>
 
         {/* Filters Bar */}
-        <Card>
+        <Card className="flex-shrink-0 mt-4">
           <CardContent className="p-4">
             <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
               <div className="relative flex-1 min-w-[200px]">
@@ -791,10 +791,10 @@ export default function Proposals() {
             </CardContent>
           </Card>
         ) : (
-          <Card className="overflow-hidden">
-            <div className="rounded-md overflow-auto max-h-[calc(100vh-350px)]">
+          <Card className="flex-1 min-h-0 overflow-hidden mt-4">
+            <div className="h-full overflow-auto">
               <Table className="w-full table-fixed">
-                <TableHeader className="sticky top-0 z-10 bg-background">
+                <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
                     {visibleColumns.slice(0, 8).map((col) => (
                       <TableHead 
@@ -848,7 +848,7 @@ export default function Proposals() {
 
         {/* Pagination */}
         {filteredProposals.length > 0 && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 flex-shrink-0 mt-4">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <span>Mostrando {startIndex + 1}-{Math.min(endIndex, filteredProposals.length)} de {filteredProposals.length}</span>
               <span className="mx-2">|</span>
