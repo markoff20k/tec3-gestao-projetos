@@ -41,10 +41,19 @@ export const api = {
   delete: <T>(endpoint: string) => request<T>(endpoint, { method: 'DELETE' }),
 };
 
+export interface ColumnConfig {
+  id: string;
+  label: string;
+  visible: boolean;
+  width?: string;
+  category: 'basic' | 'classification' | 'values' | 'dates' | 'people';
+}
+
 export interface UserPreferences {
   theme: 'light' | 'dark';
   sidebarCollapsed: boolean;
   language: string;
+  proposalColumns?: ColumnConfig[] | null;
 }
 
 export interface User {

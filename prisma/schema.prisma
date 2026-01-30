@@ -20,6 +20,7 @@ model User {
   theme            String   @default("light")
   sidebarCollapsed Boolean  @default(false) @map("sidebar_collapsed")
   language         String   @default("pt-BR")
+  proposalColumns  Json?    @map("proposal_columns")
 
   @@map("users")
 }

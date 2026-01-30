@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, ArrowRight, ChevronLeft, ChevronRight, Pencil, X, RotateCcw, Settings2, GripVertical, Check } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -166,23 +166,39 @@ export default function Proposals() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
 
-  // Load column preferences from localStorage on mount
+  // Load column preferences from server on mount
   useEffect(() => {
-    const savedColumns = localStorage.getItem('proposalColumns');
-    if (savedColumns) {
-      try {
-        const parsed = JSON.parse(savedColumns);
-        setColumns(parsed);
-      } catch (e) {
-        console.error('Failed to parse saved columns');
-      }
+    const token = localStorage.getItem('token');
+    if (token) {
+      authApi.getPreferences()
+        .then((prefs) => {
+          if (prefs.proposalColumns && Array.isArray(prefs.proposalColumns)) {
+            setColumns(prefs.proposalColumns);
+          }
+        })
+        .catch(() => {
+          // Fallback to localStorage
+          const savedColumns = localStorage.getItem('proposalColumns');
+          if (savedColumns) {
+            try {
+              const parsed = JSON.parse(savedColumns);
+              setColumns(parsed);
+            } catch (e) {}
+          }
+        });
     }
   }, []);
 
   // Save column preferences when they change
   const saveColumnPreferences = (newColumns: ColumnConfig[]) => {
     setColumns(newColumns);
+    // Save to localStorage as backup
     localStorage.setItem('proposalColumns', JSON.stringify(newColumns));
+    // Save to server
+    const token = localStorage.getItem('token');
+    if (token) {
+      authApi.updatePreferences({ proposalColumns: newColumns }).catch(() => {});
+    }
   };
 
   const toggleColumn = (columnId: string) => {
@@ -617,7 +633,7 @@ export default function Proposals() {
                     <Settings2 className="h-4 w-4 mr-2" />
                     Colunas
                     <Badge variant="secondary" className="ml-2 h-5 px-1.5">
-                      {visibleColumns.length}
+                      {Math.min(visibleColumns.length, 8)}
                     </Badge>
                   </Button>
                 </PopoverTrigger>
@@ -625,11 +641,14 @@ export default function Proposals() {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <h4 className="font-medium">Configurar Colunas</h4>
-                      <Button variant="ghost" size="sm" onClick={resetColumns}>
+                      <Button variant="ghost" size="sm" onClick={resetColumns} data-testid="button-reset-columns">
                         <RotateCcw className="h-3 w-3 mr-1" />
                         Resetar
                       </Button>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      Máximo de 8 colunas na tabela. Clique na linha para ver todos os detalhes.
+                    </p>
                     <Separator />
                     <ScrollArea className="h-[300px] pr-4">
                       {Object.entries(groupedColumns).map(([category, cols]) => (
@@ -639,16 +658,18 @@ export default function Proposals() {
                           </h5>
                           <div className="space-y-2">
                             {cols.map(col => (
-                              <div
+                              <label
                                 key={col.id}
                                 className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded px-2 py-1.5"
-                                onClick={() => toggleColumn(col.id)}
+                                data-testid={`column-toggle-${col.id}`}
                               >
-                                <div className={`w-4 h-4 rounded border flex items-center justify-center ${col.visible ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
-                                  {col.visible && <Check className="h-3 w-3 text-primary-foreground" />}
-                                </div>
+                                <Checkbox
+                                  checked={col.visible}
+                                  onCheckedChange={() => toggleColumn(col.id)}
+                                  data-testid={`checkbox-column-${col.id}`}
+                                />
                                 <span className="text-sm">{col.label}</span>
-                              </div>
+                              </label>
                             ))}
                           </div>
                         </div>
@@ -676,17 +697,17 @@ export default function Proposals() {
             </CardContent>
           </Card>
         ) : (
-          <Card>
-            <div className="rounded-md">
-              <Table>
+          <Card className="overflow-hidden">
+            <div className="rounded-md overflow-x-auto">
+              <Table className="w-full table-fixed">
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    {visibleColumns.map((col) => (
-                      <TableHead key={col.id} className={`${col.width} text-xs font-medium`}>
+                    {visibleColumns.slice(0, 8).map((col) => (
+                      <TableHead key={col.id} className="text-xs font-medium whitespace-nowrap">
                         {col.label}
                       </TableHead>
                     ))}
-                    <TableHead className="w-20 text-right">Ações</TableHead>
+                    <TableHead className="w-24 text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -697,8 +718,8 @@ export default function Proposals() {
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => handleRowClick(proposal)}
                     >
-                      {visibleColumns.map((col) => (
-                        <TableCell key={col.id} className="text-sm py-3">
+                      {visibleColumns.slice(0, 8).map((col) => (
+                        <TableCell key={col.id} className="text-sm py-3 truncate max-w-[200px]">
                           {getCellValue(proposal, col.id)}
                         </TableCell>
                       ))}

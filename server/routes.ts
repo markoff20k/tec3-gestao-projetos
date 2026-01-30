@@ -168,17 +168,19 @@ export async function registerRoutes(
       theme: user.theme || 'light',
       sidebarCollapsed: user.sidebarCollapsed || false,
       language: user.language || 'pt-BR',
+      proposalColumns: user.proposalColumns || null,
     });
   });
 
   app.put('/api/auth/preferences', authenticateToken, async (req, res) => {
     const userId = (req as any).user.sub;
-    const { theme, sidebarCollapsed, language } = req.body;
+    const { theme, sidebarCollapsed, language, proposalColumns } = req.body;
     
     const updateData: any = {};
     if (theme !== undefined) updateData.theme = theme;
     if (sidebarCollapsed !== undefined) updateData.sidebarCollapsed = sidebarCollapsed;
     if (language !== undefined) updateData.language = language;
+    if (proposalColumns !== undefined) updateData.proposalColumns = proposalColumns;
     
     const user = await storage.updateUser(userId, updateData);
     if (!user) {
@@ -188,6 +190,7 @@ export async function registerRoutes(
       theme: user.theme || 'light',
       sidebarCollapsed: user.sidebarCollapsed || false,
       language: user.language || 'pt-BR',
+      proposalColumns: user.proposalColumns || null,
     });
   });
 
