@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2 } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -166,6 +166,28 @@ export default function Proposals() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
 
+  // Sort states
+  const [sortColumn, setSortColumn] = useState<string>('code');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  const handleSort = (columnId: string) => {
+    if (sortColumn === columnId) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(columnId);
+      setSortDirection('asc');
+    }
+  };
+
+  const getSortIcon = (columnId: string) => {
+    if (sortColumn !== columnId) {
+      return <ArrowUpDown className="h-4 w-4 ml-1 opacity-50" />;
+    }
+    return sortDirection === 'asc' 
+      ? <ArrowUp className="h-4 w-4 ml-1" />
+      : <ArrowDown className="h-4 w-4 ml-1" />;
+  };
+
   // Load column preferences from server on mount
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -329,7 +351,7 @@ export default function Proposals() {
   };
 
   const filteredProposals = useMemo(() => {
-    return proposals.filter((p) => {
+    const filtered = proposals.filter((p) => {
       const searchMatch =
         !search ||
         p.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -342,7 +364,79 @@ export default function Proposals() {
 
       return searchMatch && statusMatch && typeMatch;
     });
-  }, [proposals, search, statusFilter, typeFilter]);
+
+    // Sort the filtered results
+    return filtered.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortColumn) {
+        case 'code':
+          aValue = a.code || '';
+          bValue = b.code || '';
+          break;
+        case 'title':
+          aValue = a.title || '';
+          bValue = b.title || '';
+          break;
+        case 'client':
+          aValue = a.client?.razaoSocial || '';
+          bValue = b.client?.razaoSocial || '';
+          break;
+        case 'status':
+          aValue = a.status || '';
+          bValue = b.status || '';
+          break;
+        case 'type':
+          aValue = a.type || '';
+          bValue = b.type || '';
+          break;
+        case 'totalValue':
+          aValue = a.totalValue || 0;
+          bValue = b.totalValue || 0;
+          break;
+        case 'createdAt':
+          aValue = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          bValue = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          break;
+        case 'updatedAt':
+          aValue = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+          bValue = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+          break;
+        case 'sentDate':
+          aValue = a.sentDate ? new Date(a.sentDate).getTime() : 0;
+          bValue = b.sentDate ? new Date(b.sentDate).getTime() : 0;
+          break;
+        case 'approvalDate':
+          aValue = (a as any).approvalDate ? new Date((a as any).approvalDate).getTime() : 0;
+          bValue = (b as any).approvalDate ? new Date((b as any).approvalDate).getTime() : 0;
+          break;
+        case 'currentRevision':
+          aValue = (a as any).currentRevision || 0;
+          bValue = (b as any).currentRevision || 0;
+          break;
+        case 'probability':
+          aValue = (a as any).probability || 0;
+          bValue = (b as any).probability || 0;
+          break;
+        default:
+          aValue = (a as any)[sortColumn] || '';
+          bValue = (b as any)[sortColumn] || '';
+      }
+
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return sortDirection === 'asc'
+          ? aValue.localeCompare(bValue, 'pt-BR')
+          : bValue.localeCompare(aValue, 'pt-BR');
+      }
+
+      if (sortDirection === 'asc') {
+        return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
+      } else {
+        return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
+      }
+    });
+  }, [proposals, search, statusFilter, typeFilter, sortColumn, sortDirection]);
 
   const totalPages = Math.ceil(filteredProposals.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -698,13 +792,21 @@ export default function Proposals() {
           </Card>
         ) : (
           <Card className="overflow-hidden">
-            <div className="rounded-md overflow-x-auto">
+            <div className="rounded-md overflow-auto max-h-[calc(100vh-350px)]">
               <Table className="w-full table-fixed">
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-10 bg-background">
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
                     {visibleColumns.slice(0, 8).map((col) => (
-                      <TableHead key={col.id} className="text-xs font-medium whitespace-nowrap">
-                        {col.label}
+                      <TableHead 
+                        key={col.id} 
+                        className="text-xs font-medium whitespace-nowrap cursor-pointer select-none"
+                        data-testid={`header-sort-${col.id}`}
+                        onClick={() => handleSort(col.id)}
+                      >
+                        <div className="flex items-center">
+                          {col.label}
+                          {getSortIcon(col.id)}
+                        </div>
                       </TableHead>
                     ))}
                     <TableHead className="w-24 text-right">Ações</TableHead>
