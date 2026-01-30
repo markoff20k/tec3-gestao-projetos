@@ -369,13 +369,14 @@ export function Layout({ children }: LayoutProps) {
                   data-testid="button-profile-menu"
                   className="ml-2 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-sidebar"
                 >
+                  <Avatar className="h-9 w-9 cursor-pointer">
                   {user?.photoUrl ? (
-                      <Avatar className="h-9 w-9 cursor-pointer">
-                        <AvatarImage src={user.photoUrl} alt={user?.name} />
-                      </Avatar>
-                    ) : (
-                      <User className="h-5 w-5 text-sidebar-foreground/70 hover:text-sidebar-foreground" />
-                    )}
+                    <AvatarImage src={user.photoUrl} alt={user?.name} />
+                  ) : null}
+                  <AvatarFallback className="bg-primary/10 text-primary">
+                    <User className="h-5 w-5" />
+                  </AvatarFallback>
+                </Avatar>
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
