@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, ChevronUp, Check } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,7 +42,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { useToast } from '@/hooks/use-toast';
-import { proposalsApi, clientsApi, authApi, Proposal, Client } from '@/lib/api';
+import { proposalsApi, clientsApi, authApi, favoritesApi, Proposal, Client } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
@@ -190,6 +190,7 @@ export default function Proposals() {
   const [valueMax, setValueMax] = useState('');
   const [coordinatorFilter, setCoordinatorFilter] = useState('');
   const [clientFilter, setClientFilter] = useState('');
+  const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
 
   // Sort states
   const [sortColumn, setSortColumn] = useState<string>('code');
@@ -369,6 +370,35 @@ export default function Proposals() {
     queryFn: () => clientsApi.getAll(),
   });
 
+  const { data: favorites = [] } = useQuery<string[]>({
+    queryKey: ['/api/proposal-favorites'],
+    queryFn: () => favoritesApi.getAll(),
+  });
+
+  const favoritesSet = useMemo(() => new Set(favorites), [favorites]);
+
+  const toggleFavoriteMutation = useMutation({
+    mutationFn: async ({ proposalId, isFavorite }: { proposalId: string; isFavorite: boolean }) => {
+      if (isFavorite) {
+        return favoritesApi.remove(proposalId);
+      } else {
+        return favoritesApi.add(proposalId);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/proposal-favorites'] });
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao atualizar favorito', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const handleToggleFavorite = (proposalId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const isFavorite = favoritesSet.has(proposalId);
+    toggleFavoriteMutation.mutate({ proposalId, isFavorite });
+  };
+
   const createMutation = useMutation({
     mutationFn: (data: Partial<Proposal>) => proposalsApi.create(data),
     onSuccess: () => {
@@ -519,7 +549,10 @@ export default function Proposals() {
       // Client filter
       const clientMatch = !clientFilter || p.clientId === clientFilter;
 
-      return searchMatch && statusMatch && typeMatch && dateMatch && valueMatch && coordMatch && clientMatch;
+      // Favorites filter
+      const favoriteMatch = !showOnlyFavorites || favoritesSet.has(p.id);
+
+      return searchMatch && statusMatch && typeMatch && dateMatch && valueMatch && coordMatch && clientMatch && favoriteMatch;
     });
 
     // Sort the filtered results
@@ -593,7 +626,7 @@ export default function Proposals() {
         return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
       }
     });
-  }, [proposals, search, statusFilters, typeFilters, dateFrom, dateTo, valueMin, valueMax, coordinatorFilter, clientFilter, sortColumn, sortDirection]);
+  }, [proposals, search, statusFilters, typeFilters, dateFrom, dateTo, valueMin, valueMax, coordinatorFilter, clientFilter, showOnlyFavorites, favoritesSet, sortColumn, sortDirection]);
 
   const totalPages = Math.ceil(filteredProposals.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -1211,6 +1244,18 @@ export default function Proposals() {
               <Table className="w-full">
                 <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
+                    <TableHead className="w-10 px-2">
+                      <Button
+                        size="icon"
+                        variant={showOnlyFavorites ? 'default' : 'ghost'}
+                        className="h-7 w-7"
+                        onClick={() => setShowOnlyFavorites(!showOnlyFavorites)}
+                        data-testid="button-filter-favorites"
+                        title={showOnlyFavorites ? 'Mostrando apenas favoritos' : 'Mostrar apenas favoritos'}
+                      >
+                        <Star className={`h-4 w-4 ${showOnlyFavorites ? 'fill-current' : ''}`} />
+                      </Button>
+                    </TableHead>
                     {hasOverflowColumns && (
                       <TableHead className="w-12 px-2">
                         <span className="sr-only">Expandir</span>
@@ -1242,6 +1287,24 @@ export default function Proposals() {
                           className={`cursor-pointer transition-colors ${isExpanded ? 'bg-muted/30' : 'hover:bg-muted/50'}`}
                           onClick={() => handleRowClick(proposal)}
                         >
+                          <TableCell className="w-10 px-2">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              onClick={(e) => handleToggleFavorite(proposal.id, e)}
+                              data-testid={`button-favorite-${proposal.id}`}
+                              title={favoritesSet.has(proposal.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+                            >
+                              <Star 
+                                className={`h-4 w-4 transition-colors ${
+                                  favoritesSet.has(proposal.id) 
+                                    ? 'fill-yellow-400 text-yellow-400' 
+                                    : 'text-muted-foreground hover:text-yellow-400'
+                                }`} 
+                              />
+                            </Button>
+                          </TableCell>
                           {hasOverflowColumns && (
                             <TableCell className="w-12 px-2">
                               <Button
@@ -1285,7 +1348,7 @@ export default function Proposals() {
                             className="bg-muted/20 border-b-2 border-primary/10"
                           >
                             <TableCell 
-                              colSpan={primaryColumns.length + 2}
+                              colSpan={primaryColumns.length + 3}
                               className="p-0"
                             >
                               <div className="px-6 py-4 animate-in slide-in-from-top-2 duration-200">

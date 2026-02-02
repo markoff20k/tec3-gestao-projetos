@@ -240,3 +240,9 @@ export const reportsApi = {
   getProjects: () => api.get<any>('/reports/projects'),
   getClients: () => api.get<any>('/reports/clients'),
 };
+
+export const favoritesApi = {
+  getAll: () => api.get<string[]>('/proposal-favorites'),
+  add: (proposalId: string) => api.post<{ success: boolean }>(`/proposal-favorites/${proposalId}`),
+  remove: (proposalId: string) => api.delete(`/proposal-favorites/${proposalId}`),
+};
