@@ -165,8 +165,7 @@ export default function Proposals() {
   const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const tableContainerRef = useRef<HTMLDivElement>(null);
-  const [maxVisibleColumns, setMaxVisibleColumns] = useState(8);
-  
+    
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -337,41 +336,13 @@ export default function Proposals() {
 
   const visibleColumns = columns.filter(col => col.visible);
   
-  // Calculate max visible columns based on container width
-  const calculateMaxColumns = useCallback(() => {
-    if (!tableContainerRef.current) return;
-    const containerWidth = tableContainerRef.current.offsetWidth;
-    // Base widths: expand button (48px), actions column (96px), padding (32px)
-    const reservedWidth = 176;
-    const avgColumnWidth = 140; // Average column width in pixels
-    const available = containerWidth - reservedWidth;
-    const maxCols = Math.max(3, Math.floor(available / avgColumnWidth));
-    setMaxVisibleColumns(maxCols);
-  }, []);
+  // Show all visible columns in the table (like legacy system)
+  // No column limit - table will scroll horizontally
 
-  // Recalculate on resize
-  useEffect(() => {
-    calculateMaxColumns();
-    const resizeObserver = new ResizeObserver(() => {
-      calculateMaxColumns();
-    });
-    if (tableContainerRef.current) {
-      resizeObserver.observe(tableContainerRef.current);
-    }
-    return () => resizeObserver.disconnect();
-  }, [calculateMaxColumns]);
-
-  // Columns that fit in the table
-  const primaryColumns = useMemo(() => {
-    return visibleColumns.slice(0, maxVisibleColumns);
-  }, [visibleColumns, maxVisibleColumns]);
-
-  // Columns that go into the expandable panel
-  const overflowColumns = useMemo(() => {
-    return visibleColumns.slice(maxVisibleColumns);
-  }, [visibleColumns, maxVisibleColumns]);
-
-  const hasOverflowColumns = overflowColumns.length > 0;
+  // All visible columns go directly in the table (like legacy system)
+  const primaryColumns = visibleColumns;
+  const overflowColumns: ColumnConfig[] = [];
+  const hasOverflowColumns = false;
 
   const toggleRowExpansion = (proposalId: string, e: React.MouseEvent) => {
     e.stopPropagation();
