@@ -99,32 +99,32 @@ interface ColumnConfig {
   category: 'basic' | 'classification' | 'values' | 'dates' | 'people';
 }
 
-const COLUMNS_VERSION = 4;
+const COLUMNS_VERSION = 5;
 
 const defaultColumns: ColumnConfig[] = [
-  { id: 'code', label: 'Cód. proposta', visible: true, width: 'w-32', category: 'basic' },
-  { id: 'revision', label: 'Revisão', visible: true, width: 'w-20', category: 'basic' },
-  { id: 'proposalOrigin', label: 'Cód. antigo', visible: true, width: 'w-28', category: 'basic' },
-  { id: 'type', label: 'Tipo do contrato', visible: true, width: 'w-32', category: 'classification' },
-  { id: 'client', label: 'Cliente', visible: true, width: 'w-56', category: 'basic' },
-  { id: 'umbrellaRef', label: 'Proposta origem (guarda-chuva)', visible: true, width: 'w-48', category: 'classification' },
-  { id: 'coordinatorName', label: 'Resp. pela proposta', visible: true, width: 'w-44', category: 'people' },
-  { id: 'title', label: 'Título', visible: true, width: 'w-72', category: 'basic' },
-  { id: 'createdAt', label: 'Dt. solicitação', visible: true, width: 'w-28', category: 'dates' },
-  { id: 'sentDate', label: 'Dt. emissão', visible: true, width: 'w-28', category: 'dates' },
-  { id: 'dueDate', label: 'Dt. validade', visible: true, width: 'w-28', category: 'dates' },
-  { id: 'status', label: 'Situação', visible: true, width: 'w-28', category: 'basic' },
-  { id: 'expectation', label: 'Expectativa', visible: true, width: 'w-28', category: 'values' },
-  { id: 'mainType', label: 'Tipo principal', visible: true, width: 'w-36', category: 'classification' },
-  { id: 'termMonths', label: 'Prazo (em meses)', visible: true, width: 'w-32', category: 'values' },
-  { id: 'riskAssessment', label: 'Aval. do risco', visible: true, width: 'w-32', category: 'values' },
-  { id: 'acquisitionMargin', label: '% contratação', visible: true, width: 'w-32', category: 'values' },
-  { id: 'additiveValue', label: 'Aditivos', visible: true, width: 'w-28', category: 'values' },
-  { id: 'expense', label: 'Despesas', visible: true, width: 'w-28', category: 'values' },
-  { id: 'discount', label: 'Desconto', visible: true, width: 'w-28', category: 'values' },
-  { id: 'subcontracted', label: 'Vl. sub proposta', visible: true, width: 'w-36', category: 'values' },
-  { id: 'quantity', label: 'Qtd proposta', visible: true, width: 'w-32', category: 'values' },
-  { id: 'description', label: 'Obs', visible: true, width: 'w-48', category: 'basic' },
+  { id: 'code', label: 'Cód. proposta', visible: true, width: 'min-w-[90px]', category: 'basic' },
+  { id: 'revision', label: 'Revisão', visible: true, width: 'min-w-[60px]', category: 'basic' },
+  { id: 'proposalOrigin', label: 'Cód. antigo', visible: true, width: 'min-w-[70px]', category: 'basic' },
+  { id: 'type', label: 'Tipo do contrato', visible: true, width: 'min-w-[90px]', category: 'classification' },
+  { id: 'client', label: 'Cliente', visible: true, width: 'min-w-[120px]', category: 'basic' },
+  { id: 'umbrellaRef', label: 'Proposta origem (guarda-chuva)', visible: true, width: 'min-w-[100px]', category: 'classification' },
+  { id: 'coordinatorName', label: 'Resp. pela proposta', visible: true, width: 'min-w-[100px]', category: 'people' },
+  { id: 'title', label: 'Título', visible: true, width: 'min-w-[150px]', category: 'basic' },
+  { id: 'createdAt', label: 'Dt. solicitação', visible: true, width: 'min-w-[80px]', category: 'dates' },
+  { id: 'sentDate', label: 'Dt. emissão', visible: true, width: 'min-w-[80px]', category: 'dates' },
+  { id: 'dueDate', label: 'Dt. validade', visible: true, width: 'min-w-[80px]', category: 'dates' },
+  { id: 'status', label: 'Situação', visible: true, width: 'min-w-[80px]', category: 'basic' },
+  { id: 'expectation', label: 'Expectativa', visible: true, width: 'min-w-[80px]', category: 'values' },
+  { id: 'mainType', label: 'Tipo principal', visible: true, width: 'min-w-[90px]', category: 'classification' },
+  { id: 'termMonths', label: 'Prazo (em meses)', visible: true, width: 'min-w-[70px]', category: 'values' },
+  { id: 'riskAssessment', label: 'Aval. do risco', visible: true, width: 'min-w-[70px]', category: 'values' },
+  { id: 'acquisitionMargin', label: '% contratação', visible: true, width: 'min-w-[70px]', category: 'values' },
+  { id: 'additiveValue', label: 'Aditivos', visible: true, width: 'min-w-[60px]', category: 'values' },
+  { id: 'expense', label: 'Despesas', visible: true, width: 'min-w-[60px]', category: 'values' },
+  { id: 'discount', label: 'Desconto', visible: true, width: 'min-w-[60px]', category: 'values' },
+  { id: 'subcontracted', label: 'Vl. sub proposta', visible: true, width: 'min-w-[80px]', category: 'values' },
+  { id: 'quantity', label: 'Qtd proposta', visible: true, width: 'min-w-[70px]', category: 'values' },
+  { id: 'description', label: 'Obs', visible: true, width: 'min-w-[80px]', category: 'basic' },
   { id: 'categoryValues', label: 'Valores por categoria', visible: false, width: 'w-32', category: 'values' },
   { id: 'contractCode', label: 'Cód. contrato', visible: false, width: 'w-28', category: 'basic' },
   { id: 'deliveryDate', label: 'Dt. entrega', visible: false, width: 'w-28', category: 'dates' },
@@ -1277,8 +1277,8 @@ export default function Proposals() {
           </Card>
         ) : (
           <Card className="flex-1 min-h-0 overflow-hidden mt-4" ref={tableContainerRef}>
-            <div className="h-full overflow-y-auto overflow-x-hidden">
-              <Table className="w-full table-fixed">
+            <div className="h-full overflow-y-auto overflow-x-auto">
+              <Table className="w-full table-auto">
                 <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
                     <TableHead className="w-10 px-2">
