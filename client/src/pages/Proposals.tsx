@@ -253,21 +253,32 @@ export default function Proposals() {
 
   // Load column preferences from server on mount
   useEffect(() => {
+    const mergeColumns = (savedColumns: ColumnConfig[]) => {
+      const savedMap = new Map(savedColumns.map(c => [c.id, c]));
+      const merged = defaultColumns.map(defaultCol => {
+        const saved = savedMap.get(defaultCol.id);
+        if (saved) {
+          return { ...defaultCol, visible: saved.visible };
+        }
+        return defaultCol;
+      });
+      return merged;
+    };
+
     const token = localStorage.getItem('token');
     if (token) {
       authApi.getPreferences()
         .then((prefs) => {
           if (prefs.proposalColumns && Array.isArray(prefs.proposalColumns)) {
-            setColumns(prefs.proposalColumns);
+            setColumns(mergeColumns(prefs.proposalColumns));
           }
         })
         .catch(() => {
-          // Fallback to localStorage
           const savedColumns = localStorage.getItem('proposalColumns');
           if (savedColumns) {
             try {
               const parsed = JSON.parse(savedColumns);
-              setColumns(parsed);
+              setColumns(mergeColumns(parsed));
             } catch (e) {}
           }
         });
