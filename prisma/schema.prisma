@@ -182,3 +182,13 @@ model ProposalCategoryValue {
 
   @@map("proposal_category_values")
 }
+
+model ProposalFavorite {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  proposalId String   @map("proposal_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, proposalId])
+  @@map("proposal_favorites")
+}

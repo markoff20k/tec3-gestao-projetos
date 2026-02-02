@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
-import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, Prisma } from "../generated/prisma/client";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, Prisma } from "../generated/prisma/client";
 
 export const ProposalStatus = {
   DRAFT: 'draft',
@@ -76,6 +76,10 @@ export interface IStorage {
   getProposalCategoryValues(proposalId: string): Promise<ProposalCategoryValue[]>;
   saveProposalCategoryValues(proposalId: string, values: InsertProposalCategoryValue[]): Promise<ProposalCategoryValue[]>;
   deleteProposalCategoryValue(id: string): Promise<boolean>;
+
+  getUserFavoriteProposals(userId: string): Promise<string[]>;
+  addFavoriteProposal(userId: string, proposalId: string): Promise<ProposalFavorite>;
+  removeFavoriteProposal(userId: string, proposalId: string): Promise<boolean>;
 
   seedAdminUser(): Promise<void>;
   seedProposalCategories(): Promise<void>;
@@ -389,6 +393,33 @@ export class PrismaStorage implements IStorage {
     }
   }
 
+  async getUserFavoriteProposals(userId: string): Promise<string[]> {
+    const favorites = await prisma.proposalFavorite.findMany({
+      where: { userId },
+      select: { proposalId: true }
+    });
+    return favorites.map(f => f.proposalId);
+  }
+
+  async addFavoriteProposal(userId: string, proposalId: string): Promise<ProposalFavorite> {
+    return prisma.proposalFavorite.upsert({
+      where: { userId_proposalId: { userId, proposalId } },
+      create: { userId, proposalId },
+      update: {}
+    });
+  }
+
+  async removeFavoriteProposal(userId: string, proposalId: string): Promise<boolean> {
+    try {
+      await prisma.proposalFavorite.delete({
+        where: { userId_proposalId: { userId, proposalId } }
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async seedProposalCategories(): Promise<void> {
     const existingCategories = await prisma.proposalCategory.count();
     if (existingCategories > 0) return;
@@ -443,4 +474,4 @@ export class PrismaStorage implements IStorage {
 
 export const storage = new PrismaStorage();
 
-export type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue };
+export type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite };

@@ -584,5 +584,26 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
+  // Proposal Favorites API
+  app.get('/api/proposal-favorites', authenticateToken, async (req, res) => {
+    const userId = (req as any).user.sub;
+    const favoriteIds = await storage.getUserFavoriteProposals(userId);
+    res.json(favoriteIds);
+  });
+
+  app.post('/api/proposal-favorites/:proposalId', authenticateToken, async (req, res) => {
+    const userId = (req as any).user.sub;
+    const { proposalId } = req.params;
+    await storage.addFavoriteProposal(userId, proposalId);
+    res.status(201).json({ success: true });
+  });
+
+  app.delete('/api/proposal-favorites/:proposalId', authenticateToken, async (req, res) => {
+    const userId = (req as any).user.sub;
+    const { proposalId } = req.params;
+    await storage.removeFavoriteProposal(userId, proposalId);
+    res.status(204).send();
+  });
+
   return httpServer;
 }
