@@ -1228,8 +1228,8 @@ export default function Proposals() {
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">Carregando propostas...</div>
         ) : filteredProposals.length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
+          <Card className="mt-4">
+            <CardContent className="py-16 text-center text-muted-foreground">
               <p>Nenhuma proposta encontrada</p>
               {(search || activeFilterCount > 0) && (
                 <Button variant="ghost" onClick={clearAllFilters}>
