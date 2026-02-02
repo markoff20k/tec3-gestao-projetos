@@ -99,41 +99,46 @@ interface ColumnConfig {
   category: 'basic' | 'classification' | 'values' | 'dates' | 'people';
 }
 
+const COLUMNS_VERSION = 2;
+
 const defaultColumns: ColumnConfig[] = [
-  { id: 'code', label: 'Cód. proposta', visible: true, width: 'w-28', category: 'basic' },
-  { id: 'revision', label: 'Revisão', visible: true, width: 'w-20', category: 'basic' },
+  { id: 'code', label: 'Cód. proposta', visible: true, width: 'w-24', category: 'basic' },
+  { id: 'revision', label: 'Revisão', visible: true, width: 'w-16', category: 'basic' },
+  { id: 'proposalOrigin', label: 'Cód. antigo', visible: true, width: 'w-20', category: 'basic' },
+  { id: 'type', label: 'Tipo do contrato', visible: true, width: 'w-24', category: 'classification' },
+  { id: 'client', label: 'Cliente', visible: true, width: 'w-40', category: 'basic' },
+  { id: 'umbrellaRef', label: 'Proposta origem (guarda-chuva)', visible: true, width: 'w-32', category: 'classification' },
+  { id: 'coordinatorName', label: 'Resp. pela proposta', visible: true, width: 'w-32', category: 'people' },
+  { id: 'title', label: 'Título', visible: true, width: 'w-48', category: 'basic' },
+  { id: 'createdAt', label: 'Dt. solicitação', visible: true, width: 'w-24', category: 'dates' },
+  { id: 'sentDate', label: 'Dt. emissão', visible: true, width: 'w-24', category: 'dates' },
+  { id: 'dueDate', label: 'Dt. validade', visible: true, width: 'w-24', category: 'dates' },
+  { id: 'status', label: 'Situação', visible: true, width: 'w-24', category: 'basic' },
+  { id: 'expectation', label: 'Expectativa', visible: true, width: 'w-24', category: 'values' },
+  { id: 'mainType', label: 'Tipo principal', visible: true, width: 'w-28', category: 'classification' },
+  { id: 'termMonths', label: 'Prazo (em meses)', visible: true, width: 'w-24', category: 'values' },
+  { id: 'riskAssessment', label: 'Aval. do risco', visible: true, width: 'w-24', category: 'values' },
+  { id: 'acquisitionMargin', label: '% contratação', visible: true, width: 'w-24', category: 'values' },
+  { id: 'additiveValue', label: 'Aditivos', visible: true, width: 'w-20', category: 'values' },
+  { id: 'expense', label: 'Despesas', visible: true, width: 'w-20', category: 'values' },
+  { id: 'discount', label: 'Desconto', visible: true, width: 'w-20', category: 'values' },
+  { id: 'subcontracted', label: 'Vl. sub proposta', visible: true, width: 'w-24', category: 'values' },
+  { id: 'quantity', label: 'Qtd proposta', visible: true, width: 'w-20', category: 'values' },
+  { id: 'description', label: 'Obs', visible: true, width: 'w-20', category: 'basic' },
+  { id: 'categoryValues', label: 'Valores por Categoria', visible: true, width: 'w-32', category: 'values' },
   { id: 'contractCode', label: 'Cód. contrato', visible: false, width: 'w-28', category: 'basic' },
-  { id: 'type', label: 'Tipo proposta', visible: true, width: 'w-32', category: 'classification' },
-  { id: 'umbrellaRef', label: 'Proposta guarda chuva', visible: false, width: 'w-36', category: 'classification' },
-  { id: 'client', label: 'Cliente', visible: true, width: 'w-56', category: 'basic' },
-  { id: 'coordinatorName', label: 'Resp. proposta', visible: false, width: 'w-36', category: 'people' },
-  { id: 'title', label: 'Titulo', visible: true, width: 'w-72', category: 'basic' },
-  { id: 'createdAt', label: 'Dt. solic', visible: false, width: 'w-28', category: 'dates' },
   { id: 'deliveryDate', label: 'Dt. entrega', visible: false, width: 'w-28', category: 'dates' },
-  { id: 'dueDate', label: 'Dt. vencimento', visible: false, width: 'w-28', category: 'dates' },
   { id: 'updatedAt', label: 'Dt. modificação', visible: false, width: 'w-28', category: 'dates' },
   { id: 'duration', label: 'Duração', visible: false, width: 'w-24', category: 'values' },
-  { id: 'expectation', label: 'Expectativa', visible: false, width: 'w-28', category: 'values' },
   { id: 'activityType', label: 'Tipo atividade', visible: false, width: 'w-32', category: 'classification' },
-  { id: 'termMonths', label: 'Prazo (meses)', visible: false, width: 'w-28', category: 'values' },
   { id: 'hours', label: 'Horas', visible: false, width: 'w-24', category: 'values' },
-  { id: 'riskAssessment', label: 'Aval. risco', visible: false, width: 'w-32', category: 'values' },
   { id: 'maintenanceNum', label: 'Nº manutenção', visible: false, width: 'w-28', category: 'values' },
-  { id: 'subcontracted', label: 'Nº subcontratação', visible: false, width: 'w-32', category: 'values' },
-  { id: 'acquisitionMargin', label: 'Margem aquisição', visible: false, width: 'w-36', category: 'values' },
-  { id: 'expense', label: 'Despesas', visible: false, width: 'w-28', category: 'values' },
   { id: 'anfibex', label: 'Anfíbes', visible: false, width: 'w-24', category: 'values' },
-  { id: 'discount', label: 'Desconto', visible: false, width: 'w-24', category: 'values' },
-  { id: 'proposalOrigin', label: 'Nº veio proposta', visible: false, width: 'w-32', category: 'basic' },
-  { id: 'status', label: 'Situação', visible: true, width: 'w-28', category: 'basic' },
   { id: 'totalValue', label: 'Valor', visible: false, width: 'w-32', category: 'values' },
-  { id: 'sentDate', label: 'Dt. Envio', visible: false, width: 'w-28', category: 'dates' },
   { id: 'sentByName', label: 'Enviado por', visible: false, width: 'w-28', category: 'people' },
   { id: 'specialist', label: 'Especialista', visible: false, width: 'w-32', category: 'people' },
   { id: 'workOrders', label: 'OAs', visible: false, width: 'w-20', category: 'basic' },
-  { id: 'mainType', label: 'Tipo principal', visible: false, width: 'w-28', category: 'classification' },
   { id: 'utility', label: 'Utilidade', visible: false, width: 'w-28', category: 'classification' },
-  { id: 'categoryValues', label: 'Valores por Categoria', visible: true, width: 'w-36', category: 'values' },
 ];
 
 const categoryLabels: Record<string, string> = {
@@ -279,6 +284,15 @@ export default function Proposals() {
     };
 
     const token = localStorage.getItem('token');
+    const savedVersion = localStorage.getItem('proposalColumnsVersion');
+    
+    if (savedVersion !== String(COLUMNS_VERSION)) {
+      localStorage.setItem('proposalColumnsVersion', String(COLUMNS_VERSION));
+      localStorage.removeItem('proposalColumns');
+      setColumns(defaultColumns);
+      return;
+    }
+    
     if (token) {
       authApi.getPreferences()
         .then((prefs) => {
@@ -751,6 +765,12 @@ export default function Proposals() {
         return (proposal as any).discount || '-';
       case 'proposalOrigin':
         return (proposal as any).proposalOrigin || '-';
+      case 'quantity':
+        return proposal.quantity || '-';
+      case 'description':
+        return proposal.description || '-';
+      case 'additiveValue':
+        return proposal.additiveValue ? formatCurrency(proposal.additiveValue) : '-';
       case 'categoryValues':
         const categoryTotal = (proposal as any).categoryValuesTotal || 0;
         return (
