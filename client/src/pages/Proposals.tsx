@@ -1264,8 +1264,8 @@ export default function Proposals() {
           </Card>
         ) : (
           <Card className="flex-1 min-h-0 overflow-hidden mt-4" ref={tableContainerRef}>
-            <div className="h-full overflow-auto">
-              <Table className="w-full">
+            <div className="h-full overflow-y-auto overflow-x-hidden">
+              <Table className="w-full table-fixed">
                 <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
                     <TableHead className="w-10 px-2">
