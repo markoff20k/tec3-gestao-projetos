@@ -2085,7 +2085,7 @@ export default function Proposals() {
                       <SelectValue placeholder="Selecione" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Nenhuma</SelectItem>
+                      <SelectItem value="none">Nenhuma</SelectItem>
                       <SelectItem value="high">Alta</SelectItem>
                       <SelectItem value="medium">Média</SelectItem>
                       <SelectItem value="low">Baixa</SelectItem>
