@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
-import type { User, Client, Proposal, Project, TimeEntry, Prisma } from "../generated/prisma/client";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, Prisma } from "../generated/prisma/client";
 
 export const ProposalStatus = {
   DRAFT: 'draft',
@@ -32,6 +32,8 @@ export type InsertClient = Omit<Prisma.ClientCreateInput, 'id' | 'proposals' | '
 export type InsertProposal = Omit<Prisma.ProposalCreateInput, 'id' | 'code' | 'createdAt' | 'client'> & { clientId: string };
 export type InsertProject = Omit<Prisma.ProjectCreateInput, 'id' | 'code' | 'createdAt' | 'client' | 'timeEntries'> & { clientId: string };
 export type InsertTimeEntry = Omit<Prisma.TimeEntryCreateInput, 'id' | 'status' | 'approvedById' | 'approvedAt' | 'rejectionReason' | 'createdAt' | 'project'> & { projectId: string };
+export type InsertProposalCategory = { code: string; name: string; isActive?: boolean };
+export type InsertProposalCategoryValue = { proposalId: string; categoryId?: string; customName?: string; value: number; hours: number };
 
 export interface IStorage {
   getUser(id: string): Promise<User | null>;
@@ -66,7 +68,17 @@ export interface IStorage {
   updateTimeEntry(id: string, entry: Partial<TimeEntry>): Promise<TimeEntry | null>;
   deleteTimeEntry(id: string): Promise<boolean>;
 
+  getAllProposalCategories(): Promise<ProposalCategory[]>;
+  createProposalCategory(category: InsertProposalCategory): Promise<ProposalCategory>;
+  updateProposalCategory(id: string, category: Partial<ProposalCategory>): Promise<ProposalCategory | null>;
+  deleteProposalCategory(id: string): Promise<boolean>;
+
+  getProposalCategoryValues(proposalId: string): Promise<ProposalCategoryValue[]>;
+  saveProposalCategoryValues(proposalId: string, values: InsertProposalCategoryValue[]): Promise<ProposalCategoryValue[]>;
+  deleteProposalCategoryValue(id: string): Promise<boolean>;
+
   seedAdminUser(): Promise<void>;
+  seedProposalCategories(): Promise<void>;
 }
 
 export class PrismaStorage implements IStorage {
@@ -302,8 +314,125 @@ export class PrismaStorage implements IStorage {
       return false;
     }
   }
+
+  async getAllProposalCategories(): Promise<ProposalCategory[]> {
+    return prisma.proposalCategory.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' }
+    });
+  }
+
+  async createProposalCategory(category: InsertProposalCategory): Promise<ProposalCategory> {
+    return prisma.proposalCategory.create({
+      data: {
+        code: category.code,
+        name: category.name,
+        isActive: category.isActive ?? true
+      }
+    });
+  }
+
+  async updateProposalCategory(id: string, updates: Partial<ProposalCategory>): Promise<ProposalCategory | null> {
+    return prisma.proposalCategory.update({ where: { id }, data: updates });
+  }
+
+  async deleteProposalCategory(id: string): Promise<boolean> {
+    try {
+      await prisma.proposalCategory.update({ where: { id }, data: { isActive: false } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getProposalCategoryValues(proposalId: string): Promise<ProposalCategoryValue[]> {
+    return prisma.proposalCategoryValue.findMany({
+      where: { proposalId },
+      include: { category: true },
+      orderBy: { createdAt: 'asc' }
+    });
+  }
+
+  async saveProposalCategoryValues(proposalId: string, values: InsertProposalCategoryValue[]): Promise<ProposalCategoryValue[]> {
+    await prisma.proposalCategoryValue.deleteMany({ where: { proposalId } });
+    
+    const created = await Promise.all(
+      values.map(v => 
+        prisma.proposalCategoryValue.create({
+          data: {
+            proposalId: v.proposalId,
+            categoryId: v.categoryId || null,
+            customName: v.customName || null,
+            value: v.value,
+            hours: v.hours
+          }
+        })
+      )
+    );
+    return created;
+  }
+
+  async deleteProposalCategoryValue(id: string): Promise<boolean> {
+    try {
+      await prisma.proposalCategoryValue.delete({ where: { id } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async seedProposalCategories(): Promise<void> {
+    const existingCategories = await prisma.proposalCategory.count();
+    if (existingCategories > 0) return;
+
+    const categories = [
+      { code: 'ADM', name: 'Administrativo' },
+      { code: 'CONS', name: 'Consultor' },
+      { code: 'CONS_INT', name: 'Consultor Internacional' },
+      { code: 'CONS_NAC', name: 'Consultor nacional' },
+      { code: 'COORD', name: 'Coordenador' },
+      { code: 'DES', name: 'Desenhista' },
+      { code: 'DES_JR', name: 'Desenhista Júnior' },
+      { code: 'DES_SR', name: 'Desenhista Sênior' },
+      { code: 'ENG_CIV', name: 'Engenheiro Civil' },
+      { code: 'ENG_CIV_JR', name: 'Engenheiro Civil Júnior' },
+      { code: 'ENG_CIV_MD', name: 'Engenheiro Civil Médio' },
+      { code: 'ENG_CIV_SR', name: 'Engenheiro Civil Sênior' },
+      { code: 'ENG_MAST', name: 'Engenheiro Master' },
+      { code: 'ENG_MAST_CAMP', name: 'Engenheiro Master CAMPO' },
+      { code: 'GEO_JR', name: 'Geólogo Júnior' },
+      { code: 'GEO_MD', name: 'Geólogo Médio' },
+      { code: 'GEO_SR', name: 'Geólogo Sênior' },
+      { code: 'GEOTEC_JR', name: 'Geotécnico Júnior' },
+      { code: 'GEOTEC_MD', name: 'Geotécnico Médio' },
+      { code: 'GEOTEC_SR', name: 'Geotécnico Sênior' },
+      { code: 'HIDROGEO_JR', name: 'Hidrogeólogo Júnior' },
+      { code: 'HIDROGEO_MD', name: 'Hidrogeólogo Médio' },
+      { code: 'HIDROGEO_SR', name: 'Hidrogeólogo Sênior' },
+      { code: 'HIDRO_JR', name: 'Hidrólogo Júnior' },
+      { code: 'HIDRO_MD', name: 'Hidrólogo Médio' },
+      { code: 'HIDRO_SR', name: 'Hidrólogo Sênior' },
+      { code: 'PLAN', name: 'Planejamento' },
+      { code: 'PROF_JR', name: 'Profissional Júnior' },
+      { code: 'PROF_JR_CAMP', name: 'Profissional Júnior CAMPO' },
+      { code: 'PROF_MD', name: 'Profissional Médio' },
+      { code: 'PROF_MD_CAMP', name: 'Profissional Médio CAMPO' },
+      { code: 'PROF_SR', name: 'Profissional Sênior' },
+      { code: 'PROF_SR_CAMP', name: 'Profissional Sênior CAMPO' },
+      { code: 'PROJ_JR', name: 'Projetista Júnior' },
+      { code: 'PROJ_MD', name: 'Projetista Médio' },
+      { code: 'PROJ_SR', name: 'Projetista Sênior' },
+      { code: 'TEC_SEG', name: 'Técnico de Segurança' },
+      { code: 'TEC_NM', name: 'Técnico Nível Médio' },
+      { code: 'TEC_SR', name: 'Técnico Sênior' },
+    ];
+
+    for (const cat of categories) {
+      await prisma.proposalCategory.create({ data: cat });
+    }
+  }
 }
 
 export const storage = new PrismaStorage();
 
-export type { User, Client, Proposal, Project, TimeEntry };
+export type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue };

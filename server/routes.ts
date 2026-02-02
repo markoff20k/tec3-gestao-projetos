@@ -514,5 +514,74 @@ export async function registerRoutes(
     });
   });
 
+  // Proposal Categories API
+  app.get('/api/proposal-categories', authenticateToken, async (_req, res) => {
+    const categories = await storage.getAllProposalCategories();
+    res.json(categories);
+  });
+
+  app.post('/api/proposal-categories', authenticateToken, async (req, res) => {
+    const { code, name } = req.body;
+    if (!code || !name) {
+      return res.status(400).json({ message: 'Código e nome são obrigatórios' });
+    }
+    try {
+      const category = await storage.createProposalCategory({ code, name });
+      res.status(201).json(category);
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return res.status(409).json({ message: 'Código já existe' });
+      }
+      res.status(500).json({ message: 'Erro ao criar categoria' });
+    }
+  });
+
+  app.put('/api/proposal-categories/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const result = await storage.updateProposalCategory(id, req.body);
+    if (!result) {
+      return res.status(404).json({ message: 'Categoria não encontrada' });
+    }
+    res.json(result);
+  });
+
+  app.delete('/api/proposal-categories/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    await storage.deleteProposalCategory(id);
+    res.status(204).send();
+  });
+
+  // Proposal Category Values API
+  app.get('/api/proposals/:proposalId/category-values', authenticateToken, async (req, res) => {
+    const { proposalId } = req.params;
+    const values = await storage.getProposalCategoryValues(proposalId);
+    res.json(values);
+  });
+
+  app.post('/api/proposals/:proposalId/category-values', authenticateToken, async (req, res) => {
+    const { proposalId } = req.params;
+    const { values } = req.body;
+    
+    if (!Array.isArray(values)) {
+      return res.status(400).json({ message: 'Valores inválidos' });
+    }
+
+    const valuesWithProposalId = values.map((v: any) => ({
+      ...v,
+      proposalId,
+      value: parseFloat(v.value) || 0,
+      hours: parseInt(v.hours) || 0,
+    }));
+
+    const result = await storage.saveProposalCategoryValues(proposalId, valuesWithProposalId);
+    res.json(result);
+  });
+
+  app.delete('/api/proposal-category-values/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    await storage.deleteProposalCategoryValue(id);
+    res.status(204).send();
+  });
+
   return httpServer;
 }

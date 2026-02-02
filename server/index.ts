@@ -65,6 +65,7 @@ app.use((req, res, next) => {
     log("Starting server initialization...");
 
     await storage.seedAdminUser();
+    await storage.seedProposalCategories();
     log("Database initialized");
 
     await registerRoutes(httpServer, app);
