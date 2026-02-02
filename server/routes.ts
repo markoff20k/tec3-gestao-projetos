@@ -567,8 +567,9 @@ export async function registerRoutes(
     }
 
     const valuesWithProposalId = values.map((v: any) => ({
-      ...v,
       proposalId,
+      categoryId: v.categoryId || null,
+      customName: v.categoryName || v.customName || null,
       value: parseFloat(v.value) || 0,
       hours: parseInt(v.hours) || 0,
     }));

@@ -50,7 +50,7 @@ export interface IStorage {
   updateClient(id: string, client: Partial<Client>): Promise<Client | null>;
   deleteClient(id: string): Promise<boolean>;
   
-  getAllProposals(): Promise<Proposal[]>;
+  getAllProposals(): Promise<(Proposal & { categoryValuesTotal?: number })[]>;
   getProposal(id: string): Promise<Proposal | null>;
   createProposal(proposal: InsertProposal): Promise<Proposal>;
   updateProposal(id: string, proposal: Partial<Proposal>): Promise<Proposal | null>;
@@ -202,7 +202,7 @@ export class PrismaStorage implements IStorage {
     });
     return proposals.map(p => ({
       ...p,
-      categoryValuesTotal: p.categoryValues?.reduce((sum, cv) => sum + (cv.value || 0), 0) || 0,
+      categoryValuesTotal: p.categoryValues?.reduce((sum, cv) => sum + (Number(cv.value) || 0), 0) || 0,
     }));
   }
 

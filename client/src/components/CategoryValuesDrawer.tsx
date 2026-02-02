@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Search, Plus, Upload, Download, Trash2, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -60,25 +60,49 @@ export function CategoryValuesDrawer({
   const [categoryValues, setCategoryValues] = useState<CategoryValue[]>([]);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
+  const initializedRef = useRef(false);
+  const lastProposalIdRef = useRef<string | null>(null);
 
   const { data: categories = [] } = useQuery<ProposalCategory[]>({
     queryKey: ['/api/proposal-categories'],
     enabled: open,
   });
 
-  const { data: existingValues = [], isLoading } = useQuery<CategoryValue[]>({
+  const { data: existingValues = [], isLoading, isFetched } = useQuery<CategoryValue[]>({
     queryKey: ['/api/proposals', proposalId, 'category-values'],
     enabled: open && !!proposalId,
   });
 
   useEffect(() => {
-    if (existingValues && existingValues.length > 0) {
-      setCategoryValues(existingValues);
-    } else {
-      setCategoryValues([]);
+    if (!open) {
+      initializedRef.current = false;
+      lastProposalIdRef.current = null;
+      return;
     }
-    setHasChanges(false);
-  }, [existingValues, open]);
+    
+    if (initializedRef.current && lastProposalIdRef.current === proposalId) {
+      return;
+    }
+
+    if (isFetched) {
+      if (existingValues && existingValues.length > 0) {
+        const mapped = existingValues.map((v: any) => ({
+          id: v.id,
+          proposalId: v.proposalId,
+          categoryId: v.categoryId,
+          categoryName: v.category?.name || v.customName || '',
+          value: v.value || 0,
+          hours: v.hours || 0,
+        }));
+        setCategoryValues(mapped);
+      } else {
+        setCategoryValues([]);
+      }
+      setHasChanges(false);
+      initializedRef.current = true;
+      lastProposalIdRef.current = proposalId;
+    }
+  }, [existingValues, open, isFetched, proposalId]);
 
   const saveMutation = useMutation({
     mutationFn: async (values: CategoryValue[]) => {
