@@ -180,6 +180,15 @@ export default function Proposals() {
     totalValue: '',
     estimatedHours: '',
     coordinatorName: '',
+    deliveryDate: '',
+    dueDate: '',
+    expectation: '',
+    mainType: '',
+    termMonths: '',
+    riskAssessment: '',
+    subcontracted: '',
+    discount: '',
+    proposalOrigin: '',
   });
 
   // Advanced Filter states
@@ -457,6 +466,15 @@ export default function Proposals() {
       totalValue: String(proposal.totalValue || 0),
       estimatedHours: String(proposal.estimatedHours || 0),
       coordinatorName: proposal.coordinatorName || '',
+      deliveryDate: proposal.deliveryDate ? new Date(proposal.deliveryDate).toISOString().split('T')[0] : '',
+      dueDate: proposal.dueDate ? new Date(proposal.dueDate).toISOString().split('T')[0] : '',
+      expectation: proposal.expectation || '',
+      mainType: proposal.mainType || '',
+      termMonths: String(proposal.termMonths || ''),
+      riskAssessment: proposal.riskAssessment || '',
+      subcontracted: String(proposal.subcontracted || 0),
+      discount: proposal.discount || '',
+      proposalOrigin: proposal.proposalOrigin || '',
     });
     setEditDialogOpen(true);
   };
@@ -470,6 +488,10 @@ export default function Proposals() {
         ...editFormData,
         totalValue: parseFloat(editFormData.totalValue) || 0,
         estimatedHours: parseInt(editFormData.estimatedHours) || 0,
+        termMonths: editFormData.termMonths ? parseInt(editFormData.termMonths) : undefined,
+        subcontracted: parseFloat(editFormData.subcontracted) || 0,
+        deliveryDate: editFormData.deliveryDate || undefined,
+        dueDate: editFormData.dueDate || undefined,
       },
     });
   };
@@ -1951,51 +1973,18 @@ export default function Proposals() {
 
         {/* Edit Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Editar Proposta - {selectedProposal?.code}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleEditSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit-title">Título *</Label>
-                <Input
-                  id="edit-title"
-                  data-testid="input-edit-proposal-title"
-                  value={editFormData.title}
-                  onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-description">Descrição</Label>
-                <Textarea
-                  id="edit-description"
-                  data-testid="input-edit-proposal-description"
-                  value={editFormData.description}
-                  onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
-                />
-              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Cliente</Label>
-                  <Select
-                    value={editFormData.clientId}
-                    onValueChange={(value) => setEditFormData({ ...editFormData, clientId: value })}
-                  >
-                    <SelectTrigger data-testid="select-edit-proposal-client">
-                      <SelectValue placeholder="Selecione um cliente" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clients.map((client) => (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.razaoSocial}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label>Código da proposta</Label>
+                  <Input value={selectedProposal?.code || ''} disabled className="bg-muted" />
                 </div>
                 <div className="space-y-2">
-                  <Label>Tipo</Label>
+                  <Label>Tipo do contrato *</Label>
                   <Select
                     value={editFormData.type}
                     onValueChange={(value) => setEditFormData({ ...editFormData, type: value })}
@@ -2013,9 +2002,110 @@ export default function Proposals() {
                   </Select>
                 </div>
               </div>
+              
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Status</Label>
+                  <Label>Cliente *</Label>
+                  <Select
+                    value={editFormData.clientId}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, clientId: value })}
+                  >
+                    <SelectTrigger data-testid="select-edit-proposal-client">
+                      <SelectValue placeholder="Selecione um cliente" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clients.map((client) => (
+                        <SelectItem key={client.id} value={client.id}>
+                          {client.razaoSocial}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Responsável pela proposta *</Label>
+                  <Input
+                    data-testid="input-edit-proposal-coordinator"
+                    value={editFormData.coordinatorName}
+                    onChange={(e) => setEditFormData({ ...editFormData, coordinatorName: e.target.value })}
+                    placeholder="Nome do responsável"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-title">Título *</Label>
+                <Input
+                  id="edit-title"
+                  data-testid="input-edit-proposal-title"
+                  value={editFormData.title}
+                  onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Data da solicitação</Label>
+                  <Input 
+                    value={selectedProposal?.createdAt ? new Date(selectedProposal.createdAt).toLocaleDateString('pt-BR') : ''} 
+                    disabled 
+                    className="bg-muted" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-deliveryDate">Data da emissão</Label>
+                  <Input
+                    id="edit-deliveryDate"
+                    type="date"
+                    data-testid="input-edit-proposal-delivery-date"
+                    value={editFormData.deliveryDate}
+                    onChange={(e) => setEditFormData({ ...editFormData, deliveryDate: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-dueDate">Data da validade</Label>
+                  <Input
+                    id="edit-dueDate"
+                    type="date"
+                    data-testid="input-edit-proposal-due-date"
+                    value={editFormData.dueDate}
+                    onChange={(e) => setEditFormData({ ...editFormData, dueDate: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Data da atualização</Label>
+                  <Input 
+                    value={selectedProposal?.updatedAt ? new Date(selectedProposal.updatedAt).toLocaleDateString('pt-BR') : ''} 
+                    disabled 
+                    className="bg-muted" 
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Expectativa</Label>
+                  <Select
+                    value={editFormData.expectation}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, expectation: value })}
+                  >
+                    <SelectTrigger data-testid="select-edit-proposal-expectation">
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Nenhuma</SelectItem>
+                      <SelectItem value="high">Alta</SelectItem>
+                      <SelectItem value="medium">Média</SelectItem>
+                      <SelectItem value="low">Baixa</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Situação</Label>
                   <Select
                     value={editFormData.status}
                     onValueChange={(value) => setEditFormData({ ...editFormData, status: value })}
@@ -2030,6 +2120,33 @@ export default function Proposals() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-mainType">Tipo principal</Label>
+                  <Input
+                    id="edit-mainType"
+                    data-testid="input-edit-proposal-main-type"
+                    value={editFormData.mainType}
+                    onChange={(e) => setEditFormData({ ...editFormData, mainType: e.target.value })}
+                    placeholder="Tipo principal"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-termMonths">Prazo (em meses)</Label>
+                  <Input
+                    id="edit-termMonths"
+                    type="number"
+                    data-testid="input-edit-proposal-term-months"
+                    value={editFormData.termMonths}
+                    onChange={(e) => setEditFormData({ ...editFormData, termMonths: e.target.value })}
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-totalValue">Valor Total (R$)</Label>
                   <Input
@@ -2041,7 +2158,23 @@ export default function Proposals() {
                     onChange={(e) => setEditFormData({ ...editFormData, totalValue: e.target.value })}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label>Avaliação de risco *</Label>
+                  <Select
+                    value={editFormData.riskAssessment}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, riskAssessment: value })}
+                  >
+                    <SelectTrigger data-testid="select-edit-proposal-risk">
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="no">Não</SelectItem>
+                      <SelectItem value="yes">Sim</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-estimatedHours">Horas Estimadas</Label>
@@ -2054,21 +2187,60 @@ export default function Proposals() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-coordinatorName">Coordenador</Label>
+                  <Label htmlFor="edit-subcontracted">Valor da subcontratação</Label>
                   <Input
-                    id="edit-coordinatorName"
-                    data-testid="input-edit-proposal-coordinator"
-                    value={editFormData.coordinatorName}
-                    onChange={(e) => setEditFormData({ ...editFormData, coordinatorName: e.target.value })}
+                    id="edit-subcontracted"
+                    type="number"
+                    step="0.01"
+                    data-testid="input-edit-proposal-subcontracted"
+                    value={editFormData.subcontracted}
+                    onChange={(e) => setEditFormData({ ...editFormData, subcontracted: e.target.value })}
+                    placeholder="0"
                   />
                 </div>
               </div>
-              <div className="flex justify-end gap-2">
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-discount">Valor do desconto</Label>
+                  <Input
+                    id="edit-discount"
+                    data-testid="input-edit-proposal-discount"
+                    value={editFormData.discount}
+                    onChange={(e) => setEditFormData({ ...editFormData, discount: e.target.value })}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-proposalOrigin">Código da proposta antigo</Label>
+                  <Input
+                    id="edit-proposalOrigin"
+                    data-testid="input-edit-proposal-origin"
+                    value={editFormData.proposalOrigin}
+                    onChange={(e) => setEditFormData({ ...editFormData, proposalOrigin: e.target.value })}
+                    placeholder="Código legado"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-description">Observação</Label>
+                <Textarea
+                  id="edit-description"
+                  data-testid="input-edit-proposal-description"
+                  value={editFormData.description}
+                  onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                  rows={4}
+                  placeholder="Observações da proposta..."
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4 border-t">
                 <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)} className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50">
                   Cancelar
                 </Button>
                 <Button type="submit" data-testid="button-save-edit-proposal" disabled={updateMutation.isPending}>
-                  {updateMutation.isPending ? 'Salvando...' : 'Salvar Alterações'}
+                  {updateMutation.isPending ? 'Salvando...' : 'Confirmar'}
                 </Button>
               </div>
             </form>

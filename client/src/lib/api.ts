@@ -172,6 +172,20 @@ export interface Proposal {
   additiveValue?: number;
   resource?: number;
   workOrders?: string;
+  // Novos campos do sistema legado
+  contractCode?: string;
+  deliveryDate?: string;
+  dueDate?: string;
+  duration?: string;
+  expectation?: string;
+  termMonths?: number;
+  hours?: number;
+  riskAssessment?: string;
+  maintenanceNum?: number;
+  acquisitionMargin?: string;
+  anfibex?: string;
+  discount?: string;
+  proposalOrigin?: string;
 }
 
 export interface Project {
