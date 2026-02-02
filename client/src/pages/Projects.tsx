@@ -70,7 +70,7 @@ export default function Projects() {
     mutationFn: (data: Partial<Project>) => projectsApi.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      toast({ title: 'Projeto criado com sucesso' });
+      toast({ title: 'Projeto criado com sucesso', variant: 'success' });
       closeDialog();
     },
     onError: (error) => {

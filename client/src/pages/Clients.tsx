@@ -115,7 +115,7 @@ export default function Clients() {
     mutationFn: (data: Partial<Client>) => clientsApi.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/clients'] });
-      toast({ title: 'Cliente criado com sucesso' });
+      toast({ title: 'Cliente criado com sucesso', variant: 'success' });
       closeDialog();
     },
     onError: (error) => {
@@ -128,7 +128,7 @@ export default function Clients() {
       clientsApi.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/clients'] });
-      toast({ title: 'Cliente atualizado com sucesso' });
+      toast({ title: 'Cliente atualizado com sucesso', variant: 'success' });
       closeDialog();
     },
     onError: (error) => {
@@ -140,7 +140,7 @@ export default function Clients() {
     mutationFn: (id: string) => clientsApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/clients'] });
-      toast({ title: 'Cliente excluído com sucesso' });
+      toast({ title: 'Cliente excluído com sucesso', variant: 'success' });
     },
     onError: (error) => {
       toast({ title: 'Erro ao excluir cliente', description: error.message, variant: 'destructive' });

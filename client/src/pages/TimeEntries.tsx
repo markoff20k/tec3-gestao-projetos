@@ -65,7 +65,7 @@ export default function TimeEntries() {
     mutationFn: (data: Partial<TimeEntry>) => projectsApi.createTimeEntry(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId, 'time-entries'] });
-      toast({ title: 'Horas lançadas com sucesso' });
+      toast({ title: 'Horas lançadas com sucesso', variant: 'success' });
       closeDialog();
     },
     onError: (error) => {

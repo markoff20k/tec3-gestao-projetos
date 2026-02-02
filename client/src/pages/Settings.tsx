@@ -55,6 +55,7 @@ export default function Settings() {
       toast({
         title: 'Perfil atualizado',
         description: 'Suas informações foram salvas com sucesso.',
+        variant: 'success',
       });
     } catch (error) {
       toast({
@@ -101,6 +102,7 @@ export default function Settings() {
       toast({
         title: 'Foto atualizada',
         description: 'Sua foto de perfil foi atualizada com sucesso.',
+        variant: 'success',
       });
     } catch (error) {
       toast({

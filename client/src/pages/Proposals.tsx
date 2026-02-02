@@ -406,7 +406,7 @@ export default function Proposals() {
     mutationFn: (data: Partial<Proposal>) => proposalsApi.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
-      toast({ title: 'Proposta criada com sucesso' });
+      toast({ title: 'Proposta criada com sucesso', variant: 'success' });
       closeDialog();
     },
     onError: (error) => {
@@ -419,7 +419,7 @@ export default function Proposals() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      toast({ title: 'Proposta convertida em projeto com sucesso' });
+      toast({ title: 'Proposta convertida em projeto com sucesso', variant: 'success' });
       setDetailSheetOpen(false);
     },
     onError: (error) => {
@@ -431,7 +431,7 @@ export default function Proposals() {
     mutationFn: ({ id, data }: { id: string; data: Partial<Proposal> }) => proposalsApi.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
-      toast({ title: 'Proposta atualizada com sucesso' });
+      toast({ title: 'Proposta atualizada com sucesso', variant: 'success' });
       setEditDialogOpen(false);
       setSelectedProposal(null);
     },

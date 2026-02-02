@@ -129,7 +129,7 @@ export function CategoryValuesDrawer({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
       queryClient.invalidateQueries({ queryKey: ['/api/proposals', proposalId, 'category-values'] });
-      toast({ title: 'Valores salvos com sucesso' });
+      toast({ title: 'Valores salvos com sucesso', variant: 'success' });
       setHasChanges(false);
     },
     onError: () => {
