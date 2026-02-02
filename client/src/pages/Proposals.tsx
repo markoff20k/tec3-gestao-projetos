@@ -105,9 +105,9 @@ const defaultColumns: ColumnConfig[] = [
   { id: 'contractCode', label: 'Cód. contrato', visible: false, width: 'w-28', category: 'basic' },
   { id: 'type', label: 'Tipo proposta', visible: true, width: 'w-32', category: 'classification' },
   { id: 'umbrellaRef', label: 'Proposta guarda chuva', visible: false, width: 'w-36', category: 'classification' },
-  { id: 'client', label: 'Cliente', visible: true, width: 'w-48', category: 'basic' },
+  { id: 'client', label: 'Cliente', visible: true, width: 'w-56', category: 'basic' },
   { id: 'coordinatorName', label: 'Resp. proposta', visible: false, width: 'w-36', category: 'people' },
-  { id: 'title', label: 'Titulo', visible: true, width: 'w-64', category: 'basic' },
+  { id: 'title', label: 'Titulo', visible: true, width: 'w-72', category: 'basic' },
   { id: 'createdAt', label: 'Dt. solic', visible: false, width: 'w-28', category: 'dates' },
   { id: 'deliveryDate', label: 'Dt. entrega', visible: false, width: 'w-28', category: 'dates' },
   { id: 'dueDate', label: 'Dt. vencimento', visible: false, width: 'w-28', category: 'dates' },
@@ -653,13 +653,13 @@ export default function Proposals() {
         return proposal.revision || 0;
       case 'client':
         return (
-          <span className="truncate block max-w-[180px]" title={proposal.client?.razaoSocial}>
+          <span className="block leading-tight">
             {proposal.client?.razaoSocial || '-'}
           </span>
         );
       case 'title':
         return (
-          <span className="truncate block max-w-[240px]" title={proposal.title}>
+          <span className="block leading-tight">
             {proposal.title}
           </span>
         );
@@ -1348,7 +1348,14 @@ export default function Proposals() {
                             </TableCell>
                           )}
                           {primaryColumns.map((col) => (
-                            <TableCell key={col.id} className="text-sm py-3 truncate max-w-[200px]">
+                            <TableCell 
+                              key={col.id} 
+                              className={`text-sm py-3 ${
+                                col.id === 'client' || col.id === 'title' 
+                                  ? 'whitespace-normal break-words' 
+                                  : 'truncate max-w-[200px]'
+                              }`}
+                            >
                               {getCellValue(proposal, col.id)}
                             </TableCell>
                           ))}
