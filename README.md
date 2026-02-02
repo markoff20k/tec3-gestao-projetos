@@ -43,9 +43,14 @@ docker-compose up --build
 
 ### Opção 2: Sem Docker (Desenvolvimento Local)
 
-#### 1. Instale as dependências
+> **IMPORTANTE**: Este é um projeto **monorepo**. Frontend e backend rodam juntos a partir da **raiz do projeto**. 
+> NÃO tente rodar `npm run dev` dentro da pasta `client/` - isso não funcionará porque as configurações (postcss, tailwind, vite) estão na raiz.
+
+#### 1. Instale as dependências (NA RAIZ DO PROJETO)
 
 ```bash
+# Certifique-se de estar na raiz do projeto, NÃO dentro de client/
+cd tec3-system  # pasta raiz
 npm install
 ```
 
@@ -106,11 +111,13 @@ Após a instalação, use estas credenciais para acessar:
 |---------|-------|-------|--------|
 | Administrador | admin@empresa.com | admin123 | Owner |
 
-## Estrutura do Projeto
+## Estrutura do Projeto (Monorepo)
+
+> **Nota**: Este é um projeto monorepo. Todos os comandos devem ser executados na **raiz do projeto**.
 
 ```
-/
-├── client/                 # Frontend React
+/                           # RAIZ - Execute npm run dev AQUI
+├── client/                 # Frontend React (não tem package.json próprio)
 │   ├── src/
 │   │   ├── components/     # Componentes reutilizáveis
 │   │   ├── contexts/       # Contextos React (Auth, etc)
@@ -127,9 +134,12 @@ Após a instalação, use estas credenciais para acessar:
 ├── prisma/                 # Configuração Prisma
 │   ├── schema.prisma       # Schema do banco
 │   └── migrations/         # Migrações
+├── postcss.config.js       # Config PostCSS (na raiz!)
+├── tailwind.config.ts      # Config Tailwind (na raiz!)
+├── vite.config.ts          # Config Vite (na raiz!)
+├── package.json            # Dependências (na raiz!)
 ├── docker-compose.yml      # Configuração Docker
-├── Dockerfile              # Build da aplicação
-└── package.json
+└── Dockerfile              # Build da aplicação
 ```
 
 ## Perfis de Acesso (RBAC)
