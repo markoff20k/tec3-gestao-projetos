@@ -239,6 +239,7 @@ export default function Proposals() {
     setValueMax('');
     setCoordinatorFilter('');
     setClientFilter('');
+    setShowOnlyFavorites(false);
     setCurrentPage(1);
   };
 
@@ -250,7 +251,8 @@ export default function Proposals() {
     (valueMin ? 1 : 0) +
     (valueMax ? 1 : 0) +
     (coordinatorFilter ? 1 : 0) +
-    (clientFilter ? 1 : 0);
+    (clientFilter ? 1 : 0) +
+    (showOnlyFavorites ? 1 : 0);
 
   // Load column preferences from server on mount
   useEffect(() => {
