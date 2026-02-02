@@ -290,20 +290,25 @@ export function CategoryValuesDrawer({
               </Button>
             </div>
 
-            {filteredCategories.length > 0 && searchTerm && (
-              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                {filteredCategories.slice(0, 10).map((cat) => (
-                  <Badge 
-                    key={cat.id}
-                    variant="outline" 
-                    className="cursor-pointer hover-elevate text-xs"
-                    onClick={() => addCategory(cat.name, cat.id)}
-                    data-testid={`badge-category-${cat.code}`}
-                  >
-                    <Plus className="h-3 w-3 mr-1" />
-                    {cat.name}
-                  </Badge>
-                ))}
+            {filteredCategories.length > 0 && (
+              <div className="mt-2">
+                <Label className="text-xs text-muted-foreground mb-2 block">
+                  Categorias disponíveis ({filteredCategories.length}):
+                </Label>
+                <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1">
+                  {filteredCategories.map((cat) => (
+                    <Badge 
+                      key={cat.id}
+                      variant="outline" 
+                      className="cursor-pointer hover-elevate text-xs"
+                      onClick={() => addCategory(cat.name, cat.id)}
+                      data-testid={`badge-category-${cat.code}`}
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      {cat.name}
+                    </Badge>
+                  ))}
+                </div>
               </div>
             )}
 
