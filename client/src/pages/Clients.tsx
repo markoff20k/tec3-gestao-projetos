@@ -593,7 +593,7 @@ export default function Clients() {
                 </Tabs>
 
                 <div className="flex justify-end gap-2 pt-4 border-t">
-                  <Button type="button" variant="destructive" onClick={closeDialog}>
+                  <Button type="button" variant="outline" onClick={closeDialog} className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50">
                     Cancelar
                   </Button>
                   <Button

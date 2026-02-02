@@ -875,7 +875,7 @@ export default function Proposals() {
                   />
                 </div>
                 <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={closeDialog}>
+                  <Button type="button" variant="outline" onClick={closeDialog} className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50">
                     Cancelar
                   </Button>
                   <Button type="submit" data-testid="button-save-proposal" disabled={createMutation.isPending}>
@@ -2057,7 +2057,7 @@ export default function Proposals() {
                 </div>
               </div>
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
+                <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)} className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50">
                   Cancelar
                 </Button>
                 <Button type="submit" data-testid="button-save-edit-proposal" disabled={updateMutation.isPending}>
