@@ -98,31 +98,36 @@ interface ColumnConfig {
 }
 
 const defaultColumns: ColumnConfig[] = [
-  { id: 'code', label: 'Código', visible: true, width: 'w-28', category: 'basic' },
-  { id: 'revision', label: 'Rev', visible: true, width: 'w-16', category: 'basic' },
+  { id: 'code', label: 'Cód. proposta', visible: true, width: 'w-28', category: 'basic' },
+  { id: 'revision', label: 'Revisão', visible: true, width: 'w-20', category: 'basic' },
+  { id: 'contractCode', label: 'Cód. contrato', visible: false, width: 'w-28', category: 'basic' },
+  { id: 'type', label: 'Tipo de proposta', visible: true, width: 'w-32', category: 'classification' },
+  { id: 'umbrellaRef', label: 'Proposta guarda chuva', visible: false, width: 'w-36', category: 'classification' },
   { id: 'client', label: 'Cliente', visible: true, width: 'w-48', category: 'basic' },
+  { id: 'coordinatorName', label: 'Resp. pela proposta', visible: false, width: 'w-36', category: 'people' },
   { id: 'title', label: 'Título', visible: true, width: 'w-64', category: 'basic' },
+  { id: 'createdAt', label: 'Dt. solicitação', visible: false, width: 'w-28', category: 'dates' },
+  { id: 'deliveryDate', label: 'Dt. entrega', visible: false, width: 'w-28', category: 'dates' },
+  { id: 'dueDate', label: 'Dt. vencimento', visible: false, width: 'w-28', category: 'dates' },
+  { id: 'updatedAt', label: 'Dt. modificação', visible: false, width: 'w-28', category: 'dates' },
+  { id: 'duration', label: 'Duração', visible: false, width: 'w-24', category: 'values' },
+  { id: 'expectation', label: 'Expectativa', visible: false, width: 'w-28', category: 'values' },
+  { id: 'activityType', label: 'Tipo atividade', visible: false, width: 'w-32', category: 'classification' },
+  { id: 'termMonths', label: 'Prazo (meses)', visible: false, width: 'w-28', category: 'values' },
+  { id: 'hours', label: 'Horas', visible: false, width: 'w-24', category: 'values' },
+  { id: 'riskAssessment', label: 'Avaliação de risco', visible: false, width: 'w-32', category: 'values' },
+  { id: 'maintenanceNum', label: 'Nº manutenção', visible: false, width: 'w-28', category: 'values' },
+  { id: 'subcontracted', label: 'Nº subcontratação', visible: false, width: 'w-32', category: 'values' },
+  { id: 'acquisitionMargin', label: 'Margem de aquisição', visible: false, width: 'w-36', category: 'values' },
+  { id: 'expense', label: 'Despesas', visible: false, width: 'w-28', category: 'values' },
+  { id: 'anfibex', label: 'Anfíbes', visible: false, width: 'w-24', category: 'values' },
+  { id: 'discount', label: 'Desconto', visible: false, width: 'w-24', category: 'values' },
+  { id: 'proposalOrigin', label: 'Nº veio proposta', visible: false, width: 'w-32', category: 'basic' },
   { id: 'status', label: 'Situação', visible: true, width: 'w-28', category: 'basic' },
-  { id: 'totalValue', label: 'Valor', visible: true, width: 'w-32', category: 'values' },
-  { id: 'type', label: 'Tipo Proposta', visible: false, width: 'w-28', category: 'classification' },
-  { id: 'activityType', label: 'Tipo Atividade', visible: false, width: 'w-32', category: 'classification' },
-  { id: 'umbrellaRef', label: 'Guarda-chuva', visible: false, width: 'w-28', category: 'classification' },
-  { id: 'mainType', label: 'Tipo Principal', visible: false, width: 'w-32', category: 'classification' },
-  { id: 'utility', label: 'Utilidade', visible: false, width: 'w-32', category: 'classification' },
-  { id: 'coordinatorName', label: 'Coordenador', visible: false, width: 'w-32', category: 'people' },
-  { id: 'specialist', label: 'Especialista', visible: false, width: 'w-32', category: 'people' },
-  { id: 'sentByName', label: 'Enviado por', visible: false, width: 'w-28', category: 'people' },
-  { id: 'createdAt', label: 'Dt. Criação', visible: false, width: 'w-28', category: 'dates' },
-  { id: 'updatedAt', label: 'Dt. Atualização', visible: false, width: 'w-28', category: 'dates' },
+  { id: 'totalValue', label: 'Valor', visible: false, width: 'w-32', category: 'values' },
   { id: 'sentDate', label: 'Dt. Envio', visible: false, width: 'w-28', category: 'dates' },
-  { id: 'quantity', label: 'Quantidade', visible: false, width: 'w-24', category: 'values' },
-  { id: 'hourJustification', label: 'Justif. Horas', visible: false, width: 'w-28', category: 'values' },
-  { id: 'rehabilitation', label: 'Reabilitação', visible: false, width: 'w-28', category: 'values' },
-  { id: 'subcontracted', label: 'Subcontratada', visible: false, width: 'w-28', category: 'values' },
-  { id: 'paymentBook', label: 'Liv. Pagto', visible: false, width: 'w-28', category: 'values' },
-  { id: 'expense', label: 'Despesa', visible: false, width: 'w-28', category: 'values' },
-  { id: 'additiveValue', label: 'Aditivo', visible: false, width: 'w-28', category: 'values' },
-  { id: 'resource', label: 'Recurso', visible: false, width: 'w-28', category: 'values' },
+  { id: 'sentByName', label: 'Enviado por', visible: false, width: 'w-28', category: 'people' },
+  { id: 'specialist', label: 'Especialista', visible: false, width: 'w-32', category: 'people' },
   { id: 'workOrders', label: 'OAs', visible: false, width: 'w-20', category: 'basic' },
 ];
 
@@ -642,22 +647,36 @@ export default function Proposals() {
         return formatDate(proposal.updatedAt);
       case 'sentDate':
         return formatDate(proposal.sentDate);
-      case 'quantity':
-        return proposal.quantity || 0;
-      case 'hourJustification':
-        return Number(proposal.hourJustification || 0).toFixed(2);
-      case 'rehabilitation':
-        return Number(proposal.rehabilitation || 0).toFixed(2);
+      case 'contractCode':
+        return (proposal as any).contractCode || '-';
+      case 'deliveryDate':
+        return formatDate((proposal as any).deliveryDate);
+      case 'dueDate':
+        return formatDate((proposal as any).dueDate);
+      case 'duration':
+        return (proposal as any).duration || '-';
+      case 'expectation':
+        return (proposal as any).expectation || '-';
+      case 'termMonths':
+        return (proposal as any).termMonths || '-';
+      case 'hours':
+        return (proposal as any).hours || '-';
+      case 'riskAssessment':
+        return (proposal as any).riskAssessment || '-';
+      case 'maintenanceNum':
+        return (proposal as any).maintenanceNum || '-';
       case 'subcontracted':
-        return Number(proposal.subcontracted || 0).toFixed(2);
-      case 'paymentBook':
-        return Number(proposal.paymentBook || 0).toFixed(2);
+        return (proposal as any).subcontracted || '-';
+      case 'acquisitionMargin':
+        return (proposal as any).acquisitionMargin || '-';
       case 'expense':
-        return Number(proposal.expense || 0).toFixed(2);
-      case 'additiveValue':
-        return Number(proposal.additiveValue || 0).toFixed(2);
-      case 'resource':
-        return Number(proposal.resource || 0).toFixed(2);
+        return (proposal as any).expense || '-';
+      case 'anfibex':
+        return (proposal as any).anfibex || '-';
+      case 'discount':
+        return (proposal as any).discount || '-';
+      case 'proposalOrigin':
+        return (proposal as any).proposalOrigin || '-';
       default:
         return '-';
     }

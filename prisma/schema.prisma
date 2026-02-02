@@ -77,7 +77,7 @@ model Proposal {
   updatedAt         DateTime? @updatedAt @map("updated_at")
   sentDate          DateTime? @map("sent_date") @db.Date
 
-  // Campos adicionais do sistema legado
+  // Campos originais do sistema
   activityType      String?   @map("activity_type")
   umbrellaRef       String?   @map("umbrella_ref")
   utility           String?
@@ -93,6 +93,21 @@ model Proposal {
   additiveValue     Decimal?  @map("additive_value") @default(0) @db.Decimal(10, 2)
   resource          Decimal?  @default(0) @db.Decimal(10, 2)
   workOrders        String?   @map("work_orders")
+  
+  // Novos campos do sistema legado
+  contractCode      String?   @map("contract_code")
+  deliveryDate      DateTime? @map("delivery_date") @db.Date
+  dueDate           DateTime? @map("due_date") @db.Date
+  duration          String?
+  expectation       String?
+  termMonths        Int?      @map("term_months")
+  hours             Int?
+  riskAssessment    String?   @map("risk_assessment")
+  maintenanceNum    Int?      @map("maintenance_num")
+  acquisitionMargin String?   @map("acquisition_margin")
+  anfibex           String?
+  discount          String?
+  proposalOrigin    String?   @map("proposal_origin")
 
   client            Client    @relation(fields: [clientId], references: [id])
 
