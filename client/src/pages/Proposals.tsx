@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star, Maximize2, Minimize2, PanelRightClose } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import {
   Select,
@@ -150,6 +151,7 @@ export default function Proposals() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
+  const [detailFullscreen, setDetailFullscreen] = useState(false);
   const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -1471,17 +1473,28 @@ export default function Proposals() {
         )}
 
         {/* Detail Sheet (Side Panel) */}
-        <Sheet open={detailSheetOpen} onOpenChange={setDetailSheetOpen}>
+        <Sheet open={detailSheetOpen && !detailFullscreen} onOpenChange={setDetailSheetOpen}>
           <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
             <SheetHeader className="pb-4">
-              <SheetTitle className="flex items-center gap-2">
-                <span className="text-primary font-mono">{selectedProposal?.code}</span>
-                {selectedProposal && (
-                  <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
-                    {statusLabels[selectedProposal.status]}
-                  </Badge>
-                )}
-              </SheetTitle>
+              <div className="flex items-center justify-between">
+                <SheetTitle className="flex items-center gap-2">
+                  <span className="text-primary font-mono">{selectedProposal?.code}</span>
+                  {selectedProposal && (
+                    <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
+                      {statusLabels[selectedProposal.status]}
+                    </Badge>
+                  )}
+                </SheetTitle>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setDetailFullscreen(true)}
+                  title="Expandir para tela cheia"
+                  data-testid="button-expand-detail"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </Button>
+              </div>
               <SheetDescription className="text-base font-medium text-foreground">
                 {selectedProposal?.title}
               </SheetDescription>
@@ -1695,6 +1708,237 @@ export default function Proposals() {
             )}
           </SheetContent>
         </Sheet>
+
+        {/* Detail Dialog (Fullscreen) */}
+        <Dialog 
+          open={detailSheetOpen && detailFullscreen} 
+          onOpenChange={(open) => {
+            if (!open) {
+              setDetailSheetOpen(false);
+              setDetailFullscreen(false);
+            }
+          }}
+        >
+          <DialogContent className="max-w-[95vw] h-[90vh] flex flex-col overflow-hidden">
+            <DialogHeader className="flex-shrink-0">
+              <div className="flex items-center justify-between pr-8">
+                <DialogTitle className="flex items-center gap-2">
+                  <span className="text-primary font-mono">{selectedProposal?.code}</span>
+                  {selectedProposal && (
+                    <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
+                      {statusLabels[selectedProposal.status]}
+                    </Badge>
+                  )}
+                </DialogTitle>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setDetailFullscreen(false)}
+                  title="Voltar para painel lateral"
+                  data-testid="button-minimize-detail"
+                >
+                  <PanelRightClose className="h-4 w-4" />
+                </Button>
+              </div>
+              <DialogDescription className="text-base font-medium text-foreground">
+                {selectedProposal?.title}
+              </DialogDescription>
+            </DialogHeader>
+
+            {selectedProposal && (
+              <div className="flex-1 overflow-y-auto space-y-6 pr-2">
+                {/* Quick Actions */}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => handleEditProposal(selectedProposal)}
+                    data-testid="button-edit-from-fullscreen"
+                  >
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Editar
+                  </Button>
+                  {selectedProposal.status === 'approved' && (
+                    <Button
+                      onClick={() => convertMutation.mutate(selectedProposal.id)}
+                      disabled={convertMutation.isPending}
+                      data-testid="button-convert-from-fullscreen"
+                    >
+                      <ArrowRight className="h-4 w-4 mr-2" />
+                      Converter em Projeto
+                    </Button>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* Two-column layout for fullscreen */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Left Column */}
+                  <div className="space-y-4">
+                    <Card>
+                      <CardContent className="pt-4">
+                        <h3 className="font-semibold mb-4">Informações Básicas</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Código</Label>
+                            <p className="font-mono">{selectedProposal.code}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Revisão</Label>
+                            <p>{selectedProposal.revision || 0}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Tipo Proposta</Label>
+                            <Badge variant="outline">{typeLabels[selectedProposal.type]}</Badge>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Tipo Atividade</Label>
+                            <p>{selectedProposal.activityType || '-'}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <Label className="text-xs text-muted-foreground">Descrição</Label>
+                            <p className="text-sm">{selectedProposal.description || '-'}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardContent className="pt-4">
+                        <h3 className="font-semibold mb-4">Cliente</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="col-span-2">
+                            <Label className="text-xs text-muted-foreground">Razão Social</Label>
+                            <p className="font-medium">{selectedProposal.client?.razaoSocial || '-'}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">CNPJ</Label>
+                            <p>{selectedProposal.client?.cnpj || '-'}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Guarda-chuva</Label>
+                            <p>{selectedProposal.umbrellaRef || '-'}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardContent className="pt-4">
+                        <h3 className="font-semibold mb-4">Responsáveis</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Coordenador</Label>
+                            <p>{selectedProposal.coordinatorName || '-'}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Especialista</Label>
+                            <p>{selectedProposal.specialist || '-'}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Enviado por</Label>
+                            <p>{selectedProposal.sentByName || '-'}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Right Column */}
+                  <div className="space-y-4">
+                    <Card>
+                      <CardContent className="pt-4">
+                        <h3 className="font-semibold mb-4">Valores</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="col-span-2 bg-primary/10 rounded-lg p-3">
+                            <Label className="text-xs text-muted-foreground">Valor Total</Label>
+                            <p className="text-xl font-bold text-primary">{formatCurrency(selectedProposal.totalValue)}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Quantidade</Label>
+                            <p>{selectedProposal.quantity || 0}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Horas Estimadas</Label>
+                            <p>{selectedProposal.estimatedHours || 0}h</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Justif. Horas</Label>
+                            <p>{formatCurrency(selectedProposal.hourJustification)}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Reabilitação</Label>
+                            <p>{formatCurrency(selectedProposal.rehabilitation)}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Subcontratada</Label>
+                            <p>{formatCurrency(selectedProposal.subcontracted)}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Liv. Pagto</Label>
+                            <p>{formatCurrency(selectedProposal.paymentBook)}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Despesa</Label>
+                            <p>{formatCurrency(selectedProposal.expense)}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Aditivo</Label>
+                            <p>{formatCurrency(selectedProposal.additiveValue)}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Recurso</Label>
+                            <p>{formatCurrency(selectedProposal.resource)}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardContent className="pt-4">
+                        <h3 className="font-semibold mb-4">Datas</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Criação</Label>
+                            <p>{formatDate(selectedProposal.createdAt)}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Atualização</Label>
+                            <p>{formatDate(selectedProposal.updatedAt)}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Envio</Label>
+                            <p>{formatDate(selectedProposal.sentDate)}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardContent className="pt-4">
+                        <h3 className="font-semibold mb-4">Classificação</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Tipo Principal</Label>
+                            <p>{selectedProposal.mainType || '-'}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Utilidade</Label>
+                            <p>{selectedProposal.utility || '-'}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">OAs</Label>
+                            <p>{selectedProposal.workOrders || '-'}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Edit Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
