@@ -458,7 +458,7 @@ export function CategoryValuesDrawer({
             <button
               onClick={() => setIsFullscreen(true)}
               title="Expandir para tela cheia"
-              className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              className="h-6 w-6 flex items-center justify-center rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
               data-testid="button-expand-categories"
             >
               <Maximize2 className="h-4 w-4" />
@@ -495,7 +495,7 @@ export function CategoryValuesDrawer({
             <button
               onClick={() => setIsFullscreen(false)}
               title="Voltar para painel lateral"
-              className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              className="h-6 w-6 flex items-center justify-center rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
               data-testid="button-minimize-categories"
             >
               <PanelRightClose className="h-4 w-4" />
