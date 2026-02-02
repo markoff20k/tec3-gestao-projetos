@@ -1330,12 +1330,12 @@ export default function Proposals() {
                     {primaryColumns.map((col) => (
                       <TableHead 
                         key={col.id} 
-                        className="text-xs font-medium whitespace-nowrap cursor-pointer select-none"
+                        className={`text-xs font-medium cursor-pointer select-none ${col.width || 'w-24'} min-w-[60px]`}
                         data-testid={`header-sort-${col.id}`}
                         onClick={() => handleSort(col.id)}
                       >
-                        <div className="flex items-center">
-                          {col.label}
+                        <div className="flex items-center gap-1">
+                          <span className="break-words leading-tight">{col.label}</span>
                           {getSortIcon(col.id)}
                         </div>
                       </TableHead>
