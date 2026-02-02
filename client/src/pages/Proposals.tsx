@@ -337,12 +337,13 @@ export default function Proposals() {
   const visibleColumns = columns.filter(col => col.visible);
   
   // Show all visible columns in the table (like legacy system)
-  // No column limit - table will scroll horizontally
-
-  // All visible columns go directly in the table (like legacy system)
-  const primaryColumns = visibleColumns;
-  const overflowColumns: ColumnConfig[] = [];
-  const hasOverflowColumns = false;
+  // Limit visible columns to prevent horizontal overflow - max 10 columns in main table
+  const MAX_PRIMARY_COLUMNS = 10;
+  
+  // Split columns: first MAX go to table, rest go to expandable panel
+  const primaryColumns = visibleColumns.slice(0, MAX_PRIMARY_COLUMNS);
+  const overflowColumns = visibleColumns.slice(MAX_PRIMARY_COLUMNS);
+  const hasOverflowColumns = overflowColumns.length > 0;
 
   const toggleRowExpansion = (proposalId: string, e: React.MouseEvent) => {
     e.stopPropagation();
