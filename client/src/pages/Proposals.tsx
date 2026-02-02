@@ -1474,27 +1474,28 @@ export default function Proposals() {
 
         {/* Detail Sheet (Side Panel) */}
         <Sheet open={detailSheetOpen && !detailFullscreen} onOpenChange={setDetailSheetOpen}>
-          <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+          <SheetContent 
+            className="w-full sm:max-w-xl overflow-y-auto"
+            actionButton={
+              <button
+                onClick={() => setDetailFullscreen(true)}
+                title="Expandir para tela cheia"
+                className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                data-testid="button-expand-detail"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </button>
+            }
+          >
             <SheetHeader className="pb-4">
-              <div className="flex items-center justify-between">
-                <SheetTitle className="flex items-center gap-2">
-                  <span className="text-primary font-mono">{selectedProposal?.code}</span>
-                  {selectedProposal && (
-                    <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
-                      {statusLabels[selectedProposal.status]}
-                    </Badge>
-                  )}
-                </SheetTitle>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setDetailFullscreen(true)}
-                  title="Expandir para tela cheia"
-                  data-testid="button-expand-detail"
-                >
-                  <Maximize2 className="h-4 w-4" />
-                </Button>
-              </div>
+              <SheetTitle className="flex items-center gap-2">
+                <span className="text-primary font-mono">{selectedProposal?.code}</span>
+                {selectedProposal && (
+                  <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
+                    {statusLabels[selectedProposal.status]}
+                  </Badge>
+                )}
+              </SheetTitle>
               <SheetDescription className="text-base font-medium text-foreground">
                 {selectedProposal?.title}
               </SheetDescription>
@@ -1719,27 +1720,28 @@ export default function Proposals() {
             }
           }}
         >
-          <DialogContent className="max-w-[95vw] h-[90vh] flex flex-col overflow-hidden">
+          <DialogContent 
+            className="max-w-[95vw] h-[90vh] flex flex-col overflow-hidden"
+            actionButton={
+              <button
+                onClick={() => setDetailFullscreen(false)}
+                title="Voltar para painel lateral"
+                className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                data-testid="button-minimize-detail"
+              >
+                <PanelRightClose className="h-4 w-4" />
+              </button>
+            }
+          >
             <DialogHeader className="flex-shrink-0">
-              <div className="flex items-center justify-between pr-8">
-                <DialogTitle className="flex items-center gap-2">
-                  <span className="text-primary font-mono">{selectedProposal?.code}</span>
-                  {selectedProposal && (
-                    <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
-                      {statusLabels[selectedProposal.status]}
-                    </Badge>
-                  )}
-                </DialogTitle>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setDetailFullscreen(false)}
-                  title="Voltar para painel lateral"
-                  data-testid="button-minimize-detail"
-                >
-                  <PanelRightClose className="h-4 w-4" />
-                </Button>
-              </div>
+              <DialogTitle className="flex items-center gap-2">
+                <span className="text-primary font-mono">{selectedProposal?.code}</span>
+                {selectedProposal && (
+                  <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
+                    {statusLabels[selectedProposal.status]}
+                  </Badge>
+                )}
+              </DialogTitle>
               <DialogDescription className="text-base font-medium text-foreground">
                 {selectedProposal?.title}
               </DialogDescription>

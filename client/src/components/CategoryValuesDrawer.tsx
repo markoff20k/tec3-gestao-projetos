@@ -451,22 +451,24 @@ export function CategoryValuesDrawer({
     <>
       {/* Sheet Mode */}
       <Sheet open={open && !isFullscreen} onOpenChange={onOpenChange}>
-        <SheetContent side="right" className="w-full sm:w-[600px] sm:max-w-[600px] p-0 flex flex-col">
+        <SheetContent 
+          side="right" 
+          className="w-full sm:w-[600px] sm:max-w-[600px] p-0 flex flex-col"
+          actionButton={
+            <button
+              onClick={() => setIsFullscreen(true)}
+              title="Expandir para tela cheia"
+              className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              data-testid="button-expand-categories"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </button>
+          }
+        >
           <SheetHeader className="p-6 pb-4 border-b">
-            <div className="flex items-center justify-between">
-              <SheetTitle className="text-lg font-semibold">
-                Valores por Categoria - {proposalCode}
-              </SheetTitle>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => setIsFullscreen(true)}
-                title="Expandir para tela cheia"
-                data-testid="button-expand-categories"
-              >
-                <Maximize2 className="h-4 w-4" />
-              </Button>
-            </div>
+            <SheetTitle className="text-lg font-semibold">
+              Valores por Categoria - {proposalCode}
+            </SheetTitle>
             <SheetDescription className="text-sm text-muted-foreground">
               Defina os valores e horas por categoria para esta proposta
             </SheetDescription>
@@ -487,22 +489,23 @@ export function CategoryValuesDrawer({
           if (!o) handleClose();
         }}
       >
-        <DialogContent className="max-w-[95vw] h-[90vh] flex flex-col overflow-hidden p-0">
+        <DialogContent 
+          className="max-w-[95vw] h-[90vh] flex flex-col overflow-hidden p-0"
+          actionButton={
+            <button
+              onClick={() => setIsFullscreen(false)}
+              title="Voltar para painel lateral"
+              className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              data-testid="button-minimize-categories"
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          }
+        >
           <DialogHeader className="p-6 pb-4 border-b flex-shrink-0">
-            <div className="flex items-center justify-between pr-8">
-              <DialogTitle className="text-lg font-semibold">
-                Valores por Categoria - {proposalCode}
-              </DialogTitle>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => setIsFullscreen(false)}
-                title="Voltar para painel lateral"
-                data-testid="button-minimize-categories"
-              >
-                <PanelRightClose className="h-4 w-4" />
-              </Button>
-            </div>
+            <DialogTitle className="text-lg font-semibold">
+              Valores por Categoria - {proposalCode}
+            </DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
               Defina os valores e horas por categoria para esta proposta
             </DialogDescription>
