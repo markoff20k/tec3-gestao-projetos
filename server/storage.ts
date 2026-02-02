@@ -194,8 +194,16 @@ export class PrismaStorage implements IStorage {
     return `PROJ-${year}-${num}`;
   }
 
-  async getAllProposals(): Promise<Proposal[]> {
-    return prisma.proposal.findMany();
+  async getAllProposals(): Promise<(Proposal & { categoryValuesTotal?: number })[]> {
+    const proposals = await prisma.proposal.findMany({
+      include: {
+        categoryValues: true,
+      },
+    });
+    return proposals.map(p => ({
+      ...p,
+      categoryValuesTotal: p.categoryValues?.reduce((sum, cv) => sum + (cv.value || 0), 0) || 0,
+    }));
   }
 
   async getProposal(id: string): Promise<Proposal | null> {

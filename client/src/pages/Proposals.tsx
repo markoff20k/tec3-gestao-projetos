@@ -58,6 +58,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { CategoryValuesDrawer } from '@/components/CategoryValuesDrawer';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-500',
@@ -129,6 +130,7 @@ const defaultColumns: ColumnConfig[] = [
   { id: 'sentByName', label: 'Enviado por', visible: false, width: 'w-28', category: 'people' },
   { id: 'specialist', label: 'Especialista', visible: false, width: 'w-32', category: 'people' },
   { id: 'workOrders', label: 'OAs', visible: false, width: 'w-20', category: 'basic' },
+  { id: 'categoryValues', label: 'Valores por Categoria', visible: true, width: 'w-36', category: 'values' },
 ];
 
 const categoryLabels: Record<string, string> = {
@@ -146,6 +148,7 @@ export default function Proposals() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
+  const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(15);
@@ -677,6 +680,24 @@ export default function Proposals() {
         return (proposal as any).discount || '-';
       case 'proposalOrigin':
         return (proposal as any).proposalOrigin || '-';
+      case 'categoryValues':
+        const categoryTotal = (proposal as any).categoryValuesTotal || 0;
+        return (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-primary hover-elevate"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedProposal(proposal);
+              setCategoryDrawerOpen(true);
+            }}
+            data-testid={`button-category-values-${proposal.id}`}
+          >
+            <DollarSign className="h-3.5 w-3.5 mr-1" />
+            {formatCurrency(categoryTotal)}
+          </Button>
+        );
       default:
         return '-';
     }
@@ -1702,6 +1723,15 @@ export default function Proposals() {
             </form>
           </DialogContent>
         </Dialog>
+
+        {selectedProposal && (
+          <CategoryValuesDrawer
+            open={categoryDrawerOpen}
+            onOpenChange={setCategoryDrawerOpen}
+            proposalId={selectedProposal.id}
+            proposalCode={selectedProposal.code}
+          />
+        )}
       </div>
     </Layout>
   );
