@@ -251,8 +251,7 @@ export default function Proposals() {
     (valueMin ? 1 : 0) +
     (valueMax ? 1 : 0) +
     (coordinatorFilter ? 1 : 0) +
-    (clientFilter ? 1 : 0) +
-    (showOnlyFavorites ? 1 : 0);
+    (clientFilter ? 1 : 0);
 
   // Load column preferences from server on mount
   useEffect(() => {
@@ -1232,11 +1231,32 @@ export default function Proposals() {
         ) : filteredProposals.length === 0 ? (
           <Card className="mt-4">
             <CardContent className="py-16 text-center text-muted-foreground">
-              <p>Nenhuma proposta encontrada</p>
-              {(search || activeFilterCount > 0) && (
-                <Button variant="ghost" onClick={clearAllFilters}>
-                  Limpar filtros
-                </Button>
+              {showOnlyFavorites ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-center gap-2">
+                    <Star className="h-8 w-8 text-yellow-400" />
+                  </div>
+                  <p className="text-lg font-medium">Você ainda não tem propostas favoritas</p>
+                  <p className="text-sm">Clique na estrela ao lado de uma proposta para adicioná-la aos favoritos</p>
+                  <Button 
+                    variant="default" 
+                    onClick={() => setShowOnlyFavorites(false)}
+                    className="mt-2"
+                    data-testid="button-show-all-proposals"
+                  >
+                    <Star className="h-4 w-4 mr-2" />
+                    Ver todas as propostas
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <p>Nenhuma proposta encontrada</p>
+                  {(search || activeFilterCount > 0) && (
+                    <Button variant="ghost" onClick={clearAllFilters} className="mt-2">
+                      Limpar filtros
+                    </Button>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
