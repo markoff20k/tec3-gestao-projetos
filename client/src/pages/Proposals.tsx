@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, Check } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, ChevronUp, Check } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -146,6 +146,9 @@ export default function Proposals() {
   const [itemsPerPage, setItemsPerPage] = useState(15);
   const [columns, setColumns] = useState<ColumnConfig[]>(defaultColumns);
   const [columnConfigOpen, setColumnConfigOpen] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const [maxVisibleColumns, setMaxVisibleColumns] = useState(8);
   
   const [formData, setFormData] = useState({
     title: '',
@@ -285,6 +288,55 @@ export default function Proposals() {
   };
 
   const visibleColumns = columns.filter(col => col.visible);
+  
+  // Calculate max visible columns based on container width
+  const calculateMaxColumns = useCallback(() => {
+    if (!tableContainerRef.current) return;
+    const containerWidth = tableContainerRef.current.offsetWidth;
+    // Base widths: expand button (48px), actions column (96px), padding (32px)
+    const reservedWidth = 176;
+    const avgColumnWidth = 140; // Average column width in pixels
+    const available = containerWidth - reservedWidth;
+    const maxCols = Math.max(3, Math.floor(available / avgColumnWidth));
+    setMaxVisibleColumns(maxCols);
+  }, []);
+
+  // Recalculate on resize
+  useEffect(() => {
+    calculateMaxColumns();
+    const resizeObserver = new ResizeObserver(() => {
+      calculateMaxColumns();
+    });
+    if (tableContainerRef.current) {
+      resizeObserver.observe(tableContainerRef.current);
+    }
+    return () => resizeObserver.disconnect();
+  }, [calculateMaxColumns]);
+
+  // Columns that fit in the table
+  const primaryColumns = useMemo(() => {
+    return visibleColumns.slice(0, maxVisibleColumns);
+  }, [visibleColumns, maxVisibleColumns]);
+
+  // Columns that go into the expandable panel
+  const overflowColumns = useMemo(() => {
+    return visibleColumns.slice(maxVisibleColumns);
+  }, [visibleColumns, maxVisibleColumns]);
+
+  const hasOverflowColumns = overflowColumns.length > 0;
+
+  const toggleRowExpansion = (proposalId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(proposalId)) {
+        newSet.delete(proposalId);
+      } else {
+        newSet.add(proposalId);
+      }
+      return newSet;
+    });
+  };
 
   const { data: proposals = [], isLoading } = useQuery<Proposal[]>({
     queryKey: ['/api/proposals'],
@@ -802,7 +854,7 @@ export default function Proposals() {
                       <Settings2 className="h-4 w-4 mr-2" />
                       Colunas
                       <Badge variant="secondary" className="ml-2 h-5 px-1.5">
-                        {Math.min(visibleColumns.length, 8)}
+                        {visibleColumns.length}
                       </Badge>
                     </Button>
                   </PopoverTrigger>
@@ -816,7 +868,9 @@ export default function Proposals() {
                         </Button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Máximo de 8 colunas na tabela. Clique na linha para ver todos os detalhes.
+                        {hasOverflowColumns 
+                          ? `${primaryColumns.length} na tabela, ${overflowColumns.length} no painel expansível`
+                          : 'Selecione as colunas que deseja visualizar'}
                       </p>
                       <Separator />
                       <ScrollArea className="h-[300px] pr-4">
@@ -1099,12 +1153,17 @@ export default function Proposals() {
             </CardContent>
           </Card>
         ) : (
-          <Card className="flex-1 min-h-0 overflow-hidden mt-4">
+          <Card className="flex-1 min-h-0 overflow-hidden mt-4" ref={tableContainerRef}>
             <div className="h-full overflow-auto">
-              <Table className="w-full table-fixed">
+              <Table className="w-full">
                 <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    {visibleColumns.slice(0, 8).map((col) => (
+                    {hasOverflowColumns && (
+                      <TableHead className="w-12 px-2">
+                        <span className="sr-only">Expandir</span>
+                      </TableHead>
+                    )}
+                    {primaryColumns.map((col) => (
                       <TableHead 
                         key={col.id} 
                         className="text-xs font-medium whitespace-nowrap cursor-pointer select-none"
@@ -1121,33 +1180,84 @@ export default function Proposals() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {paginatedProposals.map((proposal) => (
-                    <TableRow
-                      key={proposal.id}
-                      data-testid={`row-proposal-${proposal.id}`}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleRowClick(proposal)}
-                    >
-                      {visibleColumns.slice(0, 8).map((col) => (
-                        <TableCell key={col.id} className="text-sm py-3 truncate max-w-[200px]">
-                          {getCellValue(proposal, col.id)}
-                        </TableCell>
-                      ))}
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            data-testid={`button-edit-proposal-${proposal.id}`}
-                            onClick={(e) => handleEditProposal(proposal, e)}
-                            title="Editar"
+                  {paginatedProposals.map((proposal) => {
+                    const isExpanded = expandedRows.has(proposal.id);
+                    return (
+                      <React.Fragment key={proposal.id}>
+                        <TableRow
+                          data-testid={`row-proposal-${proposal.id}`}
+                          className={`cursor-pointer transition-colors ${isExpanded ? 'bg-muted/30' : 'hover:bg-muted/50'}`}
+                          onClick={() => handleRowClick(proposal)}
+                        >
+                          {hasOverflowColumns && (
+                            <TableCell className="w-12 px-2">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                onClick={(e) => toggleRowExpansion(proposal.id, e)}
+                                data-testid={`button-expand-${proposal.id}`}
+                                title={isExpanded ? 'Recolher' : 'Expandir para ver mais colunas'}
+                              >
+                                {isExpanded ? (
+                                  <ChevronUp className="h-4 w-4 text-primary" />
+                                ) : (
+                                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                )}
+                              </Button>
+                            </TableCell>
+                          )}
+                          {primaryColumns.map((col) => (
+                            <TableCell key={col.id} className="text-sm py-3 truncate max-w-[200px]">
+                              {getCellValue(proposal, col.id)}
+                            </TableCell>
+                          ))}
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                data-testid={`button-edit-proposal-${proposal.id}`}
+                                onClick={(e) => handleEditProposal(proposal, e)}
+                                title="Editar"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                        {hasOverflowColumns && isExpanded && (
+                          <TableRow 
+                            key={`${proposal.id}-expanded`}
+                            className="bg-muted/20 border-b-2 border-primary/10"
                           >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                            <TableCell 
+                              colSpan={primaryColumns.length + 2}
+                              className="p-0"
+                            >
+                              <div className="px-6 py-4 animate-in slide-in-from-top-2 duration-200">
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                                  {overflowColumns.map((col) => (
+                                    <div 
+                                      key={col.id}
+                                      className="flex flex-col gap-1 p-3 rounded-lg bg-background/50 border border-border/50"
+                                    >
+                                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                                        {col.label}
+                                      </span>
+                                      <span className="text-sm font-medium">
+                                        {getCellValue(proposal, col.id)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
