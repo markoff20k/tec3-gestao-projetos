@@ -1363,11 +1363,7 @@ export default function Proposals() {
                           {primaryColumns.map((col) => (
                             <TableCell 
                               key={col.id} 
-                              className={`text-sm py-3 ${
-                                col.id === 'client' || col.id === 'title' 
-                                  ? 'whitespace-normal break-words' 
-                                  : 'truncate max-w-[200px]'
-                              }`}
+                              className={`text-sm py-2 whitespace-normal break-words ${col.width || 'w-24'}`}
                             >
                               {getCellValue(proposal, col.id)}
                             </TableCell>
