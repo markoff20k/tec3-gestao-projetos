@@ -1,6 +1,17 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
-import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, Prisma } from "../generated/prisma/client";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, UserActivity, Prisma } from "../generated/prisma/client.ts";
+
+export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
+
+export interface CreateUserActivityInput {
+  category: UserActivityCategory;
+  action: string;
+  title: string;
+  metadata?: Prisma.InputJsonValue | null;
+  ip?: string | null;
+  userAgent?: string | null;
+}
 
 export const ProposalStatus = {
   DRAFT: 'draft',
@@ -43,6 +54,12 @@ export interface IStorage {
   updateUserPhoto(id: string, photoData: Buffer, photoMimeType: string, photoUrl: string): Promise<User | null>;
   getUserPhoto(id: string): Promise<{ data: Buffer | null; mimeType: string | null } | null>;
   getAllUsers(): Promise<User[]>;
+
+  createUserActivity(userId: string, activity: CreateUserActivityInput): Promise<UserActivity>;
+  getUserActivities(
+    userId: string,
+    options?: { category?: UserActivityCategory; limit?: number; cursor?: string }
+  ): Promise<{ items: UserActivity[]; nextCursor: string | null }>;
   
   getAllClients(): Promise<Client[]>;
   getClient(id: string): Promise<Client | null>;
@@ -83,6 +100,7 @@ export interface IStorage {
 
   seedAdminUser(): Promise<void>;
   seedProposalCategories(): Promise<void>;
+  seedUserActivities(): Promise<void>;
 }
 
 export class PrismaStorage implements IStorage {
@@ -102,6 +120,30 @@ export class PrismaStorage implements IStorage {
       });
       console.log('Admin user created: admin@empresa.com / admin123');
     }
+  }
+
+  async seedUserActivities(): Promise<void> {
+    const users = await prisma.user.findMany({ select: { id: true } });
+    if (users.length === 0) return;
+
+    const existing = await prisma.userActivity.groupBy({
+      by: ['userId'],
+      _count: { _all: true },
+    });
+    const hasActivity = new Set(existing.map(e => e.userId));
+
+    const data = users
+      .filter(u => !hasActivity.has(u.id))
+      .map(u => ({
+        userId: u.id,
+        category: 'system',
+        action: 'ACTIVITIES_ENABLED',
+        title: 'Atividades da conta habilitadas',
+        metadata: { seeded: true, version: 1 },
+      }));
+
+    if (data.length === 0) return;
+    await prisma.userActivity.createMany({ data });
   }
 
   async getUser(id: string): Promise<User | null> {
@@ -152,6 +194,43 @@ export class PrismaStorage implements IStorage {
 
   async getAllUsers(): Promise<User[]> {
     return prisma.user.findMany();
+  }
+
+  async createUserActivity(userId: string, activity: CreateUserActivityInput): Promise<UserActivity> {
+    return prisma.userActivity.create({
+      data: {
+        userId,
+        category: activity.category,
+        action: activity.action,
+        title: activity.title,
+        metadata: activity.metadata ?? null,
+        ip: activity.ip ?? null,
+        userAgent: activity.userAgent ?? null,
+      },
+    });
+  }
+
+  async getUserActivities(
+    userId: string,
+    options?: { category?: UserActivityCategory; limit?: number; cursor?: string }
+  ): Promise<{ items: UserActivity[]; nextCursor: string | null }> {
+    const limit = Math.min(Math.max(options?.limit ?? 12, 1), 50);
+    const where: Prisma.UserActivityWhereInput = {
+      userId,
+      ...(options?.category ? { category: options.category } : {}),
+    };
+
+    const items = await prisma.userActivity.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+    });
+
+    const hasMore = items.length > limit;
+    const sliced = hasMore ? items.slice(0, limit) : items;
+    const nextCursor = hasMore ? sliced[sliced.length - 1]?.id ?? null : null;
+    return { items: sliced, nextCursor };
   }
 
   async getAllClients(): Promise<Client[]> {

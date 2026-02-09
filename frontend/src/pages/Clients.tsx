@@ -171,7 +171,7 @@ export default function Clients() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
+                    <Label htmlFor="email">E-mail</Label>
                     <Input
                       id="email"
                       type="email"
@@ -242,7 +242,7 @@ export default function Clients() {
                 <CardContent>
                   <div className="space-y-1 text-sm">
                     {client.segment && <p>Segmento: {client.segment}</p>}
-                    {client.email && <p>Email: {client.email}</p>}
+                    {client.email && <p>E-mail: {client.email}</p>}
                     {client.phone && <p>Telefone: {client.phone}</p>}
                   </div>
                   <div className="flex gap-2 mt-4">

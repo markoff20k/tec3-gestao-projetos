@@ -17,6 +17,7 @@ model User {
   photoUrl         String?  @map("photo_url")
   photoData        Bytes?   @map("photo_data")
   photoMimeType    String?  @map("photo_mime_type")
+  activities       UserActivity[]
   
   // Preferências do usuário
   theme            String   @default("light")
@@ -25,6 +26,31 @@ model User {
   proposalColumns  Json?    @map("proposal_columns")
 
   @@map("users")
+}
+
+model UserActivity {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+
+  // Categorias: security | profile | preferences | system
+  category  String
+  // Ação estável (ex.: SECURITY_LOGIN_SUCCESS)
+  action    String
+  // Texto curto para UI
+  title     String
+  // Dados adicionais (ex.: campos alterados)
+  metadata  Json?    @map("metadata")
+
+  ip        String?  @map("ip")
+  userAgent String?  @map("user_agent")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@map("user_activities")
 }
 
 model Client {

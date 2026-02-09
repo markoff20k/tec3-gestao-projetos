@@ -661,7 +661,7 @@ export default function Clients() {
                     <th className="text-left p-3 font-medium">Nome Fantasia</th>
                     <th className="text-left p-3 font-medium">CNPJ</th>
                     <th className="text-left p-3 font-medium">Cidade/UF</th>
-                    <th className="text-left p-3 font-medium">Email Comercial</th>
+                    <th className="text-left p-3 font-medium">E-mail Comercial</th>
                     <th className="text-left p-3 font-medium">Telefone</th>
                     <th className="text-right p-3 font-medium">Ações</th>
                   </tr>
@@ -726,7 +726,7 @@ export default function Clients() {
                       <p><span className="text-muted-foreground">Cidade:</span> {client.cidade}/{client.estado}</p>
                     )}
                     {client.emailComercial && (
-                      <p><span className="text-muted-foreground">Email:</span> {client.emailComercial}</p>
+                      <p><span className="text-muted-foreground">E-mail:</span> {client.emailComercial}</p>
                     )}
                     {client.telefoneComercial && (
                       <p><span className="text-muted-foreground">Tel:</span> {client.telefoneComercial}</p>

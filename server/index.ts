@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
@@ -66,6 +67,7 @@ app.use((req, res, next) => {
 
     await storage.seedAdminUser();
     await storage.seedProposalCategories();
+    await storage.seedUserActivities();
     log("Database initialized");
 
     await registerRoutes(httpServer, app);
