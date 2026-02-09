@@ -10,7 +10,7 @@ import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -40,6 +40,22 @@ interface JwtPayload {
   role: string;
 }
 
+function getRequestIp(req: Request): string | null {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return forwarded.split(',')[0]?.trim() || null;
+  }
+  if (Array.isArray(forwarded) && forwarded.length > 0) {
+    return forwarded[0]?.split(',')[0]?.trim() || null;
+  }
+  return req.socket?.remoteAddress || null;
+}
+
+function getUserAgent(req: Request): string | null {
+  const ua = req.headers['user-agent'];
+  return typeof ua === 'string' ? ua : null;
+}
+
 function authenticateToken(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -67,13 +83,39 @@ export async function registerRoutes(
     
     const user = await storage.getUserByEmail(email);
     if (!user || !user.isActive) {
+      if (user) {
+        await storage.createUserActivity(user.id, {
+          category: 'security',
+          action: 'SECURITY_LOGIN_FAILED',
+          title: 'Falha no login',
+          metadata: { reason: !user.isActive ? 'inactive' : 'invalid_credentials' },
+          ip: getRequestIp(req),
+          userAgent: getUserAgent(req),
+        });
+      }
       return res.status(401).json({ message: 'Credenciais invalidas' });
     }
 
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
+      await storage.createUserActivity(user.id, {
+        category: 'security',
+        action: 'SECURITY_LOGIN_FAILED',
+        title: 'Falha no login',
+        metadata: { reason: 'invalid_credentials' },
+        ip: getRequestIp(req),
+        userAgent: getUserAgent(req),
+      });
       return res.status(401).json({ message: 'Credenciais invalidas' });
     }
+
+    await storage.createUserActivity(user.id, {
+      category: 'security',
+      action: 'SECURITY_LOGIN_SUCCESS',
+      title: 'Login realizado',
+      ip: getRequestIp(req),
+      userAgent: getUserAgent(req),
+    });
 
     const token = jwt.sign(
       { sub: user.id, email: user.email, role: user.role },
@@ -88,6 +130,7 @@ export async function registerRoutes(
         email: user.email,
         name: user.name,
         role: user.role,
+        photoUrl: user.photoUrl,
       },
     });
   });
@@ -108,6 +151,14 @@ export async function registerRoutes(
       isActive: true,
     });
 
+    await storage.createUserActivity(user.id, {
+      category: 'system',
+      action: 'ACCOUNT_CREATED',
+      title: 'Conta criada',
+      ip: getRequestIp(req),
+      userAgent: getUserAgent(req),
+    });
+
     const token = jwt.sign(
       { sub: user.id, email: user.email, role: user.role },
       JWT_SECRET,
@@ -121,6 +172,7 @@ export async function registerRoutes(
         email: user.email,
         name: user.name,
         role: user.role,
+        photoUrl: user.photoUrl,
       },
     });
   });
@@ -173,6 +225,21 @@ export async function registerRoutes(
     if (!user) {
       return res.status(404).json({ message: 'Usuario nao encontrado' });
     }
+
+    await storage.createUserActivity(userId, {
+      category: 'preferences',
+      action: 'PREFERENCES_UPDATED',
+      title: 'Preferências atualizadas',
+      metadata: {
+        themeChanged: theme !== undefined,
+        sidebarCollapsedChanged: sidebarCollapsed !== undefined,
+        languageChanged: language !== undefined,
+        proposalColumnsChanged: proposalColumns !== undefined,
+      },
+      ip: getRequestIp(req),
+      userAgent: getUserAgent(req),
+    });
+
     res.json({
       theme: user.theme || 'light',
       sidebarCollapsed: user.sidebarCollapsed || false,
@@ -184,11 +251,16 @@ export async function registerRoutes(
   app.put('/api/auth/profile', authenticateToken, async (req, res) => {
     const userId = (req as any).user.sub;
     const { name, email } = req.body;
+
+    if (name !== undefined || email !== undefined) {
+      return res.status(400).json({ message: 'Nome completo e email não podem ser alterados.' });
+    }
     
-    const user = await storage.updateUser(userId, { name, email });
+    const user = await storage.getUser(userId);
     if (!user) {
       return res.status(404).json({ message: 'Usuario nao encontrado' });
     }
+
     res.json({
       id: user.id,
       email: user.email,
@@ -215,6 +287,15 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Usuario nao encontrado' });
     }
 
+    await storage.createUserActivity(userId, {
+      category: 'profile',
+      action: 'PROFILE_PHOTO_UPDATED',
+      title: 'Foto de perfil atualizada',
+      metadata: { mimeType: photoMimeType, sizeBytes: photoData?.length ?? null },
+      ip: getRequestIp(req),
+      userAgent: getUserAgent(req),
+    });
+
     res.json({
       id: user.id,
       email: user.email,
@@ -239,7 +320,7 @@ export async function registerRoutes(
 
   app.get('/api/auth/users', authenticateToken, async (req, res) => {
     const userRole = (req as any).user.role;
-    if (userRole !== 'owner') {
+    if (userRole !== 'owner' && userRole !== 'admin') {
       return res.status(403).json({ message: 'Acesso nao autorizado' });
     }
     const users = await storage.getAllUsers();
@@ -248,7 +329,30 @@ export async function registerRoutes(
       email: u.email,
       name: u.name,
       role: u.role,
+      photoUrl: u.photoUrl,
     })));
+  });
+
+  app.get('/api/auth/activities', authenticateToken, async (req, res) => {
+    const requester = (req as any).user as JwtPayload;
+    const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
+    const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+    const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined;
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+
+    const targetUserId = requestedUserId ?? requester.sub;
+    const isAudit = targetUserId !== requester.sub;
+    if (isAudit && requester.role !== 'owner' && requester.role !== 'admin') {
+      return res.status(403).json({ message: 'Acesso nao autorizado' });
+    }
+
+    const result = await storage.getUserActivities(targetUserId, {
+      category: category as any,
+      limit: Number.isFinite(limit) ? limit : undefined,
+      cursor,
+    });
+
+    res.json(result);
   });
 
   app.get('/api/clients', authenticateToken, async (_req, res) => {

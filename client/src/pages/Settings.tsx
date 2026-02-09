@@ -4,6 +4,7 @@ import { Layout } from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { authApi } from '@/lib/api';
+import { AccountActivitiesCard } from '@/components/AccountActivitiesCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -41,32 +42,8 @@ export default function Settings() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  const [name, setName] = useState(user?.name || '');
-  const [email, setEmail] = useState(user?.email || '');
   const [notifications, setNotifications] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      const updatedUser = await authApi.updateProfile({ name, email });
-      updateUser(updatedUser);
-      toast({
-        title: 'Perfil atualizado',
-        description: 'Suas informações foram salvas com sucesso.',
-        variant: 'success',
-      });
-    } catch (error) {
-      toast({
-        title: 'Erro',
-        description: error instanceof Error ? error.message : 'Erro ao salvar perfil',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   const handlePhotoClick = () => {
     fileInputRef.current?.click();
@@ -200,8 +177,8 @@ export default function Settings() {
                 </Label>
                 <Input
                   id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  value={user?.name || ''}
+                  disabled
                   data-testid="input-name"
                 />
               </div>
@@ -209,13 +186,13 @@ export default function Settings() {
               <div className="space-y-2">
                 <Label htmlFor="email" className="flex items-center gap-2">
                   <Mail className="h-4 w-4 text-muted-foreground" />
-                  Email
+                  E-mail
                 </Label>
                 <Input
                   id="email"
                   type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={user?.email || ''}
+                  disabled
                   data-testid="input-email"
                 />
               </div>
@@ -243,20 +220,6 @@ export default function Settings() {
               </div>
             </div>
 
-            <div className="flex justify-end">
-              <Button 
-                onClick={handleSave} 
-                disabled={isSaving}
-                data-testid="button-save-profile"
-              >
-                {isSaving ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4 mr-2" />
-                )}
-                Salvar Alterações
-              </Button>
-            </div>
           </CardContent>
         </Card>
 
@@ -333,6 +296,8 @@ export default function Settings() {
             </div>
           </CardContent>
         </Card>
+
+        <AccountActivitiesCard user={user} />
       </div>
     </Layout>
   );

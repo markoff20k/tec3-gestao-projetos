@@ -70,6 +70,33 @@ export interface User {
   preferences?: UserPreferences;
 }
 
+export interface UserSummary {
+  id: string;
+  email: string;
+  name: string;
+  role: User['role'];
+  photoUrl?: string;
+}
+
+export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
+
+export interface UserActivity {
+  id: string;
+  userId: string;
+  category: UserActivityCategory;
+  action: string;
+  title: string;
+  metadata?: any;
+  ip?: string | null;
+  userAgent?: string | null;
+  createdAt: string;
+}
+
+export interface UserActivitiesResponse {
+  items: UserActivity[];
+  nextCursor: string | null;
+}
+
 export interface AuthResponse {
   accessToken: string;
   user: User;
@@ -83,6 +110,21 @@ export const authApi = {
   me: () => api.get<User>('/auth/me'),
   updateProfile: (data: { name?: string; email?: string }) =>
     api.put<User>('/auth/profile', data),
+  listUsers: () => api.get<UserSummary[]>('/auth/users'),
+  getActivities: (params?: {
+    userId?: string;
+    category?: UserActivityCategory;
+    limit?: number;
+    cursor?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.userId) search.set('userId', params.userId);
+    if (params?.category) search.set('category', params.category);
+    if (params?.limit) search.set('limit', String(params.limit));
+    if (params?.cursor) search.set('cursor', params.cursor);
+    const qs = search.toString();
+    return api.get<UserActivitiesResponse>(`/auth/activities${qs ? `?${qs}` : ''}`);
+  },
   uploadPhoto: async (file: File): Promise<User> => {
     const token = localStorage.getItem('token');
     const formData = new FormData();
