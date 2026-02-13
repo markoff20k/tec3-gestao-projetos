@@ -7,13 +7,23 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserRole {
+  admin
+  commercial
+  projects
+}
+
 model User {
   id               String   @id @default(uuid())
   email            String   @unique
   password         String
   name             String
-  role             String   @default("user")
+  role             UserRole @default(projects)
   isActive         Boolean  @default(true) @map("is_active")
+  professionalCategoryId String? @map("professional_category_id")
+  professionalCategory   ProposalCategory? @relation(fields: [professionalCategoryId], references: [id])
+  emailGroup        String?  @map("email_group")
+  receivesEmails    Boolean  @default(false) @map("receives_emails")
   photoUrl         String?  @map("photo_url")
   photoData        Bytes?   @map("photo_data")
   photoMimeType    String?  @map("photo_mime_type")
@@ -93,7 +103,7 @@ model Proposal {
   coordinatorId     String?   @map("coordinator_id")
   coordinatorName   String?   @map("coordinator_name")
   type              String    @default("fixed_price")
-  status            String    @default("draft")
+  status            String    @default("em_elaboracao")
   totalValue        Decimal   @default(0) @map("total_value") @db.Decimal(12, 2)
   estimatedHours    Int       @default(0) @map("estimated_hours")
   expectedStartDate DateTime? @map("expected_start_date") @db.Date
@@ -190,6 +200,7 @@ model ProposalCategory {
 
   categoryValues ProposalCategoryValue[]
 
+  professionals  User[]
   @@map("proposal_categories")
 }
 

@@ -91,17 +91,17 @@ const typeMap = {
 
 // Map status/situation
 const statusMap = {
-  'Sucesso': 'converted',
-  'Sucesso (aditivo)': 'converted',
-  'Aprovada': 'approved',
-  'Em elaboração': 'draft',
-  'Em análise': 'in_review',
-  'Em negociação': 'negotiating',
-  'Enviada': 'sent',
-  'Reprovada': 'rejected',
-  'Não sucesso': 'rejected',
-  'Cancelada': 'cancelled',
-  'Pendente': 'in_review'
+  'Sucesso': 'com_sucesso',
+  'Sucesso (aditivo)': 'sucesso_aditivo',
+  'Aprovada': 'com_sucesso',
+  'Em elaboração': 'em_elaboracao',
+  'Em análise': 'em_analise',
+  'Em negociação': 'em_analise',
+  'Enviada': 'em_analise',
+  'Reprovada': 'nao_sucesso',
+  'Não sucesso': 'nao_sucesso',
+  'Cancelada': 'cancelada',
+  'Pendente': 'em_analise'
 };
 
 console.log(`Total proposals found: ${proposals.length}`);
@@ -155,7 +155,7 @@ const values = [];
 
 for (const [key, p] of uniqueProposals) {
   const type = typeMap[p.contractType] || 'fixed_price';
-  const status = statusMap[p.situation] || 'draft';
+  const status = statusMap[p.situation] || 'em_elaboracao';
   
   // Escape single quotes
   const title = (p.title || 'Sem título').replace(/'/g, "''");

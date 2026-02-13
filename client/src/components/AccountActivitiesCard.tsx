@@ -67,7 +67,7 @@ function shortUa(userAgent?: string | null): string | null {
 type FilterTab = 'all' | UserActivityCategory;
 
 export function AccountActivitiesCard({ user }: { user: User | null }) {
-  const canAudit = user?.role === 'owner' || user?.role === 'admin';
+  const canAudit = user?.role === 'admin';
 
   const [users, setUsers] = useState<UserSummary[] | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -187,7 +187,7 @@ export function AccountActivitiesCard({ user }: { user: User | null }) {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="mt-1 text-xs text-muted-foreground">Disponível para admin/owner.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Disponível para admin.</p>
             </div>
           )}
         </div>

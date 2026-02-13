@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, DollarSign, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star, Maximize2, Minimize2, PanelRightClose } from 'lucide-react';
+import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,8 +43,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
-import { proposalsApi, clientsApi, authApi, favoritesApi, Proposal, Client } from '@/lib/api';
+import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, Proposal, Client, UserOption } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
@@ -62,34 +68,87 @@ import {
 import { CategoryValuesDrawer } from '@/components/CategoryValuesDrawer';
 
 const statusColors: Record<string, string> = {
+  // New (legacy) statuses (aligned with the screenshot)
+  em_elaboracao: 'bg-gray-500',
+  em_analise: 'bg-yellow-500',
+  com_sucesso: 'bg-green-500',
+  sucesso_aditivo: 'bg-teal-500',
+  nao_sucesso: 'bg-red-500',
+  cancelada: 'bg-gray-400',
+
+  // Backward compatibility (old statuses)
   draft: 'bg-gray-500',
   in_review: 'bg-yellow-500',
-  sent: 'bg-blue-500',
-  negotiating: 'bg-purple-500',
+  sent: 'bg-yellow-500',
+  negotiating: 'bg-yellow-500',
   approved: 'bg-green-500',
   rejected: 'bg-red-500',
   cancelled: 'bg-gray-400',
-  converted: 'bg-teal-500',
+  converted: 'bg-green-500',
 };
 
 const statusLabels: Record<string, string> = {
-  draft: 'Rascunho',
-  in_review: 'Em Revisão',
-  sent: 'Enviada',
-  negotiating: 'Negociação',
-  approved: 'Aprovada',
-  rejected: 'Rejeitada',
+  // New (legacy) statuses
+  em_elaboracao: 'Em elaboração',
+  em_analise: 'Em análise',
+  com_sucesso: 'Sucesso',
+  sucesso_aditivo: 'Sucesso (aditivo)',
+  nao_sucesso: 'Não sucesso',
+  cancelada: 'Cancelada',
+
+  // Backward compatibility (old statuses)
+  draft: 'Em elaboração',
+  in_review: 'Em análise',
+  sent: 'Em análise',
+  negotiating: 'Em análise',
+  approved: 'Sucesso',
+  rejected: 'Não sucesso',
   cancelled: 'Cancelada',
-  converted: 'Convertida',
+  converted: 'Sucesso',
 };
 
+const proposalStatusOptions: Array<{ value: string; label: string }> = [
+  { value: 'em_elaboracao', label: 'Em elaboração' },
+  { value: 'em_analise', label: 'Em análise' },
+  { value: 'com_sucesso', label: 'Sucesso' },
+  { value: 'sucesso_aditivo', label: 'Sucesso (aditivo)' },
+  { value: 'nao_sucesso', label: 'Não sucesso' },
+  { value: 'cancelada', label: 'Cancelada' },
+];
+
+const mainTypeOptions: string[] = [
+  'ATO/Fiscalização de campo',
+  'Acessos',
+  'Auditoria/Inspeção Segurança/Avaliações de Segurança/Laudos de Estabilidade',
+  'Barragens/Diques/Ponds/Bacias/Disposição de rejeitos',
+  'Caracterização Geológico-Geotécnica/Hidrogeologia',
+  'Depósito de Rejeito - Empilhamento',
+  'Descomissionamento/Descaracterização',
+  'Estudos Ambientais',
+  'Estudos de ruptura/PAE/PSB/Análise de risco',
+  'Estudos Hidráulicos/Hidrológicos/Drenagem',
+  'Guarda-chuva',
+  'Pilha de Estéril/Minério',
+  'Subcontratação',
+  'Taludes (exceto cava)',
+  'Taludes Cava/Lavra subterrânea',
+  'Geral',
+];
+
 const typeLabels: Record<string, string> = {
-  fixed_price: 'Preço Fixo',
-  appropriation: 'Apropriação',
-  umbrella: 'Guarda-Chuva',
-  service_order: 'Ordem de Serviço',
+  fixed_price: 'Preço fechado',
+  appropriation: 'Preço sob demanda',
+  umbrella: 'Guarda-chuva',
+  service_order: 'Ordem de serviço (consequente do contrato Guarda-chuva)',
   additive: 'Aditivo',
 };
+
+const proposalTypeOptions: Array<{ value: string; label: string }> = [
+  { value: 'fixed_price', label: typeLabels.fixed_price },
+  { value: 'appropriation', label: typeLabels.appropriation },
+  { value: 'umbrella', label: typeLabels.umbrella },
+  { value: 'service_order', label: typeLabels.service_order },
+];
 
 interface ColumnConfig {
   id: string;
@@ -107,7 +166,7 @@ const defaultColumns: ColumnConfig[] = [
   { id: 'proposalOrigin', label: 'Cód. antigo', visible: false, width: 'min-w-[70px]', category: 'basic' },
   { id: 'type', label: 'Tipo do contrato', visible: true, width: 'min-w-[90px]', category: 'classification' },
   { id: 'client', label: 'Cliente', visible: true, width: 'min-w-[120px]', category: 'basic' },
-  { id: 'umbrellaRef', label: 'Proposta origem (guarda-chuva)', visible: false, width: 'min-w-[100px]', category: 'classification' },
+  { id: 'umbrellaRef', label: 'Proposta original (guarda-chuva)', visible: false, width: 'min-w-[100px]', category: 'classification' },
   { id: 'coordinatorName', label: 'Resp. pela proposta', visible: true, width: 'min-w-[100px]', category: 'people' },
   { id: 'title', label: 'Título', visible: true, width: 'min-w-[150px]', category: 'basic' },
   { id: 'createdAt', label: 'Dt. solicitação', visible: false, width: 'min-w-[80px]', category: 'dates' },
@@ -150,6 +209,7 @@ const categoryLabels: Record<string, string> = {
 };
 
 export default function Proposals() {
+  const [location] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState('');
@@ -165,6 +225,12 @@ export default function Proposals() {
   const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const queryString = location.split('?')[1] ?? '';
+    const params = new URLSearchParams(queryString);
+    setSearch(params.get('search') ?? '');
+  }, [location]);
     
   const [formData, setFormData] = useState({
     title: '',
@@ -176,24 +242,40 @@ export default function Proposals() {
     coordinatorName: '',
   });
   const [editFormData, setEditFormData] = useState({
-    title: '',
-    description: '',
-    clientId: '',
     type: 'fixed_price',
-    status: 'draft',
-    totalValue: '',
-    estimatedHours: '',
+    umbrellaRef: '',
+    clientId: '',
     coordinatorName: '',
-    deliveryDate: '',
+    title: '',
+    createdAt: '',
+    sentDate: '',
     dueDate: '',
+    status: 'em_elaboracao',
     expectation: '',
     mainType: '',
     termMonths: '',
-    riskAssessment: '',
+    riskAssessment: 'Não',
+    hourJustification: '',
     subcontracted: '',
     discount: '',
+    coordinatorId: '',
+    description: '',
     proposalOrigin: '',
   });
+
+  type EditFormData = typeof editFormData;
+  type EditFormField = keyof EditFormData;
+
+  const editInitialRef = useRef<EditFormData | null>(null);
+  const [editTouched, setEditTouched] = useState<Partial<Record<EditFormField, boolean>>>({});
+  const [editAttemptedSubmit, setEditAttemptedSubmit] = useState(false);
+
+  const isEditDirty = useMemo(() => {
+    if (!editDialogOpen) return false;
+    const initial = editInitialRef.current;
+    if (!initial) return false;
+    return JSON.stringify(initial) !== JSON.stringify(editFormData);
+  }, [editDialogOpen, editFormData]);
 
   // Advanced Filter states
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -368,6 +450,46 @@ export default function Proposals() {
     queryFn: () => clientsApi.getAll(),
   });
 
+  const { data: users = [] } = useQuery<UserOption[]>({
+    queryKey: ['/api/users'],
+    queryFn: () => usersApi.list(),
+  });
+
+  const activeUserNames = useMemo(() => {
+    return new Set(
+      users
+        .filter((u) => u.isActive)
+        .map((u) => (u.name || '').trim())
+        .filter(Boolean)
+    );
+  }, [users]);
+
+  const validateEditForm = (data: EditFormData) => {
+    const errors: Partial<Record<EditFormField, string>> = {};
+
+    if (!data.type) errors.type = 'Campo obrigatório';
+    if (data.type === 'service_order' && !data.umbrellaRef) errors.umbrellaRef = 'Campo obrigatório';
+    if (!data.clientId) errors.clientId = 'Campo obrigatório';
+    if (!data.coordinatorName) {
+      errors.coordinatorName = 'Campo obrigatório';
+    } else if (activeUserNames.size > 0 && !activeUserNames.has(String(data.coordinatorName).trim())) {
+      errors.coordinatorName = 'Selecione um responsável';
+    }
+    if (!data.title?.trim()) errors.title = 'Campo obrigatório';
+    if (!data.riskAssessment) errors.riskAssessment = 'Campo obrigatório';
+
+    return errors;
+  };
+
+  const editValidationErrors = useMemo(
+    () => validateEditForm(editFormData),
+    [editFormData, activeUserNames]
+  );
+  const isEditValid = Object.keys(editValidationErrors).length === 0;
+
+  const shouldShowEditError = (field: EditFormField) =>
+    Boolean(editValidationErrors[field]) && (editAttemptedSubmit || Boolean(editTouched[field]));
+
   const { data: favorites = [] } = useQuery<string[]>({
     queryKey: ['/api/proposal-favorites'],
     queryFn: () => favoritesApi.getAll(),
@@ -435,6 +557,33 @@ export default function Proposals() {
     },
   });
 
+  const editDisabledReason = useMemo(() => {
+    if (!editDialogOpen) return null;
+    if (updateMutation.isPending) return null;
+    if (isEditValid) return null;
+
+    const fieldLabels: Partial<Record<EditFormField, string>> = {
+      type: 'Tipo do contrato',
+      umbrellaRef: 'Proposta original (guarda-chuva)',
+      clientId: 'Cliente',
+      coordinatorName: 'Responsável pela proposta',
+      title: 'Título',
+      riskAssessment: 'Avaliação de risco',
+    };
+
+    const parts = Object.keys(editValidationErrors)
+      .map((k) => k as EditFormField)
+      .filter((k) => Boolean(fieldLabels[k]))
+      .map((k) => {
+        const label = fieldLabels[k] || k;
+        const msg = editValidationErrors[k];
+        return msg && msg !== 'Campo obrigatório' ? `${label} — ${msg}` : label;
+      });
+
+    if (parts.length === 0) return 'Preencha os campos obrigatórios destacados em vermelho.';
+    return `Campos pendentes:\n${parts.map((p) => `• ${p}`).join('\n')}`;
+  }, [editDialogOpen, updateMutation.isPending, isEditValid, editValidationErrors]);
+
   const handleRowClick = (proposal: Proposal) => {
     setSelectedProposal(proposal);
     setDetailSheetOpen(true);
@@ -443,41 +592,75 @@ export default function Proposals() {
   const handleEditProposal = (proposal: Proposal, e?: React.MouseEvent) => {
     e?.stopPropagation();
     setSelectedProposal(proposal);
-    setEditFormData({
-      title: proposal.title || '',
-      description: proposal.description || '',
-      clientId: proposal.clientId || '',
+    const nextEditFormData = {
       type: proposal.type || 'fixed_price',
-      status: proposal.status || 'draft',
-      totalValue: String(proposal.totalValue || 0),
-      estimatedHours: String(proposal.estimatedHours || 0),
+      umbrellaRef: proposal.umbrellaRef || '',
+      clientId: proposal.clientId || '',
       coordinatorName: proposal.coordinatorName || '',
-      deliveryDate: proposal.deliveryDate ? new Date(proposal.deliveryDate).toISOString().split('T')[0] : '',
+      title: proposal.title || '',
+      createdAt: proposal.createdAt ? new Date(proposal.createdAt).toISOString().split('T')[0] : '',
+      sentDate: proposal.sentDate ? new Date(proposal.sentDate).toISOString().split('T')[0] : '',
       dueDate: proposal.dueDate ? new Date(proposal.dueDate).toISOString().split('T')[0] : '',
+      status: proposal.status || 'em_elaboracao',
       expectation: proposal.expectation || '',
       mainType: proposal.mainType || '',
-      termMonths: String(proposal.termMonths || ''),
-      riskAssessment: proposal.riskAssessment || '',
-      subcontracted: String(proposal.subcontracted || 0),
+      termMonths: proposal.termMonths !== undefined && proposal.termMonths !== null ? String(proposal.termMonths) : '',
+      riskAssessment: proposal.riskAssessment || 'Não',
+      hourJustification: proposal.hourJustification !== undefined && proposal.hourJustification !== null ? String(proposal.hourJustification) : '',
+      subcontracted: proposal.subcontracted !== undefined && proposal.subcontracted !== null ? String(proposal.subcontracted) : '',
       discount: proposal.discount || '',
+      coordinatorId: proposal.coordinatorId || '',
+      description: proposal.description || '',
       proposalOrigin: proposal.proposalOrigin || '',
-    });
+    };
+    editInitialRef.current = nextEditFormData;
+    setEditFormData(nextEditFormData);
+    setEditTouched({});
+    setEditAttemptedSubmit(false);
     setEditDialogOpen(true);
   };
 
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProposal) return;
+    setEditAttemptedSubmit(true);
+
+    const toPrismaDateTime = (dateOnly: string): string | undefined => {
+      if (!dateOnly) return undefined;
+      // Prisma DateTime expects ISO-8601 date-time, not just YYYY-MM-DD
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return undefined;
+      return `${dateOnly}T00:00:00.000Z`;
+    };
+
+    const isServiceOrder = editFormData.type === 'service_order';
+
+    const errors = validateEditForm(editFormData);
+    if (Object.keys(errors).length > 0) {
+      return;
+    }
+
     updateMutation.mutate({
       id: selectedProposal.id,
       data: {
-        ...editFormData,
-        totalValue: parseFloat(editFormData.totalValue) || 0,
-        estimatedHours: parseInt(editFormData.estimatedHours) || 0,
-        termMonths: editFormData.termMonths ? parseInt(editFormData.termMonths) : undefined,
-        subcontracted: parseFloat(editFormData.subcontracted) || 0,
-        deliveryDate: editFormData.deliveryDate || undefined,
-        dueDate: editFormData.dueDate || undefined,
+        type: editFormData.type,
+        umbrellaRef: isServiceOrder ? (editFormData.umbrellaRef || null) : null,
+        clientId: editFormData.clientId,
+        coordinatorName: editFormData.coordinatorName,
+        title: editFormData.title,
+        createdAt: toPrismaDateTime(editFormData.createdAt),
+        sentDate: toPrismaDateTime(editFormData.sentDate),
+        dueDate: toPrismaDateTime(editFormData.dueDate),
+        status: editFormData.status,
+        expectation: editFormData.expectation || null,
+        mainType: editFormData.mainType || null,
+        termMonths: editFormData.termMonths ? parseInt(editFormData.termMonths) : null,
+        riskAssessment: editFormData.riskAssessment || null,
+        hourJustification: editFormData.hourJustification ? parseFloat(editFormData.hourJustification) : null,
+        subcontracted: editFormData.subcontracted ? parseFloat(editFormData.subcontracted) : null,
+        discount: editFormData.discount || null,
+        coordinatorId: editFormData.coordinatorId || null,
+        description: editFormData.description || null,
+        proposalOrigin: editFormData.proposalOrigin || null,
       },
     });
   };
@@ -509,7 +692,7 @@ export default function Proposals() {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(numValue);
   };
 
-  const formatDate = (dateStr?: string) => {
+  const formatDate = (dateStr?: string | null) => {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString('pt-BR');
   };
@@ -847,11 +1030,10 @@ export default function Proposals() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="fixed_price">Preço Fixo</SelectItem>
-                        <SelectItem value="appropriation">Apropriação</SelectItem>
-                        <SelectItem value="umbrella">Guarda-Chuva</SelectItem>
-                        <SelectItem value="service_order">Ordem de Serviço</SelectItem>
-                        <SelectItem value="additive">Aditivo</SelectItem>
+                        <SelectItem value="fixed_price">Preço fechado</SelectItem>
+                        <SelectItem value="appropriation">Preço sob demanda</SelectItem>
+                        <SelectItem value="umbrella">Guarda-chuva</SelectItem>
+                        <SelectItem value="service_order">Ordem de serviço (consequente do contrato Guarda-chuva)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1097,7 +1279,7 @@ export default function Proposals() {
                       <Label className="font-medium">Status</Label>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {Object.entries(statusLabels).map(([key, label]) => (
+                      {proposalStatusOptions.map(({ value: key, label }) => (
                         <Button
                           key={key}
                           variant={statusFilters.includes(key) ? 'default' : 'outline'}
@@ -1117,10 +1299,10 @@ export default function Proposals() {
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
                       <Filter className="h-4 w-4 text-muted-foreground" />
-                      <Label className="font-medium">Tipo de Proposta</Label>
+                      <Label className="font-medium">Tipo do contrato</Label>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {Object.entries(typeLabels).map(([key, label]) => (
+                        {proposalTypeOptions.map(({ value: key, label }) => (
                         <Button
                           key={key}
                           variant={typeFilters.includes(key) ? 'default' : 'outline'}
@@ -1531,7 +1713,7 @@ export default function Proposals() {
                     <Pencil className="h-4 w-4 mr-2" />
                     Editar
                   </Button>
-                  {selectedProposal.status === 'approved' && (
+                  {['com_sucesso', 'sucesso_aditivo', 'approved'].includes(selectedProposal.status) && (
                     <Button
                       className="flex-1"
                       onClick={() => convertMutation.mutate(selectedProposal.id)}
@@ -1776,7 +1958,7 @@ export default function Proposals() {
                     <Pencil className="h-4 w-4 mr-2" />
                     Editar
                   </Button>
-                  {selectedProposal.status === 'approved' && (
+                  {['com_sucesso', 'sucesso_aditivo', 'approved'].includes(selectedProposal.status) && (
                     <Button
                       onClick={() => convertMutation.mutate(selectedProposal.id)}
                       disabled={convertMutation.isPending}
@@ -1960,7 +2142,16 @@ export default function Proposals() {
         </Dialog>
 
         {/* Edit Dialog */}
-        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <Dialog
+          open={editDialogOpen}
+          onOpenChange={(open) => {
+            setEditDialogOpen(open);
+            if (!open) {
+              setEditAttemptedSubmit(false);
+              setEditTouched({});
+            }
+          }}
+        >
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Editar Proposta - {selectedProposal?.code}</DialogTitle>
@@ -1975,30 +2166,81 @@ export default function Proposals() {
                   <Label>Tipo do contrato *</Label>
                   <Select
                     value={editFormData.type}
-                    onValueChange={(value) => setEditFormData({ ...editFormData, type: value })}
+                    onValueChange={(value) => {
+                      setEditTouched((prev) => ({ ...prev, type: true }));
+                      setEditFormData({
+                        ...editFormData,
+                        type: value,
+                        umbrellaRef: value === 'service_order' ? editFormData.umbrellaRef : '',
+                      });
+                    }}
                   >
-                    <SelectTrigger data-testid="select-edit-proposal-type">
+                    <SelectTrigger
+                      data-testid="select-edit-proposal-type"
+                      className={shouldShowEditError('type') ? 'border-destructive' : ''}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="fixed_price">Preço Fixo</SelectItem>
-                      <SelectItem value="appropriation">Apropriação</SelectItem>
-                      <SelectItem value="umbrella">Guarda-Chuva</SelectItem>
-                      <SelectItem value="service_order">Ordem de Serviço</SelectItem>
-                      <SelectItem value="additive">Aditivo</SelectItem>
+                      <SelectItem value="fixed_price">Preço fechado</SelectItem>
+                      <SelectItem value="appropriation">Preço sob demanda</SelectItem>
+                      <SelectItem value="umbrella">Guarda-chuva</SelectItem>
+                      <SelectItem value="service_order">Ordem de serviço (consequente do contrato Guarda-chuva)</SelectItem>
                     </SelectContent>
                   </Select>
+                  {shouldShowEditError('type') && (
+                    <p className="text-xs text-destructive">{editValidationErrors.type}</p>
+                  )}
                 </div>
               </div>
+
+              {editFormData.type === 'service_order' && (
+                <div className="space-y-2">
+                  <Label>Proposta original (guarda-chuva) *</Label>
+                  <Select
+                    value={editFormData.umbrellaRef || undefined}
+                    onValueChange={(value) => {
+                      setEditTouched((prev) => ({ ...prev, umbrellaRef: true }));
+                      setEditFormData({ ...editFormData, umbrellaRef: value });
+                    }}
+                  >
+                    <SelectTrigger
+                      data-testid="select-edit-proposal-umbrella"
+                      className={shouldShowEditError('umbrellaRef') ? 'border-destructive' : ''}
+                    >
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {proposals
+                        .filter((p) => p.type === 'umbrella')
+                        .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
+                        .map((p) => (
+                          <SelectItem key={p.id} value={p.code}>
+                            {p.code}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  {shouldShowEditError('umbrellaRef') && (
+                    <p className="text-xs text-destructive">{editValidationErrors.umbrellaRef}</p>
+                  )}
+                </div>
+              )}
               
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Cliente *</Label>
                   <Select
                     value={editFormData.clientId}
-                    onValueChange={(value) => setEditFormData({ ...editFormData, clientId: value })}
+                    onValueChange={(value) => {
+                      setEditTouched((prev) => ({ ...prev, clientId: true }));
+                      setEditFormData({ ...editFormData, clientId: value });
+                    }}
                   >
-                    <SelectTrigger data-testid="select-edit-proposal-client">
+                    <SelectTrigger
+                      data-testid="select-edit-proposal-client"
+                      className={shouldShowEditError('clientId') ? 'border-destructive' : ''}
+                    >
                       <SelectValue placeholder="Selecione um cliente" />
                     </SelectTrigger>
                     <SelectContent>
@@ -2009,51 +2251,82 @@ export default function Proposals() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {shouldShowEditError('clientId') && (
+                    <p className="text-xs text-destructive">{editValidationErrors.clientId}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Responsável pela proposta *</Label>
-                  <Input
-                    data-testid="input-edit-proposal-coordinator"
-                    value={editFormData.coordinatorName}
-                    onChange={(e) => setEditFormData({ ...editFormData, coordinatorName: e.target.value })}
-                    placeholder="Nome do responsável"
-                  />
+                  <Select
+                    value={editFormData.coordinatorName || undefined}
+                    onValueChange={(value) => {
+                      setEditTouched((prev) => ({ ...prev, coordinatorName: true }));
+                      setEditFormData({ ...editFormData, coordinatorName: value });
+                    }}
+                  >
+                    <SelectTrigger
+                      data-testid="select-edit-proposal-responsible"
+                      className={shouldShowEditError('coordinatorName') ? 'border-destructive' : ''}
+                    >
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {users
+                        .filter((u) => u.isActive)
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                        .map((u) => (
+                          <SelectItem key={u.id} value={u.name}>
+                            {u.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  {shouldShowEditError('coordinatorName') && (
+                    <p className="text-xs text-destructive">{editValidationErrors.coordinatorName}</p>
+                  )}
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="edit-title">Título *</Label>
-                <Input
-                  id="edit-title"
-                  data-testid="input-edit-proposal-title"
-                  value={editFormData.title}
-                  onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
-                  required
-                />
-              </div>
-
               <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-title">Título *</Label>
+                  <Input
+                    id="edit-title"
+                    data-testid="input-edit-proposal-title"
+                    value={editFormData.title}
+                    onChange={(e) => {
+                      setEditTouched((prev) => ({ ...prev, title: true }));
+                      setEditFormData({ ...editFormData, title: e.target.value });
+                    }}
+                    required
+                    className={shouldShowEditError('title') ? 'border-destructive' : ''}
+                  />
+                  {shouldShowEditError('title') && (
+                    <p className="text-xs text-destructive">{editValidationErrors.title}</p>
+                  )}
+                </div>
                 <div className="space-y-2">
                   <Label>Data da solicitação</Label>
                   <Input 
-                    value={selectedProposal?.createdAt ? new Date(selectedProposal.createdAt).toLocaleDateString('pt-BR') : ''} 
-                    disabled 
-                    className="bg-muted" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-deliveryDate">Data da emissão</Label>
-                  <Input
-                    id="edit-deliveryDate"
                     type="date"
-                    data-testid="input-edit-proposal-delivery-date"
-                    value={editFormData.deliveryDate}
-                    onChange={(e) => setEditFormData({ ...editFormData, deliveryDate: e.target.value })}
+                    data-testid="input-edit-proposal-request-date"
+                    value={editFormData.createdAt}
+                    onChange={(e) => setEditFormData({ ...editFormData, createdAt: e.target.value })}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-sentDate">Data da emissão</Label>
+                  <Input
+                    id="edit-sentDate"
+                    type="date"
+                    data-testid="input-edit-proposal-issue-date"
+                    value={editFormData.sentDate}
+                    onChange={(e) => setEditFormData({ ...editFormData, sentDate: e.target.value })}
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit-dueDate">Data da validade</Label>
                   <Input
@@ -2064,6 +2337,9 @@ export default function Proposals() {
                     onChange={(e) => setEditFormData({ ...editFormData, dueDate: e.target.value })}
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Data da atualização</Label>
                   <Input 
@@ -2071,26 +2347,6 @@ export default function Proposals() {
                     disabled 
                     className="bg-muted" 
                   />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Expectativa</Label>
-                  <Select
-                    value={editFormData.expectation}
-                    onValueChange={(value) => setEditFormData({ ...editFormData, expectation: value })}
-                  >
-                    <SelectTrigger data-testid="select-edit-proposal-expectation">
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Nenhuma</SelectItem>
-                      <SelectItem value="high">Alta</SelectItem>
-                      <SelectItem value="medium">Média</SelectItem>
-                      <SelectItem value="low">Baixa</SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label>Situação</Label>
@@ -2102,7 +2358,7 @@ export default function Proposals() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {Object.entries(statusLabels).map(([value, label]) => (
+                      {proposalStatusOptions.map(({ value, label }) => (
                         <SelectItem key={value} value={value}>{label}</SelectItem>
                       ))}
                     </SelectContent>
@@ -2112,15 +2368,42 @@ export default function Proposals() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="edit-mainType">Tipo principal</Label>
-                  <Input
-                    id="edit-mainType"
-                    data-testid="input-edit-proposal-main-type"
-                    value={editFormData.mainType}
-                    onChange={(e) => setEditFormData({ ...editFormData, mainType: e.target.value })}
-                    placeholder="Tipo principal"
-                  />
+                  <Label>Expectativa</Label>
+                  <Select
+                    value={editFormData.expectation || undefined}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, expectation: value })}
+                  >
+                    <SelectTrigger data-testid="select-edit-proposal-expectation">
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Positiva">Positiva</SelectItem>
+                      <SelectItem value="Negativa">Negativa</SelectItem>
+                      <SelectItem value="Não se sabe">Não se sabe</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-mainType">Tipo principal</Label>
+                  <Select
+                    value={editFormData.mainType || undefined}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, mainType: value })}
+                  >
+                    <SelectTrigger data-testid="select-edit-proposal-main-type">
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {mainTypeOptions.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-termMonths">Prazo (em meses)</Label>
                   <Input
@@ -2129,49 +2412,46 @@ export default function Proposals() {
                     data-testid="input-edit-proposal-term-months"
                     value={editFormData.termMonths}
                     onChange={(e) => setEditFormData({ ...editFormData, termMonths: e.target.value })}
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-totalValue">Valor Total (R$)</Label>
-                  <Input
-                    id="edit-totalValue"
-                    type="number"
-                    step="0.01"
-                    data-testid="input-edit-proposal-value"
-                    value={editFormData.totalValue}
-                    onChange={(e) => setEditFormData({ ...editFormData, totalValue: e.target.value })}
+                    placeholder=""
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>Avaliação de risco *</Label>
                   <Select
                     value={editFormData.riskAssessment}
-                    onValueChange={(value) => setEditFormData({ ...editFormData, riskAssessment: value })}
+                    onValueChange={(value) => {
+                      setEditTouched((prev) => ({ ...prev, riskAssessment: true }));
+                      setEditFormData({ ...editFormData, riskAssessment: value });
+                    }}
                   >
-                    <SelectTrigger data-testid="select-edit-proposal-risk">
+                    <SelectTrigger
+                      data-testid="select-edit-proposal-risk"
+                      className={shouldShowEditError('riskAssessment') ? 'border-destructive' : ''}
+                    >
                       <SelectValue placeholder="Selecione" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="no">Não</SelectItem>
-                      <SelectItem value="yes">Sim</SelectItem>
+                      <SelectItem value="Não">Não</SelectItem>
+                      <SelectItem value="Sim">Sim</SelectItem>
                     </SelectContent>
                   </Select>
+                  {shouldShowEditError('riskAssessment') && (
+                    <p className="text-xs text-destructive">{editValidationErrors.riskAssessment}</p>
+                  )}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="edit-estimatedHours">Horas Estimadas</Label>
+                  <Label htmlFor="edit-hourJustification">Valor da mobilização</Label>
                   <Input
-                    id="edit-estimatedHours"
+                    id="edit-hourJustification"
                     type="number"
-                    data-testid="input-edit-proposal-hours"
-                    value={editFormData.estimatedHours}
-                    onChange={(e) => setEditFormData({ ...editFormData, estimatedHours: e.target.value })}
+                    step="0.01"
+                    data-testid="input-edit-proposal-mobilization"
+                    value={editFormData.hourJustification}
+                    onChange={(e) => setEditFormData({ ...editFormData, hourJustification: e.target.value })}
+                    placeholder="Não usar separador de milhar (ex.: 1500.80)"
                   />
                 </div>
                 <div className="space-y-2">
@@ -2183,7 +2463,7 @@ export default function Proposals() {
                     data-testid="input-edit-proposal-subcontracted"
                     value={editFormData.subcontracted}
                     onChange={(e) => setEditFormData({ ...editFormData, subcontracted: e.target.value })}
-                    placeholder="0"
+                    placeholder="Não usar separador de milhar (ex.: 1500.80)"
                   />
                 </div>
               </div>
@@ -2196,7 +2476,42 @@ export default function Proposals() {
                     data-testid="input-edit-proposal-discount"
                     value={editFormData.discount}
                     onChange={(e) => setEditFormData({ ...editFormData, discount: e.target.value })}
-                    placeholder="0"
+                    placeholder="Não usar separador de milhar (ex.: 1500.80)"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Quem será o coordenador do projeto?</Label>
+                  <Select
+                    value={editFormData.coordinatorId || undefined}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, coordinatorId: value })}
+                  >
+                    <SelectTrigger data-testid="select-edit-proposal-project-coordinator">
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {users
+                        .filter((u) => u.isActive)
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                        .map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-description">Observação</Label>
+                  <Textarea
+                    id="edit-description"
+                    data-testid="input-edit-proposal-description"
+                    value={editFormData.description}
+                    onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                    rows={3}
+                    placeholder=""
                   />
                 </div>
                 <div className="space-y-2">
@@ -2206,30 +2521,47 @@ export default function Proposals() {
                     data-testid="input-edit-proposal-origin"
                     value={editFormData.proposalOrigin}
                     onChange={(e) => setEditFormData({ ...editFormData, proposalOrigin: e.target.value })}
-                    placeholder="Código legado"
+                    placeholder=""
                   />
                 </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="edit-description">Observação</Label>
-                <Textarea
-                  id="edit-description"
-                  data-testid="input-edit-proposal-description"
-                  value={editFormData.description}
-                  onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
-                  rows={4}
-                  placeholder="Observações da proposta..."
-                />
               </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t">
                 <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)} className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50">
                   Cancelar
                 </Button>
-                <Button type="submit" data-testid="button-save-edit-proposal" disabled={updateMutation.isPending}>
-                  {updateMutation.isPending ? 'Salvando...' : 'Confirmar'}
-                </Button>
+                {editDisabledReason ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex">
+                        <Button
+                          type="submit"
+                          data-testid="button-save-edit-proposal"
+                          disabled={updateMutation.isPending || !isEditDirty || !isEditValid}
+                        >
+                          {updateMutation.isPending ? 'Salvando...' : 'Confirmar'}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="top"
+                      align="end"
+                      avoidCollisions
+                      collisionPadding={16}
+                      className="max-w-[min(20rem,calc(100vw-2rem))] whitespace-pre-line break-words text-left"
+                    >
+                      {editDisabledReason}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    type="submit"
+                    data-testid="button-save-edit-proposal"
+                    disabled={updateMutation.isPending || !isEditDirty || !isEditValid}
+                  >
+                    {updateMutation.isPending ? 'Salvando...' : 'Confirmar'}
+                  </Button>
+                )}
               </div>
             </form>
           </DialogContent>

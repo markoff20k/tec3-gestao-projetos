@@ -65,8 +65,12 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'owner' | 'admin' | 'coordinator' | 'commercial' | 'user';
+  role: 'admin' | 'commercial' | 'projects';
   photoUrl?: string;
+  isActive?: boolean;
+  professionalCategoryId?: string | null;
+  emailGroup?: string | null;
+  receivesEmails?: boolean;
   preferences?: UserPreferences;
 }
 
@@ -76,6 +80,13 @@ export interface UserSummary {
   name: string;
   role: User['role'];
   photoUrl?: string;
+}
+
+export interface UserOption {
+  id: string;
+  name: string;
+  role: User['role'];
+  isActive: boolean;
 }
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
@@ -103,8 +114,8 @@ export interface AuthResponse {
 }
 
 export const authApi = {
-  login: (email: string, password: string) =>
-    api.post<AuthResponse>('/auth/login', { email, password }),
+  login: (identifier: string, password: string) =>
+    api.post<AuthResponse>('/auth/login', { identifier, password }),
   register: (email: string, password: string, name: string) =>
     api.post<AuthResponse>('/auth/register', { email, password, name }),
   me: () => api.get<User>('/auth/me'),
@@ -148,6 +159,10 @@ export const authApi = {
     api.put<UserPreferences>('/auth/preferences', data),
 };
 
+export const usersApi = {
+  list: () => api.get<UserOption[]>('/users'),
+};
+
 export interface Client {
   id: string;
   // Dados principais
@@ -184,50 +199,50 @@ export interface Proposal {
   code: string;
   revision: number;
   title: string;
-  description?: string;
+  description?: string | null;
   clientId: string;
   client?: Client;
-  coordinatorId?: string;
-  coordinatorName?: string;
+  coordinatorId?: string | null;
+  coordinatorName?: string | null;
   type: string;
   status: string;
   totalValue: number;
   estimatedHours: number;
-  expectedStartDate?: string;
-  expectedEndDate?: string;
-  sentDate?: string;
+  expectedStartDate?: string | null;
+  expectedEndDate?: string | null;
+  sentDate?: string | null;
   createdAt: string;
-  updatedAt?: string;
+  updatedAt?: string | null;
   // Campos adicionais do sistema legado
-  activityType?: string;
-  umbrellaRef?: string;
-  utility?: string;
-  sentByName?: string;
-  specialist?: string;
-  mainType?: string;
-  quantity?: number;
-  hourJustification?: number;
-  rehabilitation?: number;
-  subcontracted?: number;
-  paymentBook?: number;
-  expense?: number;
-  additiveValue?: number;
-  resource?: number;
-  workOrders?: string;
+  activityType?: string | null;
+  umbrellaRef?: string | null;
+  utility?: string | null;
+  sentByName?: string | null;
+  specialist?: string | null;
+  mainType?: string | null;
+  quantity?: number | null;
+  hourJustification?: number | null;
+  rehabilitation?: number | null;
+  subcontracted?: number | null;
+  paymentBook?: number | null;
+  expense?: number | null;
+  additiveValue?: number | null;
+  resource?: number | null;
+  workOrders?: string | null;
   // Novos campos do sistema legado
-  contractCode?: string;
-  deliveryDate?: string;
-  dueDate?: string;
-  duration?: string;
-  expectation?: string;
-  termMonths?: number;
-  hours?: number;
-  riskAssessment?: string;
-  maintenanceNum?: number;
-  acquisitionMargin?: string;
-  anfibex?: string;
-  discount?: string;
-  proposalOrigin?: string;
+  contractCode?: string | null;
+  deliveryDate?: string | null;
+  dueDate?: string | null;
+  duration?: string | null;
+  expectation?: string | null;
+  termMonths?: number | null;
+  hours?: number | null;
+  riskAssessment?: string | null;
+  maintenanceNum?: number | null;
+  acquisitionMargin?: string | null;
+  anfibex?: string | null;
+  discount?: string | null;
+  proposalOrigin?: string | null;
 }
 
 export interface Project {
@@ -257,12 +272,32 @@ export interface TimeEntry {
   status: string;
 }
 
+export interface ProposalCategory {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  createdAt?: string;
+}
+
 export interface DashboardMetrics {
   proposals: { total: number; byStatus: any[] };
   projects: { total: number; active: number; byStatus: any[] };
   clients: { total: number; active: number };
   hours: { monthlyTotal: number; pendingApprovals: number };
   financial: { approvedProposalsValue: number };
+}
+
+export interface CommercialDashboardMetrics {
+  proposals: { total: number; byStatus: any[] };
+  clients: { total: number; active: number };
+  financial: { approvedProposalsValue: number };
+}
+
+export interface ProjectsDashboardMetrics {
+  projects: { total: number; active: number; byStatus: any[] };
+  clients: { total: number };
+  hours: { monthlyApprovedHours: number; pendingCount: number };
 }
 
 export const clientsApi = {
@@ -302,8 +337,22 @@ export const reportsApi = {
   getClients: () => api.get<any>('/reports/clients'),
 };
 
+export const dashboardApi = {
+  getCommercial: () => api.get<CommercialDashboardMetrics>('/dashboard/commercial'),
+  getProjects: () => api.get<ProjectsDashboardMetrics>('/dashboard/projects'),
+};
+
 export const favoritesApi = {
   getAll: () => api.get<string[]>('/proposal-favorites'),
   add: (proposalId: string) => api.post<{ success: boolean }>(`/proposal-favorites/${proposalId}`),
   remove: (proposalId: string) => api.delete(`/proposal-favorites/${proposalId}`),
+};
+
+export const proposalCategoriesApi = {
+  getAll: () => api.get<ProposalCategory[]>('/proposal-categories'),
+  create: (data: { name: string; isActive?: boolean; code?: string }) =>
+    api.post<ProposalCategory>('/proposal-categories', data),
+  update: (id: string, data: Partial<ProposalCategory>) =>
+    api.put<ProposalCategory>(`/proposal-categories/${id}`, data),
+  delete: (id: string) => api.delete(`/proposal-categories/${id}`),
 };

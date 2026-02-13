@@ -46,22 +46,21 @@ interface LayoutProps {
 const mainMenuItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard, roles: [] },
   { path: '/clients', label: 'Clientes', icon: Building2, roles: ['commercial', 'admin'] },
-  { path: '/proposals', label: 'Propostas', icon: FileText, roles: ['commercial', 'admin', 'coordinator'] },
-  { path: '/projects', label: 'Projetos', icon: FolderKanban, roles: ['coordinator', 'admin'] },
-  { path: '/time-entries', label: 'Lançar Horas', icon: Clock, roles: ['user', 'coordinator', 'admin'] },
-  { path: '/reports', label: 'Relatórios', icon: BarChart3, roles: ['admin', 'coordinator'] },
+  { path: '/proposals', label: 'Propostas', icon: FileText, roles: ['commercial', 'admin'] },
+  { path: '/projects', label: 'Projetos', icon: FolderKanban, roles: ['projects', 'admin'] },
+  { path: '/time-entries', label: 'Lançar Horas', icon: Clock, roles: ['projects', 'admin'] },
+  { path: '/reports', label: 'Relatórios', icon: BarChart3, roles: ['admin'] },
 ];
 
 const adminMenuItems = [
-  { path: '/users', label: 'Usuários', icon: Users, roles: ['owner'] },
+  { path: '/categories', label: 'Categorias', icon: Settings, roles: ['admin'] },
+  { path: '/users', label: 'Profissionais da Tec3', icon: Users, roles: ['admin'] },
 ];
 
 const roleLabels: Record<string, string> = {
-  owner: 'Proprietário',
   admin: 'Administrador',
-  coordinator: 'Coordenador',
   commercial: 'Comercial',
-  user: 'Colaborador',
+  projects: 'Projetos',
 };
 
 const pageDescriptions: Record<string, string> = {
@@ -71,7 +70,8 @@ const pageDescriptions: Record<string, string> = {
   '/projects': 'Gerenciar projetos',
   '/time-entries': 'Registrar horas trabalhadas',
   '/reports': 'Visualizar relatórios',
-  '/users': 'Gerenciar usuários do sistema',
+  '/categories': 'Gerenciar categorias de proposta',
+  '/users': 'Gerenciar profissionais da Tec3',
 };
 
 export function Layout({ children }: LayoutProps) {
@@ -79,6 +79,9 @@ export function Layout({ children }: LayoutProps) {
   const { user, logout, hasRole } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [headerSearch, setHeaderSearch] = useState('');
+
+  const isCommercialProfile = user?.role === 'commercial';
 
   const handleSettings = () => {
     setLocation('/settings');
@@ -97,6 +100,15 @@ export function Layout({ children }: LayoutProps) {
   useEffect(() => {
     localStorage.setItem('sidebar-collapsed', String(sidebarCollapsed));
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!isCommercialProfile) return;
+    if (!location.startsWith('/proposals')) return;
+
+    const queryString = location.split('?')[1] ?? '';
+    const params = new URLSearchParams(queryString);
+    setHeaderSearch(params.get('search') ?? '');
+  }, [location, isCommercialProfile]);
 
   const filteredMainItems = mainMenuItems.filter(
     (item) => item.roles.length === 0 || hasRole(item.roles)
@@ -317,9 +329,22 @@ export function Layout({ children }: LayoutProps) {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-sidebar-foreground/40" />
               <Input
                 type="text"
-                placeholder="Buscar..."
+                placeholder={isCommercialProfile ? 'Buscar propostas...' : 'Buscar...'}
                 data-testid="input-search"
                 className="w-full pl-10 bg-sidebar-accent/50 border-sidebar-border text-sidebar-foreground placeholder:text-sidebar-foreground/40 focus:bg-sidebar-accent"
+                value={headerSearch}
+                onChange={(e) => setHeaderSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  if (!isCommercialProfile) return;
+
+                  const trimmed = headerSearch.trim();
+                  const next = trimmed
+                    ? `/proposals?search=${encodeURIComponent(trimmed)}`
+                    : '/proposals';
+
+                  setLocation(next);
+                }}
               />
             </div>
           </div>

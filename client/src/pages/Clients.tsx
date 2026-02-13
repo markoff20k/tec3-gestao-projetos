@@ -5,7 +5,14 @@ import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -297,12 +304,12 @@ export default function Clients() {
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col h-full">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 flex-shrink-0">
           <div>
             <h1 className="text-2xl font-semibold">Clientes</h1>
-            <p className="text-muted-foreground">
-              Mostrando {startIndex + 1} a {Math.min(endIndex, filteredClients.length)} de {filteredClients.length} registros
+            <p className="text-sm text-muted-foreground">
+              {filteredClients.length} clientes encontrados
             </p>
           </div>
 
@@ -609,77 +616,86 @@ export default function Clients() {
           </Dialog>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              data-testid="input-search-clients"
-              placeholder="Buscar clientes..."
-              className="pl-10"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setCurrentPage(1);
-              }}
-            />
-          </div>
-          <div className="flex items-center border rounded-md">
-            <Button
-              variant={viewMode === 'cards' ? 'default' : 'ghost'}
-              size="sm"
-              data-testid="button-view-cards"
-              onClick={() => handleViewModeChange('cards')}
-              className="rounded-r-none"
-            >
-              <LayoutGrid className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={viewMode === 'table' ? 'default' : 'ghost'}
-              size="sm"
-              data-testid="button-view-table"
-              onClick={() => handleViewModeChange('table')}
-              className="rounded-l-none"
-            >
-              <List className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+        <Card className="flex-shrink-0 mt-4">
+          <CardContent className="p-4">
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  data-testid="input-search-clients"
+                  placeholder="Buscar clientes..."
+                  className="pl-10"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                />
+              </div>
+
+              <div className="flex items-center border rounded-md">
+                <Button
+                  variant={viewMode === 'cards' ? 'default' : 'ghost'}
+                  size="sm"
+                  data-testid="button-view-cards"
+                  onClick={() => handleViewModeChange('cards')}
+                  className="rounded-r-none"
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant={viewMode === 'table' ? 'default' : 'ghost'}
+                  size="sm"
+                  data-testid="button-view-table"
+                  onClick={() => handleViewModeChange('table')}
+                  className="rounded-l-none"
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {isLoading ? (
-          <div className="text-center py-8 text-muted-foreground">Carregando...</div>
+          <Card className="mt-4">
+            <CardContent className="py-16 text-center text-muted-foreground">Carregando...</CardContent>
+          </Card>
         ) : filteredClients.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            Nenhum cliente encontrado
-          </div>
+          <Card className="mt-4">
+            <CardContent className="py-16 text-center text-muted-foreground">
+              Nenhum cliente encontrado
+            </CardContent>
+          </Card>
         ) : viewMode === 'table' ? (
-          <div className="border rounded-md overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="text-left p-3 font-medium">Razão Social</th>
-                    <th className="text-left p-3 font-medium">Nome Fantasia</th>
-                    <th className="text-left p-3 font-medium">CNPJ</th>
-                    <th className="text-left p-3 font-medium">Cidade/UF</th>
-                    <th className="text-left p-3 font-medium">E-mail Comercial</th>
-                    <th className="text-left p-3 font-medium">Telefone</th>
-                    <th className="text-right p-3 font-medium">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedClients.map((client, index) => (
-                    <tr
+          <Card className="flex-1 min-h-0 overflow-hidden mt-4">
+            <div className="h-full overflow-y-auto overflow-x-auto">
+              <Table className="w-full table-auto">
+                <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
+                  <TableRow className="bg-muted/50 hover:bg-muted/50">
+                    <TableHead className="text-xs font-medium">Razão Social</TableHead>
+                    <TableHead className="text-xs font-medium">Nome Fantasia</TableHead>
+                    <TableHead className="text-xs font-medium">CNPJ</TableHead>
+                    <TableHead className="text-xs font-medium">Cidade/UF</TableHead>
+                    <TableHead className="text-xs font-medium">E-mail Comercial</TableHead>
+                    <TableHead className="text-xs font-medium">Telefone</TableHead>
+                    <TableHead className="w-24 text-right text-xs font-medium">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paginatedClients.map((client) => (
+                    <TableRow
                       key={client.id}
                       data-testid={`row-client-${client.id}`}
-                      className={`border-t hover-elevate ${index % 2 === 0 ? '' : 'bg-muted/20'}`}
+                      className="hover:bg-muted/50"
                     >
-                      <td className="p-3 font-medium">{client.razaoSocial}</td>
-                      <td className="p-3 text-muted-foreground">{client.nomeFantasia || '-'}</td>
-                      <td className="p-3">{client.cnpj || '-'}</td>
-                      <td className="p-3">{client.cidade && client.estado ? `${client.cidade}/${client.estado}` : '-'}</td>
-                      <td className="p-3">{client.emailComercial || '-'}</td>
-                      <td className="p-3">{client.telefoneComercial || '-'}</td>
-                      <td className="p-3">
+                      <TableCell className="font-medium">{client.razaoSocial}</TableCell>
+                      <TableCell className="text-muted-foreground">{client.nomeFantasia || '-'}</TableCell>
+                      <TableCell>{client.cnpj || '-'}</TableCell>
+                      <TableCell>{client.cidade && client.estado ? `${client.cidade}/${client.estado}` : '-'}</TableCell>
+                      <TableCell>{client.emailComercial || '-'}</TableCell>
+                      <TableCell>{client.telefoneComercial || '-'}</TableCell>
+                      <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button
                             size="icon"
@@ -702,68 +718,70 @@ export default function Clients() {
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
-          </div>
+          </Card>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {paginatedClients.map((client) => (
-              <Card key={client.id} data-testid={`card-client-${client.id}`} className="hover-elevate">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">{client.razaoSocial}</CardTitle>
-                  {client.nomeFantasia && (
-                    <p className="text-sm text-muted-foreground">{client.nomeFantasia}</p>
-                  )}
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-1 text-sm">
-                    {client.cnpj && <p><span className="text-muted-foreground">CNPJ:</span> {client.cnpj}</p>}
-                    {client.cidade && client.estado && (
-                      <p><span className="text-muted-foreground">Cidade:</span> {client.cidade}/{client.estado}</p>
+          <div className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {paginatedClients.map((client) => (
+                <Card key={client.id} data-testid={`card-client-${client.id}`} className="hover-elevate">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-lg">{client.razaoSocial}</CardTitle>
+                    {client.nomeFantasia && (
+                      <p className="text-sm text-muted-foreground">{client.nomeFantasia}</p>
                     )}
-                    {client.emailComercial && (
-                      <p><span className="text-muted-foreground">E-mail:</span> {client.emailComercial}</p>
-                    )}
-                    {client.telefoneComercial && (
-                      <p><span className="text-muted-foreground">Tel:</span> {client.telefoneComercial}</p>
-                    )}
-                  </div>
-                  <div className="flex gap-2 mt-4">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      data-testid={`button-edit-client-${client.id}`}
-                      onClick={() => openEditDialog(client)}
-                    >
-                      <Pencil className="h-3 w-3 mr-1" />
-                      Editar
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      data-testid={`button-delete-client-${client.id}`}
-                      onClick={() => {
-                        if (confirm('Deseja excluir este cliente?')) {
-                          deleteMutation.mutate(client.id);
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3 mr-1" />
-                      Excluir
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-1 text-sm">
+                      {client.cnpj && <p><span className="text-muted-foreground">CNPJ:</span> {client.cnpj}</p>}
+                      {client.cidade && client.estado && (
+                        <p><span className="text-muted-foreground">Cidade:</span> {client.cidade}/{client.estado}</p>
+                      )}
+                      {client.emailComercial && (
+                        <p><span className="text-muted-foreground">E-mail:</span> {client.emailComercial}</p>
+                      )}
+                      {client.telefoneComercial && (
+                        <p><span className="text-muted-foreground">Tel:</span> {client.telefoneComercial}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid={`button-edit-client-${client.id}`}
+                        onClick={() => openEditDialog(client)}
+                      >
+                        <Pencil className="h-3 w-3 mr-1" />
+                        Editar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid={`button-delete-client-${client.id}`}
+                        onClick={() => {
+                          if (confirm('Deseja excluir este cliente?')) {
+                            deleteMutation.mutate(client.id);
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3 mr-1" />
+                        Excluir
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           </div>
         )}
 
         {filteredClients.length > 0 && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t flex-shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Exibir</span>
               <Select value={String(itemsPerPage)} onValueChange={handleItemsPerPageChange}>

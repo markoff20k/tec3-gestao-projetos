@@ -90,10 +90,12 @@ npx prisma generate
 
 # Executar migrações
 npx prisma migrate deploy
-
-# (Opcional) Popular com dados iniciais
-npx prisma db seed
 ```
+
+Ao iniciar o servidor (`npm run dev`), o sistema faz uma inicialização automática do banco criando:
+- Usuário admin padrão (`admin@empresa.com` / `admin123`) se não existir
+- Categorias de proposta (tabela `proposal_categories`) se estiver vazia
+- Atividades iniciais do usuário (tabela `user_activities`) quando aplicável
 
 #### 5. Inicie o servidor de desenvolvimento
 
@@ -267,7 +269,7 @@ taskkill /PID <PID> /F
 | `npm start` | Inicia servidor de produção |
 | `npx prisma studio` | Abre interface visual do banco |
 | `npx prisma migrate dev` | Cria nova migração |
-| `npx prisma db seed` | Popula banco com dados iniciais |
+| (automático no startup) | Cria admin padrão + categorias + atividades iniciais (quando aplicável) |
 
 ## Suporte
 

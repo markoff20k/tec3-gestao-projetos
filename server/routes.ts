@@ -3,10 +3,12 @@ import { type Server } from "http";
 import { storage } from "./storage";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
+import { authenticateViaLdap } from "./ldap";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -24,20 +26,56 @@ const upload = multer({
 const JWT_SECRET = process.env.SESSION_SECRET || 'dev-secret-key';
 
 const ALLOWED_STATUS_TRANSITIONS: Record<string, string[]> = {
-  'draft': ['in_review', 'cancelled'],
-  'in_review': ['draft', 'sent', 'cancelled'],
-  'sent': ['negotiating', 'approved', 'rejected', 'cancelled'],
-  'negotiating': ['sent', 'approved', 'rejected', 'cancelled'],
-  'approved': ['converted'],
-  'rejected': ['draft'],
-  'cancelled': [],
-  'converted': [],
+  // New (legacy) statuses - aligned with the screenshot
+  em_elaboracao: ['em_analise', 'cancelada'],
+  em_analise: ['em_elaboracao', 'com_sucesso', 'sucesso_aditivo', 'nao_sucesso', 'cancelada'],
+  com_sucesso: [],
+  sucesso_aditivo: [],
+  nao_sucesso: ['em_elaboracao'],
+  cancelada: [],
+
+  // Backward-compatibility for old statuses while deployments/migrations roll out
+  draft: ['em_analise', 'cancelada'],
+  in_review: ['em_elaboracao', 'em_analise', 'cancelada'],
+  sent: ['em_analise', 'com_sucesso', 'nao_sucesso', 'cancelada'],
+  negotiating: ['em_analise', 'com_sucesso', 'nao_sucesso', 'cancelada'],
+  approved: ['com_sucesso', 'sucesso_aditivo'],
+  rejected: ['em_elaboracao'],
+  cancelled: ['cancelada'],
+  converted: ['com_sucesso'],
 };
 
 interface JwtPayload {
   sub: string;
   email: string;
-  role: string;
+  role: Role;
+}
+
+interface TokenPayload {
+  sub: string;
+  email?: string;
+  role?: unknown;
+}
+
+const ROLES = ['admin', 'commercial', 'projects'] as const;
+type Role = typeof ROLES[number];
+
+function isRole(value: unknown): value is Role {
+  return typeof value === 'string' && (ROLES as readonly string[]).includes(value);
+}
+
+function requireRoles(allowed: Role[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const role = (req as any).user?.role;
+    if (!isRole(role)) {
+      return res.status(403).json({ message: 'Perfil inválido' });
+    }
+    if (role === 'admin') return next();
+    if (!allowed.includes(role)) {
+      return res.status(403).json({ message: 'Acesso nao autorizado' });
+    }
+    next();
+  };
 }
 
 function getRequestIp(req: Request): string | null {
@@ -56,7 +94,7 @@ function getUserAgent(req: Request): string | null {
   return typeof ua === 'string' ? ua : null;
 }
 
-function authenticateToken(req: Request, res: Response, next: NextFunction) {
+async function authenticateToken(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -65,8 +103,27 @@ function authenticateToken(req: Request, res: Response, next: NextFunction) {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
-    (req as any).user = decoded;
+    const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload;
+    if (!decoded?.sub) {
+      return res.status(403).json({ message: 'Invalid token' });
+    }
+
+    // Always load the current user from DB to avoid stale role claims
+    // (e.g. tokens issued before RBAC migration with role=owner).
+    const dbUser = await storage.getUser(decoded.sub);
+    if (!dbUser || !dbUser.isActive) {
+      return res.status(401).json({ message: 'Credenciais invalidas' });
+    }
+    if (!isRole(dbUser.role)) {
+      return res.status(403).json({ message: 'Perfil inválido' });
+    }
+
+    (req as any).user = {
+      sub: dbUser.id,
+      email: dbUser.email,
+      role: dbUser.role,
+    } satisfies JwtPayload;
+
     next();
   } catch {
     return res.status(403).json({ message: 'Invalid token' });
@@ -79,9 +136,102 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   app.post('/api/auth/login', async (req, res) => {
-    const { email, password } = req.body;
+    const { identifier: identifierRaw, email, password } = req.body;
+    const identifier =
+      typeof identifierRaw === 'string'
+        ? identifierRaw.trim()
+        : typeof email === 'string'
+          ? email.trim()
+          : '';
+    const rawPassword = typeof password === 'string' ? password : '';
+
+    if (!identifier || !rawPassword) {
+      return res.status(400).json({ message: 'Credenciais invalidas' });
+    }
+
+    // LDAP (AD -> OpenLDAP). If LDAP finds the user but password is wrong,
+    // do NOT fall back to local auth.
+    const ldapAttempt = await authenticateViaLdap({ identifier, password: rawPassword });
+    if (ldapAttempt?.status === 'invalid_password') {
+      return res.status(401).json({
+        message: 'Credenciais invalidas',
+        ...(process.env.NODE_ENV !== 'production'
+          ? { provider: ldapAttempt.provider, reason: 'ldap_invalid_password' }
+          : {}),
+      });
+    }
+
+    if (ldapAttempt?.status === 'error') {
+      const errorDetails =
+        ldapAttempt.error instanceof Error
+          ? ldapAttempt.error.message
+          : typeof ldapAttempt.error === 'string'
+            ? ldapAttempt.error
+            : JSON.stringify(ldapAttempt.error);
+
+      console.error('LDAP authentication error:', {
+        provider: ldapAttempt.provider,
+        identifier,
+        error: errorDetails,
+      });
+
+      return res.status(500).json({
+        message: 'Erro ao autenticar via LDAP',
+        ...(process.env.NODE_ENV !== 'production'
+          ? { provider: ldapAttempt.provider, details: errorDetails }
+          : {}),
+      });
+    }
+
+    if (ldapAttempt?.status === 'success') {
+      const { email: ldapEmail, name: ldapName, role: ldapRole } = ldapAttempt.profile;
+
+      let user = await storage.getUserByEmail(ldapEmail);
+      if (!user) {
+        user = await storage.createUser({
+          email: ldapEmail,
+          password: `ldap:${crypto.randomUUID()}`,
+          name: ldapName,
+          role: ldapRole,
+          isActive: true,
+        } as any);
+      } else {
+        user =
+          (await storage.updateUser(user.id, {
+            name: ldapName,
+            role: ldapRole,
+            isActive: true,
+          } as any)) || user;
+      }
+
+      await storage.createUserActivity(user.id, {
+        category: 'security',
+        action: 'SECURITY_LOGIN_SUCCESS',
+        title: 'Login realizado',
+        metadata: { provider: `ldap:${ldapAttempt.provider}` },
+        ip: getRequestIp(req),
+        userAgent: getUserAgent(req),
+      });
+
+      const token = jwt.sign(
+        { sub: user.id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      return res.json({
+        accessToken: token,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          photoUrl: user.photoUrl,
+        },
+      });
+    }
     
-    const user = await storage.getUserByEmail(email);
+    const user = await storage.getUserByEmail(identifier);
     if (!user || !user.isActive) {
       if (user) {
         await storage.createUserActivity(user.id, {
@@ -96,7 +246,7 @@ export async function registerRoutes(
       return res.status(401).json({ message: 'Credenciais invalidas' });
     }
 
-    const isValid = await bcrypt.compare(password, user.password);
+    const isValid = await bcrypt.compare(rawPassword, user.password);
     if (!isValid) {
       await storage.createUserActivity(user.id, {
         category: 'security',
@@ -135,7 +285,8 @@ export async function registerRoutes(
     });
   });
 
-  app.post('/api/auth/register', async (req, res) => {
+  // User creation is admin-only
+  app.post('/api/auth/register', authenticateToken, requireRoles(['admin']), async (req, res) => {
     const { email, password, name, role } = req.body;
     
     const existing = await storage.getUserByEmail(email);
@@ -143,11 +294,16 @@ export async function registerRoutes(
       return res.status(409).json({ message: 'Email ja cadastrado' });
     }
 
+    const requestedRole = role ?? 'projects';
+    if (!isRole(requestedRole)) {
+      return res.status(400).json({ message: 'Perfil inválido' });
+    }
+
     const user = await storage.createUser({
       email,
       password,
       name,
-      role: role || 'user',
+      role: requestedRole,
       isActive: true,
     });
 
@@ -319,17 +475,59 @@ export async function registerRoutes(
   });
 
   app.get('/api/auth/users', authenticateToken, async (req, res) => {
-    const userRole = (req as any).user.role;
-    if (userRole !== 'owner' && userRole !== 'admin') {
-      return res.status(403).json({ message: 'Acesso nao autorizado' });
-    }
+    // Only admin can list users
+    const role = (req as any).user?.role;
+    if (role !== 'admin') return res.status(403).json({ message: 'Acesso nao autorizado' });
     const users = await storage.getAllUsers();
     res.json(users.map(u => ({
       id: u.id,
       email: u.email,
       name: u.name,
       role: u.role,
+      isActive: u.isActive,
+      professionalCategoryId: (u as any).professionalCategoryId ?? null,
+      emailGroup: (u as any).emailGroup ?? null,
+      receivesEmails: (u as any).receivesEmails ?? false,
       photoUrl: u.photoUrl,
+    })));
+  });
+
+  app.put('/api/auth/users/:userId/professional', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const { userId } = req.params;
+    const { professionalCategoryId, emailGroup, receivesEmails } = req.body ?? {};
+
+    const updates: any = {};
+    if (professionalCategoryId === null || typeof professionalCategoryId === 'string') {
+      updates.professionalCategoryId = professionalCategoryId;
+    }
+    if (emailGroup === null || typeof emailGroup === 'string') {
+      updates.emailGroup = emailGroup;
+    }
+    if (typeof receivesEmails === 'boolean') {
+      updates.receivesEmails = receivesEmails;
+    }
+
+    const updated = await storage.updateUser(userId, updates);
+    if (!updated) {
+      return res.status(404).json({ message: 'Usuário não encontrado' });
+    }
+
+    res.json({
+      id: updated.id,
+      professionalCategoryId: (updated as any).professionalCategoryId ?? null,
+      emailGroup: (updated as any).emailGroup ?? null,
+      receivesEmails: (updated as any).receivesEmails ?? false,
+    });
+  });
+
+  // Public (authenticated) user list for internal dropdowns (legacy parity)
+  app.get('/api/users', authenticateToken, requireRoles(['admin', 'commercial', 'projects']), async (_req, res) => {
+    const users = await storage.getAllUsers();
+    res.json(users.map(u => ({
+      id: u.id,
+      name: u.name,
+      role: u.role,
+      isActive: u.isActive,
     })));
   });
 
@@ -342,7 +540,7 @@ export async function registerRoutes(
 
     const targetUserId = requestedUserId ?? requester.sub;
     const isAudit = targetUserId !== requester.sub;
-    if (isAudit && requester.role !== 'owner' && requester.role !== 'admin') {
+    if (isAudit && requester.role !== 'admin') {
       return res.status(403).json({ message: 'Acesso nao autorizado' });
     }
 
@@ -355,12 +553,12 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  app.get('/api/clients', authenticateToken, async (_req, res) => {
+  app.get('/api/clients', authenticateToken, requireRoles(['commercial', 'projects']), async (_req, res) => {
     const clients = await storage.getAllClients();
     res.json(clients);
   });
 
-  app.get('/api/clients/:id', authenticateToken, async (req, res) => {
+  app.get('/api/clients/:id', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
     const client = await storage.getClient(req.params.id);
     if (!client) {
       return res.status(404).json({ message: 'Cliente nao encontrado' });
@@ -368,12 +566,12 @@ export async function registerRoutes(
     res.json(client);
   });
 
-  app.post('/api/clients', authenticateToken, async (req, res) => {
+  app.post('/api/clients', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const client = await storage.createClient(req.body);
     res.status(201).json(client);
   });
 
-  app.put('/api/clients/:id', authenticateToken, async (req, res) => {
+  app.put('/api/clients/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const client = await storage.updateClient(req.params.id, req.body);
     if (!client) {
       return res.status(404).json({ message: 'Cliente nao encontrado' });
@@ -381,7 +579,7 @@ export async function registerRoutes(
     res.json(client);
   });
 
-  app.delete('/api/clients/:id', authenticateToken, async (req, res) => {
+  app.delete('/api/clients/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const deleted = await storage.deleteClient(req.params.id);
     if (!deleted) {
       return res.status(404).json({ message: 'Cliente nao encontrado' });
@@ -389,7 +587,7 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  app.get('/api/proposals', authenticateToken, async (_req, res) => {
+  app.get('/api/proposals', authenticateToken, requireRoles(['commercial']), async (_req, res) => {
     const proposals = await storage.getAllProposals();
     const clients = await storage.getAllClients();
     const clientMap = new Map(clients.map(c => [c.id, c]));
@@ -401,7 +599,7 @@ export async function registerRoutes(
     res.json(enriched);
   });
 
-  app.get('/api/proposals/:id', authenticateToken, async (req, res) => {
+  app.get('/api/proposals/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const proposal = await storage.getProposal(req.params.id);
     if (!proposal) {
       return res.status(404).json({ message: 'Proposta nao encontrada' });
@@ -410,31 +608,39 @@ export async function registerRoutes(
     res.json({ ...proposal, client });
   });
 
-  app.post('/api/proposals', authenticateToken, async (req, res) => {
+  app.post('/api/proposals', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const proposal = await storage.createProposal(req.body);
     res.status(201).json(proposal);
   });
 
-  app.put('/api/proposals/:id', authenticateToken, async (req, res) => {
-    const existing = await storage.getProposal(req.params.id);
-    if (!existing) {
-      return res.status(404).json({ message: 'Proposta nao encontrada' });
-    }
-
-    if (req.body.status && req.body.status !== existing.status) {
-      const allowed = ALLOWED_STATUS_TRANSITIONS[existing.status] || [];
-      if (!allowed.includes(req.body.status)) {
-        return res.status(400).json({
-          message: `Transicao de status invalida de '${existing.status}' para '${req.body.status}'. Permitidos: ${allowed.join(', ') || 'nenhum'}`,
-        });
+  app.put('/api/proposals/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+    try {
+      const existing = await storage.getProposal(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
       }
-    }
 
-    const proposal = await storage.updateProposal(req.params.id, req.body);
-    res.json(proposal);
+      if (req.body.status && req.body.status !== existing.status) {
+        const allowed = ALLOWED_STATUS_TRANSITIONS[existing.status] || [];
+        if (!allowed.includes(req.body.status)) {
+          return res.status(400).json({
+            message: `Transicao de status invalida de '${existing.status}' para '${req.body.status}'. Permitidos: ${allowed.join(', ') || 'nenhum'}`,
+          });
+        }
+      }
+
+      const proposal = await storage.updateProposal(req.params.id, req.body);
+      res.json(proposal);
+    } catch (error: any) {
+      console.error('Error updating proposal:', error);
+      const message = typeof error?.message === 'string' ? error.message : 'Erro ao atualizar proposta';
+      // Prisma validation / bad input typically should be a 400
+      const status = message.toLowerCase().includes('invalid') ? 400 : 500;
+      res.status(status).json({ message });
+    }
   });
 
-  app.delete('/api/proposals/:id', authenticateToken, async (req, res) => {
+  app.delete('/api/proposals/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const deleted = await storage.deleteProposal(req.params.id);
     if (!deleted) {
       return res.status(404).json({ message: 'Proposta nao encontrada' });
@@ -442,7 +648,7 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  app.post('/api/proposals/convert', authenticateToken, async (req, res) => {
+  app.post('/api/proposals/convert', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const { proposalId, projectName, startDate } = req.body;
     
     const proposal = await storage.getProposal(proposalId);
@@ -450,12 +656,20 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Proposta nao encontrada' });
     }
 
-    if (proposal.status === 'converted') {
+    if (proposal.projectId) {
       return res.status(400).json({ message: 'Proposta ja convertida em projeto' });
     }
 
-    if (proposal.status !== 'approved') {
-      return res.status(400).json({ message: 'Apenas propostas aprovadas podem ser convertidas' });
+    const allowedStatuses = new Set<string>([
+      'com_sucesso',
+      'sucesso_aditivo',
+
+      // Backward compatibility
+      'approved',
+    ]);
+
+    if (!allowedStatuses.has(proposal.status)) {
+      return res.status(400).json({ message: 'Apenas propostas com sucesso podem ser convertidas' });
     }
 
     const project = await storage.createProject({
@@ -470,14 +684,14 @@ export async function registerRoutes(
     });
 
     await storage.updateProposal(proposalId, {
-      status: 'converted',
+      ...(proposal.status === 'approved' ? { status: 'com_sucesso' } : {}),
       projectId: project.id,
     });
 
     res.status(201).json(project);
   });
 
-  app.get('/api/projects', authenticateToken, async (_req, res) => {
+  app.get('/api/projects', authenticateToken, requireRoles(['projects']), async (_req, res) => {
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
     const clientMap = new Map(clients.map(c => [c.id, c]));
@@ -489,7 +703,7 @@ export async function registerRoutes(
     res.json(enriched);
   });
 
-  app.get('/api/projects/:id', authenticateToken, async (req, res) => {
+  app.get('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -498,12 +712,12 @@ export async function registerRoutes(
     res.json({ ...project, client });
   });
 
-  app.post('/api/projects', authenticateToken, async (req, res) => {
+  app.post('/api/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const project = await storage.createProject(req.body);
     res.status(201).json(project);
   });
 
-  app.put('/api/projects/:id', authenticateToken, async (req, res) => {
+  app.put('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const project = await storage.updateProject(req.params.id, req.body);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -511,7 +725,7 @@ export async function registerRoutes(
     res.json(project);
   });
 
-  app.delete('/api/projects/:id', authenticateToken, async (req, res) => {
+  app.delete('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const deleted = await storage.deleteProject(req.params.id);
     if (!deleted) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -519,7 +733,7 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  app.get('/api/projects/:id/stats', authenticateToken, async (req, res) => {
+  app.get('/api/projects/:id/stats', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -542,12 +756,12 @@ export async function registerRoutes(
     });
   });
 
-  app.get('/api/projects/:id/time-entries', authenticateToken, async (req, res) => {
+  app.get('/api/projects/:id/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const entries = await storage.getTimeEntriesByProject(req.params.id);
     res.json(entries);
   });
 
-  app.post('/api/projects/time-entries', authenticateToken, async (req, res) => {
+  app.post('/api/projects/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const { projectId, collaboratorId, entryDate, hours, description } = req.body;
 
     const project = await storage.getProject(projectId);
@@ -575,7 +789,8 @@ export async function registerRoutes(
     res.status(201).json(entry);
   });
 
-  app.get('/api/reports/dashboard', authenticateToken, async (_req, res) => {
+  // Admin-only consolidated dashboard (used by admin profile)
+  app.get('/api/reports/dashboard', authenticateToken, requireRoles(['admin']), async (_req, res) => {
     const proposals = await storage.getAllProposals();
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
@@ -591,7 +806,7 @@ export async function registerRoutes(
     }, {} as Record<string, number>);
 
     const approvedValue = proposals
-      .filter(p => p.status === 'approved' || p.status === 'converted')
+      .filter(p => ['com_sucesso', 'sucesso_aditivo', 'approved', 'converted'].includes(p.status))
       .reduce((sum, p) => sum + parseFloat(String(p.totalValue || 0)), 0);
 
     res.json({
@@ -618,19 +833,90 @@ export async function registerRoutes(
     });
   });
 
+  // Commercial dashboard (pipeline)
+  app.get('/api/dashboard/commercial', authenticateToken, requireRoles(['commercial']), async (_req, res) => {
+    const proposals = await storage.getAllProposals();
+    const clients = await storage.getAllClients();
+
+    const proposalsByStatus = proposals.reduce((acc, p) => {
+      acc[p.status] = (acc[p.status] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const approvedValue = proposals
+      .filter(p => ['com_sucesso', 'sucesso_aditivo', 'approved', 'converted'].includes(p.status))
+      .reduce((sum, p) => sum + parseFloat(String(p.totalValue || 0)), 0);
+
+    res.json({
+      proposals: {
+        total: proposals.length,
+        byStatus: Object.entries(proposalsByStatus).map(([status, count]) => ({ status, count })),
+      },
+      clients: {
+        total: clients.length,
+        active: clients.filter(c => c.isActive).length,
+      },
+      financial: {
+        approvedProposalsValue: approvedValue,
+      },
+    });
+  });
+
+  // Projects dashboard (execution)
+  app.get('/api/dashboard/projects', authenticateToken, requireRoles(['projects']), async (_req, res) => {
+    const projects = await storage.getAllProjects();
+    const clients = await storage.getAllClients();
+    const timeEntries = await storage.getAllTimeEntries();
+
+    const projectsByStatus = projects.reduce((acc, p) => {
+      acc[p.status] = (acc[p.status] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    const monthlyApprovedHours = timeEntries
+      .filter(e => {
+        const d = new Date(e.entryDate as any);
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && e.status === 'approved';
+      })
+      .reduce((sum, e) => sum + parseFloat(String(e.hours)), 0);
+
+    const pendingCount = timeEntries.filter(e => e.status === 'pending').length;
+
+    res.json({
+      projects: {
+        total: projects.length,
+        active: projects.filter(p => p.status === 'active').length,
+        byStatus: Object.entries(projectsByStatus).map(([status, count]) => ({ status, count })),
+      },
+      clients: {
+        total: clients.length,
+      },
+      hours: {
+        monthlyApprovedHours,
+        pendingCount,
+      },
+    });
+  });
+
   // Proposal Categories API
-  app.get('/api/proposal-categories', authenticateToken, async (_req, res) => {
-    const categories = await storage.getAllProposalCategories();
+  app.get('/api/proposal-categories', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+    const role = (req as any)?.user?.role;
+    const includeInactive = role === 'admin';
+    const categories = await storage.getAllProposalCategories({ includeInactive });
     res.json(categories);
   });
 
-  app.post('/api/proposal-categories', authenticateToken, async (req, res) => {
-    const { code, name } = req.body;
-    if (!code || !name) {
-      return res.status(400).json({ message: 'Código e nome são obrigatórios' });
+  app.post('/api/proposal-categories', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const { code, name, isActive } = req.body;
+    if (!name) {
+      return res.status(400).json({ message: 'Categoria é obrigatória' });
     }
     try {
-      const category = await storage.createProposalCategory({ code, name });
+      const category = await storage.createProposalCategory({ code, name, isActive });
       res.status(201).json(category);
     } catch (error: any) {
       if (error.code === 'P2002') {
@@ -640,7 +926,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put('/api/proposal-categories/:id', authenticateToken, async (req, res) => {
+  app.put('/api/proposal-categories/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
     const { id } = req.params;
     const result = await storage.updateProposalCategory(id, req.body);
     if (!result) {
@@ -649,20 +935,20 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  app.delete('/api/proposal-categories/:id', authenticateToken, async (req, res) => {
+  app.delete('/api/proposal-categories/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
     const { id } = req.params;
     await storage.deleteProposalCategory(id);
     res.status(204).send();
   });
 
   // Proposal Category Values API
-  app.get('/api/proposals/:proposalId/category-values', authenticateToken, async (req, res) => {
+  app.get('/api/proposals/:proposalId/category-values', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const { proposalId } = req.params;
     const values = await storage.getProposalCategoryValues(proposalId);
     res.json(values);
   });
 
-  app.post('/api/proposals/:proposalId/category-values', authenticateToken, async (req, res) => {
+  app.post('/api/proposals/:proposalId/category-values', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const { proposalId } = req.params;
     const { values } = req.body;
     
@@ -682,27 +968,27 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  app.delete('/api/proposal-category-values/:id', authenticateToken, async (req, res) => {
+  app.delete('/api/proposal-category-values/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const { id } = req.params;
     await storage.deleteProposalCategoryValue(id);
     res.status(204).send();
   });
 
   // Proposal Favorites API
-  app.get('/api/proposal-favorites', authenticateToken, async (req, res) => {
+  app.get('/api/proposal-favorites', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const userId = (req as any).user.sub;
     const favoriteIds = await storage.getUserFavoriteProposals(userId);
     res.json(favoriteIds);
   });
 
-  app.post('/api/proposal-favorites/:proposalId', authenticateToken, async (req, res) => {
+  app.post('/api/proposal-favorites/:proposalId', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const userId = (req as any).user.sub;
     const { proposalId } = req.params;
     await storage.addFavoriteProposal(userId, proposalId);
     res.status(201).json({ success: true });
   });
 
-  app.delete('/api/proposal-favorites/:proposalId', authenticateToken, async (req, res) => {
+  app.delete('/api/proposal-favorites/:proposalId', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const userId = (req as any).user.sub;
     const { proposalId } = req.params;
     await storage.removeFavoriteProposal(userId, proposalId);

@@ -28,13 +28,11 @@ import {
   Loader2,
 } from 'lucide-react';
 
-const roleLabels: Record<string, string> = {
-  owner: 'Proprietário',
-  admin: 'Administrador',
-  coordinator: 'Coordenador',
-  commercial: 'Comercial',
-  user: 'Colaborador',
-};
+  const roleLabels: Record<string, string> = {
+    admin: 'Administrador',
+    commercial: 'Comercial',
+    projects: 'Projetos',
+  };
 
 export default function Settings() {
   const { user, updateUser } = useAuth();
@@ -204,7 +202,7 @@ export default function Settings() {
                 </Label>
                 <div className="h-10 flex items-center">
                   <Badge variant="secondary" className="text-sm">
-                    {user?.role ? roleLabels[user.role] : 'Usuário'}
+                    {user?.role ? roleLabels[user.role] : '—'}
                   </Badge>
                 </div>
               </div>

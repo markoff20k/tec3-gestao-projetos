@@ -74,6 +74,7 @@
     "google-auth-library": "^10.5.0",
     "input-otp": "^1.4.2",
     "jsonwebtoken": "^9.0.3",
+    "ldapts": "^8.1.6",
     "lucide-react": "^0.453.0",
     "memorystore": "^1.6.7",
     "multer": "^2.0.2",

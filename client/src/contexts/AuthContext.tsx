@@ -5,7 +5,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   logout: () => void;
   hasRole: (roles: string[]) => boolean;
   updateUser: (user: User) => void;
@@ -32,8 +32,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const response = await authApi.login(email, password);
+  const login = async (identifier: string, password: string) => {
+    const response = await authApi.login(identifier, password);
     localStorage.setItem('token', response.accessToken);
     setUser(response.user);
   };
@@ -45,8 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const hasRole = (roles: string[]) => {
     if (!user) return false;
-    if (user.role === 'owner') return true;
-    if (user.role === 'admin' && !roles.includes('owner')) return true;
+    if (user.role === 'admin') return true;
     return roles.includes(user.role);
   };
 

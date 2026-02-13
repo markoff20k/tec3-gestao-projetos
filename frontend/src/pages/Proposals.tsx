@@ -48,10 +48,10 @@ const statusLabels: Record<string, string> = {
 };
 
 const typeLabels: Record<string, string> = {
-  fixed_price: 'Preço Fixo',
-  appropriation: 'Apropriação',
-  umbrella: 'Guarda-Chuva',
-  service_order: 'Ordem de Serviço',
+  fixed_price: 'Preço fechado',
+  appropriation: 'Preço sob demanda',
+  umbrella: 'Guarda-chuva',
+  service_order: 'Ordem de serviço (consequente do contrato Guarda-chuva)',
   additive: 'Aditivo',
 };
 
@@ -202,10 +202,10 @@ export default function Proposals() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="fixed_price">Preço Fixo</SelectItem>
-                        <SelectItem value="appropriation">Apropriação</SelectItem>
-                        <SelectItem value="umbrella">Guarda-Chuva</SelectItem>
-                        <SelectItem value="service_order">Ordem de Serviço</SelectItem>
+                        <SelectItem value="fixed_price">Preço fechado</SelectItem>
+                        <SelectItem value="appropriation">Preço sob demanda</SelectItem>
+                        <SelectItem value="umbrella">Guarda-chuva</SelectItem>
+                        <SelectItem value="service_order">Ordem de serviço (consequente do contrato Guarda-chuva)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

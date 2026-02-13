@@ -14,14 +14,12 @@ export interface CreateUserActivityInput {
 }
 
 export const ProposalStatus = {
-  DRAFT: 'draft',
-  IN_REVIEW: 'in_review',
-  SENT: 'sent',
-  NEGOTIATING: 'negotiating',
-  APPROVED: 'approved',
-  REJECTED: 'rejected',
-  CANCELLED: 'cancelled',
-  CONVERTED: 'converted',
+  EM_ELABORACAO: 'em_elaboracao',
+  EM_ANALISE: 'em_analise',
+  COM_SUCESSO: 'com_sucesso',
+  SUCESSO_ADITIVO: 'sucesso_aditivo',
+  NAO_SUCESSO: 'nao_sucesso',
+  CANCELADA: 'cancelada',
 } as const;
 
 export const ProjectStatus = {
@@ -43,7 +41,7 @@ export type InsertClient = Omit<Prisma.ClientCreateInput, 'id' | 'proposals' | '
 export type InsertProposal = Omit<Prisma.ProposalCreateInput, 'id' | 'code' | 'createdAt' | 'client'> & { clientId: string };
 export type InsertProject = Omit<Prisma.ProjectCreateInput, 'id' | 'code' | 'createdAt' | 'client' | 'timeEntries'> & { clientId: string };
 export type InsertTimeEntry = Omit<Prisma.TimeEntryCreateInput, 'id' | 'status' | 'approvedById' | 'approvedAt' | 'rejectionReason' | 'createdAt' | 'project'> & { projectId: string };
-export type InsertProposalCategory = { code: string; name: string; isActive?: boolean };
+export type InsertProposalCategory = { code?: string; name: string; isActive?: boolean };
 export type InsertProposalCategoryValue = { proposalId: string; categoryId?: string; customName?: string; value: number; hours: number };
 
 export interface IStorage {
@@ -81,11 +79,12 @@ export interface IStorage {
   
   getTimeEntriesByProject(projectId: string): Promise<TimeEntry[]>;
   getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string): Promise<TimeEntry[]>;
+  getAllTimeEntries(): Promise<TimeEntry[]>;
   createTimeEntry(entry: InsertTimeEntry): Promise<TimeEntry>;
   updateTimeEntry(id: string, entry: Partial<TimeEntry>): Promise<TimeEntry | null>;
   deleteTimeEntry(id: string): Promise<boolean>;
 
-  getAllProposalCategories(): Promise<ProposalCategory[]>;
+  getAllProposalCategories(options?: { includeInactive?: boolean }): Promise<ProposalCategory[]>;
   createProposalCategory(category: InsertProposalCategory): Promise<ProposalCategory>;
   updateProposalCategory(id: string, category: Partial<ProposalCategory>): Promise<ProposalCategory | null>;
   deleteProposalCategory(id: string): Promise<boolean>;
@@ -114,11 +113,45 @@ export class PrismaStorage implements IStorage {
           email: 'admin@empresa.com',
           password: hashedPassword,
           name: 'Administrador',
-          role: 'owner',
+          role: 'admin',
           isActive: true,
         }
       });
       console.log('Admin user created: admin@empresa.com / admin123');
+    }
+
+    // Create additional test users only outside production.
+    if (process.env.NODE_ENV === 'production') return;
+
+    const testUsers = [
+      {
+        email: 'comercial@empresa.com',
+        password: 'comercial123',
+        name: 'Comercial (Teste)',
+        role: 'commercial' as const,
+      },
+      {
+        email: 'projetos@empresa.com',
+        password: 'projetos123',
+        name: 'Projetos (Teste)',
+        role: 'projects' as const,
+      },
+    ];
+
+    for (const u of testUsers) {
+      const existing = await this.getUserByEmail(u.email);
+      if (existing) continue;
+      const hashedPassword = await bcrypt.hash(u.password, 10);
+      await prisma.user.create({
+        data: {
+          email: u.email,
+          password: hashedPassword,
+          name: u.name,
+          role: u.role,
+          isActive: true,
+        },
+      });
+      console.log(`Test user created: ${u.email} / ${u.password} (${u.role})`);
     }
   }
 
@@ -160,7 +193,7 @@ export class PrismaStorage implements IStorage {
       data: {
         ...insertUser,
         password: hashedPassword,
-        role: insertUser.role || 'user',
+        role: (insertUser as any).role || 'projects',
         isActive: insertUser.isActive ?? true,
       }
     });
@@ -193,7 +226,9 @@ export class PrismaStorage implements IStorage {
   }
 
   async getAllUsers(): Promise<User[]> {
-    return prisma.user.findMany();
+    return prisma.user.findMany({
+      orderBy: [{ name: 'asc' }, { email: 'asc' }],
+    });
   }
 
   async createUserActivity(userId: string, activity: CreateUserActivityInput): Promise<UserActivity> {
@@ -203,7 +238,7 @@ export class PrismaStorage implements IStorage {
         category: activity.category,
         action: activity.action,
         title: activity.title,
-        metadata: activity.metadata ?? null,
+        metadata: activity.metadata ?? undefined,
         ip: activity.ip ?? null,
         userAgent: activity.userAgent ?? null,
       },
@@ -303,7 +338,7 @@ export class PrismaStorage implements IStorage {
         clientId: insertProposal.clientId,
         coordinatorId: insertProposal.coordinatorId,
         type: insertProposal.type || 'fixed_price',
-        status: ProposalStatus.DRAFT,
+        status: ProposalStatus.EM_ELABORACAO,
         totalValue: insertProposal.totalValue ?? 0,
         estimatedHours: insertProposal.estimatedHours ?? 0,
         expectedStartDate: insertProposal.expectedStartDate,
@@ -380,6 +415,10 @@ export class PrismaStorage implements IStorage {
     });
   }
 
+  async getAllTimeEntries(): Promise<TimeEntry[]> {
+    return prisma.timeEntry.findMany();
+  }
+
   async createTimeEntry(insertEntry: InsertTimeEntry): Promise<TimeEntry> {
     return prisma.timeEntry.create({
       data: {
@@ -406,17 +445,42 @@ export class PrismaStorage implements IStorage {
     }
   }
 
-  async getAllProposalCategories(): Promise<ProposalCategory[]> {
+  async getAllProposalCategories(options?: { includeInactive?: boolean }): Promise<ProposalCategory[]> {
+    const includeInactive = options?.includeInactive ?? false;
+
     return prisma.proposalCategory.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' }
+      ...(includeInactive ? {} : { where: { isActive: true } }),
+      orderBy: { name: 'asc' },
     });
   }
 
   async createProposalCategory(category: InsertProposalCategory): Promise<ProposalCategory> {
+    const normalizeCode = (value: string) => {
+      const base = value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .replace(/_+/g, '_')
+        .slice(0, 24);
+      return base.length > 0 ? base : 'CAT';
+    };
+
+    let code = (category.code || '').trim();
+    if (!code) {
+      const base = normalizeCode(category.name);
+      code = base;
+      for (let i = 2; i < 50; i++) {
+        const existing = await prisma.proposalCategory.findUnique({ where: { code } });
+        if (!existing) break;
+        code = `${base}_${i}`.slice(0, 24);
+      }
+    }
+
     return prisma.proposalCategory.create({
       data: {
-        code: category.code,
+        code,
         name: category.name,
         isActive: category.isActive ?? true
       }

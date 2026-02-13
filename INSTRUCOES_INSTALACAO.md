@@ -138,6 +138,10 @@ SESSION_SECRET=minha-chave-secreta-desenvolvimento-123
 # Banco de Dados PostgreSQL (opcional)
 # Descomente e configure se for usar PostgreSQL
 # DATABASE_URL=postgresql://postgres:sua_senha@localhost:5432/tec3_gestao
+
+# LDAP (opcional)
+# Se você for usar autenticação via LDAP (AD e/ou OpenLDAP), copie o bloco de exemplo do arquivo .env.example
+# e preencha as variáveis LDAP_* (URLs, base DN, bind DN/senha e mapeamento de grupos para roles).
 ```
 
 ### 1.6 Configurar Banco de Dados (Opcional)
@@ -167,6 +171,8 @@ No terminal do VS Code:
 ```powershell
 npm run dev
 ```
+
+Na primeira inicialização, o sistema popula automaticamente alguns dados iniciais no banco (usuário admin padrão, categorias de proposta e atividades iniciais), caso ainda não existam.
 
 Aguarde a mensagem:
 ```

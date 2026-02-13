@@ -11,11 +11,11 @@ export default function Login() {
   const { login, isAuthenticated, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const isFormValid = email.trim() !== '' && password.trim() !== '';
+  const isFormValid = identifier.trim() !== '' && password.trim() !== '';
 
   useEffect(() => {
     document.documentElement.classList.remove('dark');
@@ -30,7 +30,7 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      await login(identifier, password);
     } catch (error) {
       toast({
         title: 'Erro ao fazer login',
@@ -147,16 +147,17 @@ export default function Login() {
           {/* Login Form */}
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-sm font-medium">E-mail</Label>
+              <Label htmlFor="identifier" className="text-sm font-medium">Usuário ou e-mail</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                 <Input
-                  id="email"
-                  type="email"
+                  id="identifier"
+                  type="text"
                   data-testid="input-email"
-                  placeholder="seu@email.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="seu.usuario ou seu@email.com"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  autoComplete="username"
                   className="pl-10 h-12"
                   required
                 />
