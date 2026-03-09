@@ -1,8 +1,9 @@
-import { useState, useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { usePreferences, type ToastPosition } from '@/contexts/PreferencesContext';
 import { authApi } from '@/lib/api';
 import { AccountActivitiesCard } from '@/components/AccountActivitiesCard';
 import { Button } from '@/components/ui/button';
@@ -14,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   ArrowLeft,
   User,
@@ -24,8 +26,8 @@ import {
   Moon,
   Bell,
   Camera,
-  Save,
   Loader2,
+  MessageSquare,
 } from 'lucide-react';
 
   const roleLabels: Record<string, string> = {
@@ -37,11 +39,60 @@ import {
 export default function Settings() {
   const { user, updateUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const {
+    toastPosition,
+    notificationsEnabled,
+    setToastPosition,
+    setNotificationsEnabled,
+    isLoading: isPrefsLoading,
+    isSaving: isPrefsSaving,
+  } = usePreferences();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  const [notifications, setNotifications] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
+
+  const toastPositionLabel: Record<ToastPosition, string> = {
+    'top-left': 'Superior esquerdo',
+    'top-right': 'Superior direito',
+    'bottom-left': 'Inferior esquerdo',
+    'bottom-right': 'Inferior direito',
+  };
+
+  const handleToastPositionChange = async (next: ToastPosition) => {
+    try {
+      await setToastPosition(next);
+      toast({
+        title: 'Preferência atualizada',
+        description: `Avisos em: ${toastPositionLabel[next]}.`,
+        variant: 'success',
+      });
+    } catch (error) {
+      toast({
+        title: 'Não foi possível salvar',
+        description: error instanceof Error ? error.message : 'Erro ao atualizar preferência',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleNotificationsChange = async (enabled: boolean) => {
+    try {
+      await setNotificationsEnabled(enabled);
+      toast({
+        title: 'Preferência atualizada',
+        description: enabled
+          ? 'Avisos do sistema ativados.'
+          : 'Avisos do sistema desativados.',
+        variant: 'success',
+      });
+    } catch (error) {
+      toast({
+        title: 'Não foi possível salvar',
+        description: error instanceof Error ? error.message : 'Erro ao atualizar preferência',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const handlePhotoClick = () => {
     fileInputRef.current?.click();
@@ -287,10 +338,90 @@ export default function Settings() {
                 </div>
               </div>
               <Switch
-                checked={notifications}
-                onCheckedChange={setNotifications}
+                checked={notificationsEnabled}
+                onCheckedChange={(checked) => {
+                  void handleNotificationsChange(checked);
+                }}
+                disabled={isPrefsLoading || isPrefsSaving}
                 data-testid="switch-notifications"
               />
+            </div>
+
+            <Separator />
+
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">Posição dos avisos</p>
+                  <p className="text-xs text-muted-foreground">
+                    Define onde os avisos rápidos aparecem na tela.
+                    {isPrefsSaving ? ' Salvando…' : ' Salvo automaticamente.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="w-full sm:w-[260px]">
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  value={toastPosition}
+                  onValueChange={(v) => {
+                    if (!v) return;
+                    void handleToastPositionChange(v as ToastPosition);
+                  }}
+                  className="grid grid-cols-2 gap-2 justify-items-stretch"
+                  disabled={isPrefsLoading || isPrefsSaving}
+                >
+                  <ToggleGroupItem
+                    value="top-left"
+                    aria-label="Superior esquerdo"
+                    data-testid="toast-position-top-left"
+                    className="group h-auto w-full flex-col items-start gap-2 px-3 py-2 text-left"
+                  >
+                    <div className="relative h-10 w-full rounded-md border bg-muted/30 group-data-[state=on]:ring-2 group-data-[state=on]:ring-ring group-data-[state=on]:ring-offset-2 group-data-[state=on]:ring-offset-background">
+                      <div className="absolute left-2 top-2 h-2 w-2 rounded-full bg-foreground/80" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">Superior esquerdo</span>
+                  </ToggleGroupItem>
+
+                  <ToggleGroupItem
+                    value="top-right"
+                    aria-label="Superior direito"
+                    data-testid="toast-position-top-right"
+                    className="group h-auto w-full flex-col items-start gap-2 px-3 py-2 text-left"
+                  >
+                    <div className="relative h-10 w-full rounded-md border bg-muted/30 group-data-[state=on]:ring-2 group-data-[state=on]:ring-ring group-data-[state=on]:ring-offset-2 group-data-[state=on]:ring-offset-background">
+                      <div className="absolute right-2 top-2 h-2 w-2 rounded-full bg-foreground/80" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">Superior direito</span>
+                  </ToggleGroupItem>
+
+                  <ToggleGroupItem
+                    value="bottom-left"
+                    aria-label="Inferior esquerdo"
+                    data-testid="toast-position-bottom-left"
+                    className="group h-auto w-full flex-col items-start gap-2 px-3 py-2 text-left"
+                  >
+                    <div className="relative h-10 w-full rounded-md border bg-muted/30 group-data-[state=on]:ring-2 group-data-[state=on]:ring-ring group-data-[state=on]:ring-offset-2 group-data-[state=on]:ring-offset-background">
+                      <div className="absolute bottom-2 left-2 h-2 w-2 rounded-full bg-foreground/80" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">Inferior esquerdo</span>
+                  </ToggleGroupItem>
+
+                  <ToggleGroupItem
+                    value="bottom-right"
+                    aria-label="Inferior direito"
+                    data-testid="toast-position-bottom-right"
+                    className="group h-auto w-full flex-col items-start gap-2 px-3 py-2 text-left"
+                  >
+                    <div className="relative h-10 w-full rounded-md border bg-muted/30 group-data-[state=on]:ring-2 group-data-[state=on]:ring-ring group-data-[state=on]:ring-offset-2 group-data-[state=on]:ring-offset-background">
+                      <div className="absolute bottom-2 right-2 h-2 w-2 rounded-full bg-foreground/80" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">Inferior direito</span>
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
             </div>
           </CardContent>
         </Card>

@@ -1,10 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, Search, Building2, MapPin, Users, ChevronLeft, ChevronRight, LayoutGrid, List } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, Building2, MapPin, Users, ChevronLeft, ChevronRight, LayoutGrid, List, ArrowUp, ArrowDown } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Table,
   TableBody,
@@ -88,6 +98,8 @@ const emptyFormData = {
 };
 
 type ViewMode = 'cards' | 'table';
+type SortColumn = 'razaoSocial' | 'nomeFantasia' | 'cnpj' | 'cidade' | 'emailComercial' | 'telefoneComercial';
+type SortDirection = 'asc' | 'desc';
 
 export default function Clients() {
   const queryClient = useQueryClient();
@@ -100,6 +112,10 @@ export default function Clients() {
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
+  const [showFullColumnsMobile, setShowFullColumnsMobile] = useState(false);
+  const [sortColumn, setSortColumn] = useState<SortColumn>('razaoSocial');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
 
   useEffect(() => {
     const savedViewMode = localStorage.getItem('clientsViewMode') as ViewMode;
@@ -110,6 +126,9 @@ export default function Clients() {
 
   const handleViewModeChange = (mode: ViewMode) => {
     setViewMode(mode);
+    if (mode === 'table') {
+      setShowFullColumnsMobile(false);
+    }
     localStorage.setItem('clientsViewMode', mode);
   };
 
@@ -148,6 +167,7 @@ export default function Clients() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/clients'] });
       toast({ title: 'Cliente excluído com sucesso', variant: 'success' });
+      setClientToDelete(null);
     },
     onError: (error) => {
       toast({ title: 'Erro ao excluir cliente', description: error.message, variant: 'destructive' });
@@ -287,10 +307,72 @@ export default function Clients() {
       client.cnpj?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
+  const getSortValue = (client: Client, column: SortColumn): string => {
+    switch (column) {
+      case 'razaoSocial':
+        return client.razaoSocial || '';
+      case 'nomeFantasia':
+        return client.nomeFantasia || '';
+      case 'cnpj':
+        return client.cnpj || '';
+      case 'cidade':
+        return `${client.cidade || ''} ${client.estado || ''}`.trim();
+      case 'emailComercial':
+        return client.emailComercial || '';
+      case 'telefoneComercial':
+        return client.telefoneComercial || '';
+      default:
+        return '';
+    }
+  };
+
+  const sortedClients = [...filteredClients].sort((a, b) => {
+    const aValue = getSortValue(a, sortColumn);
+    const bValue = getSortValue(b, sortColumn);
+    const comparison = aValue.localeCompare(bValue, 'pt-BR', { sensitivity: 'base' });
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
+
+  const totalPages = Math.ceil(sortedClients.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedClients = filteredClients.slice(startIndex, endIndex);
+  const paginatedClients = sortedClients.slice(startIndex, endIndex);
+
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+    setCurrentPage(1);
+  };
+
+  const renderSortIcon = (column: SortColumn) => {
+    if (sortColumn !== column) return null;
+    return sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />;
+  };
+
+  const getColumnWidthClass = (column: SortColumn) => {
+    const isActive = sortColumn === column;
+
+    switch (column) {
+      case 'razaoSocial':
+        return isActive ? 'w-[24%] transition-all duration-200' : 'w-[22%] transition-all duration-200';
+      case 'nomeFantasia':
+        return isActive ? 'w-[20%] transition-all duration-200' : 'w-[18%] transition-all duration-200';
+      case 'cnpj':
+        return isActive ? 'w-[14%] transition-all duration-200' : 'w-[12%] transition-all duration-200';
+      case 'cidade':
+        return isActive ? 'w-[16%] transition-all duration-200' : 'w-[14%] transition-all duration-200';
+      case 'emailComercial':
+        return isActive ? 'w-[20%] transition-all duration-200' : 'w-[18%] transition-all duration-200';
+      case 'telefoneComercial':
+        return isActive ? 'w-[14%] transition-all duration-200' : 'w-[12%] transition-all duration-200';
+      default:
+        return 'transition-all duration-200';
+    }
+  };
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -309,7 +391,7 @@ export default function Clients() {
           <div>
             <h1 className="text-2xl font-semibold">Clientes</h1>
             <p className="text-sm text-muted-foreground">
-              {filteredClients.length} clientes encontrados
+              {sortedClients.length} clientes encontrados
             </p>
           </div>
 
@@ -669,16 +751,56 @@ export default function Clients() {
           </Card>
         ) : viewMode === 'table' ? (
           <Card className="flex-1 min-h-0 overflow-hidden mt-4">
+            <div className="sm:hidden px-4 pt-4">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setShowFullColumnsMobile((prev) => !prev)}
+              >
+                {showFullColumnsMobile ? 'Visão compacta' : 'Ver completo'}
+              </Button>
+            </div>
             <div className="h-full overflow-y-auto overflow-x-auto">
               <Table className="w-full table-auto">
                 <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    <TableHead className="text-xs font-medium">Razão Social</TableHead>
-                    <TableHead className="text-xs font-medium">Nome Fantasia</TableHead>
-                    <TableHead className="text-xs font-medium">CNPJ</TableHead>
-                    <TableHead className="text-xs font-medium">Cidade/UF</TableHead>
-                    <TableHead className="text-xs font-medium">E-mail Comercial</TableHead>
-                    <TableHead className="text-xs font-medium">Telefone</TableHead>
+                    <TableHead className={`text-xs font-medium ${getColumnWidthClass('razaoSocial')}`}>
+                      <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('razaoSocial')}>
+                        <span>Razão Social</span>
+                        {renderSortIcon('razaoSocial')}
+                      </Button>
+                    </TableHead>
+                    <TableHead className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} text-xs font-medium ${getColumnWidthClass('nomeFantasia')}`}>
+                      <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('nomeFantasia')}>
+                        <span>Nome Fantasia</span>
+                        {renderSortIcon('nomeFantasia')}
+                      </Button>
+                    </TableHead>
+                    <TableHead className={`text-xs font-medium ${getColumnWidthClass('cnpj')}`}>
+                      <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('cnpj')}>
+                        <span>CNPJ</span>
+                        {renderSortIcon('cnpj')}
+                      </Button>
+                    </TableHead>
+                    <TableHead className={`text-xs font-medium ${getColumnWidthClass('cidade')}`}>
+                      <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('cidade')}>
+                        <span>Cidade/UF</span>
+                        {renderSortIcon('cidade')}
+                      </Button>
+                    </TableHead>
+                    <TableHead className={`${showFullColumnsMobile ? '' : 'hidden md:table-cell'} text-xs font-medium ${getColumnWidthClass('emailComercial')}`}>
+                      <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('emailComercial')}>
+                        <span>E-mail Comercial</span>
+                        {renderSortIcon('emailComercial')}
+                      </Button>
+                    </TableHead>
+                    <TableHead className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} text-xs font-medium ${getColumnWidthClass('telefoneComercial')}`}>
+                      <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('telefoneComercial')}>
+                        <span>Telefone</span>
+                        {renderSortIcon('telefoneComercial')}
+                      </Button>
+                    </TableHead>
                     <TableHead className="w-24 text-right text-xs font-medium">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -689,12 +811,12 @@ export default function Clients() {
                       data-testid={`row-client-${client.id}`}
                       className="hover:bg-muted/50"
                     >
-                      <TableCell className="font-medium">{client.razaoSocial}</TableCell>
-                      <TableCell className="text-muted-foreground">{client.nomeFantasia || '-'}</TableCell>
-                      <TableCell>{client.cnpj || '-'}</TableCell>
-                      <TableCell>{client.cidade && client.estado ? `${client.cidade}/${client.estado}` : '-'}</TableCell>
-                      <TableCell>{client.emailComercial || '-'}</TableCell>
-                      <TableCell>{client.telefoneComercial || '-'}</TableCell>
+                      <TableCell className={`${getColumnWidthClass('razaoSocial')} font-medium`}>{client.razaoSocial}</TableCell>
+                      <TableCell className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} ${getColumnWidthClass('nomeFantasia')} text-muted-foreground`}>{client.nomeFantasia || '-'}</TableCell>
+                      <TableCell className={getColumnWidthClass('cnpj')}>{client.cnpj || '-'}</TableCell>
+                      <TableCell className={getColumnWidthClass('cidade')}>{client.cidade && client.estado ? `${client.cidade}/${client.estado}` : '-'}</TableCell>
+                      <TableCell className={`${showFullColumnsMobile ? '' : 'hidden md:table-cell'} ${getColumnWidthClass('emailComercial')}`}>{client.emailComercial || '-'}</TableCell>
+                      <TableCell className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} ${getColumnWidthClass('telefoneComercial')}`}>{client.telefoneComercial || '-'}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button
@@ -709,11 +831,7 @@ export default function Clients() {
                             size="icon"
                             variant="ghost"
                             data-testid={`button-delete-client-${client.id}`}
-                            onClick={() => {
-                              if (confirm('Deseja excluir este cliente?')) {
-                                deleteMutation.mutate(client.id);
-                              }
-                            }}
+                            onClick={() => setClientToDelete(client)}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -763,11 +881,7 @@ export default function Clients() {
                         size="sm"
                         variant="outline"
                         data-testid={`button-delete-client-${client.id}`}
-                        onClick={() => {
-                          if (confirm('Deseja excluir este cliente?')) {
-                            deleteMutation.mutate(client.id);
-                          }
-                        }}
+                        onClick={() => setClientToDelete(client)}
                       >
                         <Trash2 className="h-3 w-3 mr-1" />
                         Excluir
@@ -779,6 +893,37 @@ export default function Clients() {
             </div>
           </div>
         )}
+
+        <AlertDialog
+          open={Boolean(clientToDelete)}
+          onOpenChange={(open) => {
+            if (!open && !deleteMutation.isPending) {
+              setClientToDelete(null);
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Excluir cliente?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esta ação não pode ser desfeita. O cliente “{clientToDelete?.razaoSocial}” será removido.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteMutation.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={deleteMutation.isPending || !clientToDelete}
+                onClick={() => {
+                  if (!clientToDelete) return;
+                  deleteMutation.mutate(clientToDelete.id);
+                }}
+              >
+                {deleteMutation.isPending ? 'Excluindo...' : 'Excluir'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {filteredClients.length > 0 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t flex-shrink-0">

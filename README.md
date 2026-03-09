@@ -209,6 +209,34 @@ O sistema possui 5 níveis de acesso:
 - `PUT /api/time-entries/:id` - Atualizar lançamento
 - `POST /api/time-entries/:id/approve` - Aprovar lançamento
 
+## Scripts de Linkagem (Projetos)
+
+Use estes comandos na raiz do projeto para completar vínculos de dados legados:
+
+```bash
+# 1) Vincular usuários legados nos lançamentos de horas (dry-run)
+npm run link:time-entries:users -- --dry-run
+
+# 2) Aplicar vínculo de usuários (cria usuários legados quando necessário)
+npm run link:time-entries:users
+
+# 3) Vincular coordenadores nos projetos (dry-run)
+npm run link:project:coordinators -- --dry-run
+
+# 4) Aplicar vínculo de coordenadores
+npm run link:project:coordinators
+```
+
+Mapeamento manual opcional de usuários legados:
+
+```bash
+# Gera template se houver logins não resolvidos automaticamente
+npm run link:time-entries:users -- --dry-run --no-create-users
+
+# Preencha o CSV gerado (legacyLogin;userId) e rode:
+npm run link:time-entries:users -- --mapping-file=scripts/legacy-time-entry-user-mapping.template.csv --no-create-users
+```
+
 ## Deploy em Produção
 
 ### AWS com Docker
@@ -230,6 +258,128 @@ DATABASE_URL=postgresql://user:pass@host:5432/dbname
 JWT_SECRET=chave-muito-segura-producao
 SESSION_SECRET=outra-chave-segura-producao
 ```
+
+### DigitalOcean (Droplet) com Docker + Nginx + Postgres
+
+Este repositório já inclui um stack de produção pronto em `docker-compose.prod.yml` com:
+
+- `app` (Node/Express + frontend estático)
+- `db` (PostgreSQL com volume persistente)
+- `nginx` (reverse proxy, portas 80/443)
+
+#### 1) Preparar o Droplet
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg git
+
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/$(. /etc/os-release && echo $ID)/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo \
+	"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(. /etc/os-release && echo $ID) \
+	$(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
+	sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+
+# validação
+docker --version
+docker compose version
+```
+
+Opcional (firewall básico):
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw --force enable
+```
+
+#### 2) Clonar o projeto e configurar variáveis
+
+```bash
+git clone <url-do-repositorio>
+cd tec3-gestao-projetos
+cp .env.prod.example .env.prod
+```
+
+Edite `.env.prod` e preencha ao menos:
+
+- `POSTGRES_PASSWORD`
+- `SESSION_SECRET`
+- `APP_STARTUP_SEED_MODE` (`off` para manter snapshot exato do banco)
+- variáveis LDAP/AD, se for usar autenticação corporativa
+
+#### 2.1) (Recomendado) Seed exato do banco atual (snapshot completo)
+
+Para subir o sistema com o **estado idêntico** ao banco atual, faça dump do banco atual e restaure no banco novo.
+
+No ambiente atual (origem), gere o dump:
+
+```bash
+pg_dump "$DATABASE_URL" --format=custom --no-owner --no-privileges --file=tec3-current.dump
+```
+
+Copie o arquivo `tec3-current.dump` para o Droplet (mesma pasta do projeto).
+
+No Droplet, antes de subir a aplicação:
+
+```bash
+# sobe apenas o Postgres
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d db
+
+# carrega variáveis do .env.prod na sessão atual
+set -a
+. ./.env.prod
+set +a
+
+# restaura o snapshot completo no banco de produção
+cat tec3-current.dump | docker exec -i tec3-db-prod pg_restore \
+	-U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+	--clean --if-exists --no-owner --no-privileges
+```
+
+Em `.env.prod`, mantenha:
+
+```env
+APP_STARTUP_SEED_MODE=off
+```
+
+Assim o backend não aplica seed mínimo no startup e preserva o snapshot como fonte da verdade.
+
+#### 3) Subir containers
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+#### 4) Validar
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f app
+```
+
+A aplicação ficará acessível em `http://SEU_IP_DO_DROPLET`.
+
+#### 5) Atualizar aplicação (novos deploys)
+
+```bash
+git pull
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+#### Observações importantes
+
+- O Postgres **não** é exposto para a internet nesse stack.
+- Dados persistem nos volumes Docker (`tec3_postgres_data` e `tec3_uploads_data`).
+- Migrações Prisma são aplicadas automaticamente no start do container `app`.
+- Para HTTPS em domínio próprio, mantenha este Nginx como reverse proxy e adicione certificado (Let's Encrypt/Certbot ou proxy externo).
 
 ## Troubleshooting
 

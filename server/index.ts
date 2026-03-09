@@ -65,10 +65,15 @@ app.use((req, res, next) => {
   try {
     log("Starting server initialization...");
 
-    await storage.seedAdminUser();
-    await storage.seedProposalCategories();
-    await storage.seedUserActivities();
-    log("Database initialized");
+    const startupSeedMode = String(process.env.APP_STARTUP_SEED_MODE || 'baseline').toLowerCase();
+    if (startupSeedMode === 'off' || startupSeedMode === 'none' || startupSeedMode === 'disabled') {
+      log("Startup seeding disabled (APP_STARTUP_SEED_MODE)");
+    } else {
+      await storage.seedAdminUser();
+      await storage.seedProposalCategories();
+      await storage.seedUserActivities();
+      log("Database initialized");
+    }
 
     await registerRoutes(httpServer, app);
     log("Routes registered successfully");

@@ -194,11 +194,12 @@ export function AccountActivitiesCard({ user }: { user: User | null }) {
 
         <div className="pt-2">
           <Tabs value={tab} onValueChange={(v) => setTab(v as FilterTab)} className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="all">Tudo</TabsTrigger>
               <TabsTrigger value="security">Segurança</TabsTrigger>
               <TabsTrigger value="profile">Perfil</TabsTrigger>
               <TabsTrigger value="preferences">Preferências</TabsTrigger>
+              <TabsTrigger value="system">Sistema</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>

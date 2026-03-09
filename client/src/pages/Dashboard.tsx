@@ -8,6 +8,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { dashboardApi, reportsApi, type CommercialDashboardMetrics, type DashboardMetrics, type ProjectsDashboardMetrics } from '@/lib/api';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -24,6 +25,34 @@ import {
 function toCountChart(items?: Array<{ status: string; count: number }> | null) {
   return (items ?? []).map((item) => ({
     status: String(item.status ?? '').replaceAll('_', ' '),
+    count: item.count,
+  }));
+}
+
+function projectStatusLabel(statusRaw: string): string {
+  const status = String(statusRaw ?? '').toLowerCase().replaceAll('_', ' ').trim();
+
+  switch (status) {
+    case 'planning':
+      return 'planejamento';
+    case 'active':
+      return 'ativo';
+    case 'on hold':
+      return 'em espera';
+    case 'completed':
+    case 'complete':
+      return 'concluído';
+    case 'cancelled':
+    case 'canceled':
+      return 'cancelado';
+    default:
+      return status;
+  }
+}
+
+function toProjectStatusChart(items?: Array<{ status: string; count: number }> | null) {
+  return (items ?? []).map((item) => ({
+    status: projectStatusLabel(item.status),
     count: item.count,
   }));
 }
@@ -109,6 +138,44 @@ function StatCard({
   );
 }
 
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-4 w-72" />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Card key={`skeleton-stat-${index}`}>
+            <CardHeader className="pb-2">
+              <Skeleton className="h-4 w-28" />
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Skeleton className="h-8 w-20" />
+              <Skeleton className="h-3 w-36" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, index) => (
+          <Card key={`skeleton-chart-${index}`}>
+            <CardHeader>
+              <Skeleton className="h-5 w-52" />
+            </CardHeader>
+            <CardContent>
+              <Skeleton className="h-[260px] w-full" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
 
@@ -140,9 +207,7 @@ export default function Dashboard() {
   if (isLoading) {
     return (
       <Layout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-muted-foreground">Carregando...</div>
-        </div>
+        <DashboardSkeleton />
       </Layout>
     );
   }
@@ -238,7 +303,7 @@ export default function Dashboard() {
             <div className="grid gap-4 md:grid-cols-2">
               <ChartCard
                 title="Status dos Projetos"
-                data={toCountChart(metrics?.projects.byStatus)}
+                data={toProjectStatusChart(metrics?.projects.byStatus)}
               />
 
               <Card>

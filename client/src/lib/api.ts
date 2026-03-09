@@ -59,6 +59,8 @@ export interface UserPreferences {
   sidebarCollapsed: boolean;
   language: string;
   proposalColumns?: ColumnConfig[] | null;
+  notificationsEnabled?: boolean;
+  toastPosition?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 }
 
 export interface User {
@@ -211,6 +213,7 @@ export interface Proposal {
   expectedStartDate?: string | null;
   expectedEndDate?: string | null;
   sentDate?: string | null;
+  projectId?: string | null;
   createdAt: string;
   updatedAt?: string | null;
   // Campos adicionais do sistema legado
@@ -245,13 +248,87 @@ export interface Proposal {
   proposalOrigin?: string | null;
 }
 
+export interface ProposalExpenseItem {
+  id: string;
+  proposalId: string;
+  description: string;
+  value: number;
+  reimbursable: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProposalExpensesResponse {
+  items: ProposalExpenseItem[];
+  total: number;
+}
+
+export const proposalExpensesApi = {
+  list: (proposalId: string) =>
+    api.get<ProposalExpensesResponse>(`/proposals/${proposalId}/expenses`),
+  create: (
+    proposalId: string,
+    data: { description: string; value: number; reimbursable?: boolean }
+  ) => api.post<{ item: ProposalExpenseItem; total: number }>(`/proposals/${proposalId}/expenses`, data),
+  update: (
+    proposalId: string,
+    expenseId: string,
+    data: Partial<{ description: string; value: number; reimbursable: boolean }>
+  ) =>
+    api.put<{ item: ProposalExpenseItem; total: number }>(
+      `/proposals/${proposalId}/expenses/${expenseId}`,
+      data
+    ),
+  delete: (proposalId: string, expenseId: string) =>
+    api.delete<{ total: number }>(`/proposals/${proposalId}/expenses/${expenseId}`),
+};
+
+export interface ProposalAdditiveItem {
+  id: string;
+  proposalId: string;
+  termMonths: number | null;
+  subcontractValue: number;
+  mobilizationValue: number;
+  readjustValue: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProposalAdditivesResponse {
+  items: ProposalAdditiveItem[];
+  total: number;
+}
+
+export const proposalAdditivesApi = {
+  list: (proposalId: string) => api.get<ProposalAdditivesResponse>(`/proposals/${proposalId}/additives`),
+  create: (
+    proposalId: string,
+    data: { termMonths?: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }
+  ) => api.post<{ item: ProposalAdditiveItem; total: number }>(`/proposals/${proposalId}/additives`, data),
+  update: (
+    proposalId: string,
+    additiveId: string,
+    data: Partial<{ termMonths: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }>
+  ) => api.put<{ item: ProposalAdditiveItem; total: number }>(`/proposals/${proposalId}/additives/${additiveId}`, data),
+  delete: (proposalId: string, additiveId: string) =>
+    api.delete<{ total: number }>(`/proposals/${proposalId}/additives/${additiveId}`),
+};
+
 export interface Project {
   id: string;
   code: string;
+  legacyProposalCode?: string;
+  legacyRevision?: number;
+  legacyTermMonths?: number;
   name: string;
   description?: string;
   clientId: string;
   client?: Client;
+  coordinator?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
   status: string;
   startDate?: string;
   endDate?: string;
@@ -259,6 +336,30 @@ export interface Project {
   budgetValue: number;
   dailyLimitHours?: number;
   requiresApproval?: boolean;
+  consumedHours?: number;
+  pendingHours?: number;
+  timeSummary?: {
+    launchedHours: number;
+    approvedHours: number;
+    pendingApprovalHours: number;
+    rejectedHours: number;
+    entriesCount: number;
+    approvedEntriesCount: number;
+    pendingEntriesCount: number;
+    rejectedEntriesCount: number;
+  };
+  hoursByCollaborator?: Array<{
+    collaboratorId: string;
+    collaboratorName: string;
+    collaboratorEmail: string | null;
+    role: string | null;
+    profile: string | null;
+    launchedHours: number;
+    approvedHours: number;
+    pendingApprovalHours: number;
+    rejectedHours: number;
+    entriesCount: number;
+  }>;
   createdAt: string;
 }
 
@@ -315,6 +416,7 @@ export const proposalsApi = {
   update: (id: string, data: Partial<Proposal>) => api.put<Proposal>(`/proposals/${id}`, data),
   delete: (id: string) => api.delete(`/proposals/${id}`),
   convert: (proposalId: string) => api.post<Project>('/proposals/convert', { proposalId }),
+  createRevision: (id: string) => api.post<Proposal>(`/proposals/${id}/revision`, {}),
 };
 
 export const projectsApi = {

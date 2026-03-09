@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
-import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, UserActivity, Prisma } from "../generated/prisma/client.ts";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Prisma } from "../generated/prisma/client.ts";
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
 
@@ -20,6 +20,7 @@ export const ProposalStatus = {
   SUCESSO_ADITIVO: 'sucesso_aditivo',
   NAO_SUCESSO: 'nao_sucesso',
   CANCELADA: 'cancelada',
+  DECLINIO: 'declinio',
 } as const;
 
 export const ProjectStatus = {
@@ -67,9 +68,35 @@ export interface IStorage {
   
   getAllProposals(): Promise<(Proposal & { categoryValuesTotal?: number })[]>;
   getProposal(id: string): Promise<Proposal | null>;
+  getLatestProposalByCode(code: string): Promise<Proposal | null>;
   createProposal(proposal: InsertProposal): Promise<Proposal>;
+  createProposalRevision(proposalId: string): Promise<Proposal | null>;
   updateProposal(id: string, proposal: Partial<Proposal>): Promise<Proposal | null>;
   deleteProposal(id: string): Promise<boolean>;
+
+  getProposalExpenses(proposalId: string): Promise<ProposalExpense[]>;
+  createProposalExpense(
+    proposalId: string,
+    input: { description: string; value: number; reimbursable: boolean }
+  ): Promise<{ item: ProposalExpense; total: number }>;
+  updateProposalExpense(
+    proposalId: string,
+    expenseId: string,
+    updates: Partial<Pick<ProposalExpense, 'description' | 'value' | 'reimbursable'>>
+  ): Promise<{ item: ProposalExpense; total: number } | null>;
+  deleteProposalExpense(proposalId: string, expenseId: string): Promise<{ total: number } | null>;
+
+  getProposalAdditives(proposalId: string): Promise<ProposalAdditive[]>;
+  createProposalAdditive(
+    proposalId: string,
+    input: { termMonths?: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }
+  ): Promise<{ item: ProposalAdditive; total: number }>;
+  updateProposalAdditive(
+    proposalId: string,
+    additiveId: string,
+    updates: Partial<Pick<ProposalAdditive, 'termMonths' | 'subcontractValue' | 'mobilizationValue' | 'readjustValue'>>
+  ): Promise<{ item: ProposalAdditive; total: number } | null>;
+  deleteProposalAdditive(proposalId: string, additiveId: string): Promise<{ total: number } | null>;
   
   getAllProjects(): Promise<Project[]>;
   getProject(id: string): Promise<Project | null>;
@@ -103,6 +130,11 @@ export interface IStorage {
 }
 
 export class PrismaStorage implements IStorage {
+  private normalizeProposalCode(code: string | null | undefined): string {
+    const normalized = String(code || '').trim();
+    if (!normalized) return '';
+    return normalized.replace(/-R\d+$/i, '');
+  }
   
   async seedAdminUser(): Promise<void> {
     const existingAdmin = await this.getUserByEmail('admin@empresa.com');
@@ -320,12 +352,253 @@ export class PrismaStorage implements IStorage {
     });
     return proposals.map(p => ({
       ...p,
-      categoryValuesTotal: p.categoryValues?.reduce((sum, cv) => sum + (Number(cv.value) || 0), 0) || 0,
+      categoryValuesTotal: p.categoryValues?.reduce((sum, cv) => {
+        const value = Number((cv as any).value) || 0;
+        const hours = Number((cv as any).hours) || 0;
+        return sum + value * hours;
+      }, 0) || 0,
     }));
   }
 
   async getProposal(id: string): Promise<Proposal | null> {
     return prisma.proposal.findUnique({ where: { id } });
+  }
+
+  async getLatestProposalByCode(code: string): Promise<Proposal | null> {
+    const normalized = this.normalizeProposalCode(code);
+    if (!normalized) return null;
+
+    const revisionPrefix = `${normalized}-R`;
+    return prisma.proposal.findFirst({
+      where: {
+        OR: [
+          { code: normalized },
+          { code: { startsWith: revisionPrefix } },
+        ],
+      },
+      orderBy: [{ revision: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+    });
+  }
+
+  async getProposalExpenses(proposalId: string): Promise<ProposalExpense[]> {
+    return prisma.proposalExpense.findMany({
+      where: { proposalId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+  }
+
+  async createProposalExpense(
+    proposalId: string,
+    input: { description: string; value: number; reimbursable: boolean }
+  ): Promise<{ item: ProposalExpense; total: number }> {
+    return prisma.$transaction(async (tx) => {
+      const item = await tx.proposalExpense.create({
+        data: {
+          proposalId,
+          description: input.description,
+          value: input.value as any,
+          reimbursable: input.reimbursable,
+        },
+      });
+
+      const agg = await tx.proposalExpense.aggregate({
+        where: { proposalId },
+        _sum: { value: true },
+      });
+      const total = Number((agg._sum.value as any) ?? 0);
+
+      await tx.proposal.update({
+        where: { id: proposalId },
+        data: { expense: total as any },
+      });
+
+      return { item, total };
+    });
+  }
+
+  async updateProposalExpense(
+    proposalId: string,
+    expenseId: string,
+    updates: Partial<Pick<ProposalExpense, 'description' | 'value' | 'reimbursable'>>
+  ): Promise<{ item: ProposalExpense; total: number } | null> {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.proposalExpense.findFirst({
+        where: { id: expenseId, proposalId },
+      });
+      if (!existing) return null;
+
+      const item = await tx.proposalExpense.update({
+        where: { id: expenseId },
+        data: {
+          ...(typeof updates.description === 'string' ? { description: updates.description } : {}),
+          ...(typeof (updates as any).value === 'number' ? { value: (updates as any).value as any } : {}),
+          ...(typeof updates.reimbursable === 'boolean' ? { reimbursable: updates.reimbursable } : {}),
+        },
+      });
+
+      const agg = await tx.proposalExpense.aggregate({
+        where: { proposalId },
+        _sum: { value: true },
+      });
+      const total = Number((agg._sum.value as any) ?? 0);
+
+      await tx.proposal.update({
+        where: { id: proposalId },
+        data: { expense: total as any },
+      });
+
+      return { item, total };
+    });
+  }
+
+  async deleteProposalExpense(proposalId: string, expenseId: string): Promise<{ total: number } | null> {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.proposalExpense.findFirst({
+        where: { id: expenseId, proposalId },
+        select: { id: true },
+      });
+      if (!existing) return null;
+
+      await tx.proposalExpense.delete({ where: { id: expenseId } });
+
+      const agg = await tx.proposalExpense.aggregate({
+        where: { proposalId },
+        _sum: { value: true },
+      });
+      const total = Number((agg._sum.value as any) ?? 0);
+
+      await tx.proposal.update({
+        where: { id: proposalId },
+        data: { expense: total as any },
+      });
+
+      return { total };
+    });
+  }
+
+  async getProposalAdditives(proposalId: string): Promise<ProposalAdditive[]> {
+    return prisma.proposalAdditive.findMany({
+      where: { proposalId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+  }
+
+  async createProposalAdditive(
+    proposalId: string,
+    input: { termMonths?: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }
+  ): Promise<{ item: ProposalAdditive; total: number }> {
+    return prisma.$transaction(async (tx) => {
+      const item = await tx.proposalAdditive.create({
+        data: {
+          proposalId,
+          termMonths: typeof input.termMonths === 'number' ? input.termMonths : null,
+          subcontractValue: input.subcontractValue as any,
+          mobilizationValue: input.mobilizationValue as any,
+          readjustValue: input.readjustValue as any,
+        },
+      });
+
+      const agg = await tx.proposalAdditive.aggregate({
+        where: { proposalId },
+        _sum: {
+          subcontractValue: true,
+          mobilizationValue: true,
+          readjustValue: true,
+        },
+      });
+
+      const total =
+        Number((agg._sum.subcontractValue as any) ?? 0) +
+        Number((agg._sum.mobilizationValue as any) ?? 0) +
+        Number((agg._sum.readjustValue as any) ?? 0);
+
+      await tx.proposal.update({
+        where: { id: proposalId },
+        data: { additiveValue: total as any },
+      });
+
+      return { item, total };
+    });
+  }
+
+  async updateProposalAdditive(
+    proposalId: string,
+    additiveId: string,
+    updates: Partial<Pick<ProposalAdditive, 'termMonths' | 'subcontractValue' | 'mobilizationValue' | 'readjustValue'>>
+  ): Promise<{ item: ProposalAdditive; total: number } | null> {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.proposalAdditive.findFirst({
+        where: { id: additiveId, proposalId },
+        select: { id: true },
+      });
+      if (!existing) return null;
+
+      const item = await tx.proposalAdditive.update({
+        where: { id: additiveId },
+        data: {
+          ...(typeof (updates as any).termMonths === 'number' || (updates as any).termMonths === null
+            ? { termMonths: (updates as any).termMonths }
+            : {}),
+          ...(typeof (updates as any).subcontractValue === 'number' ? { subcontractValue: (updates as any).subcontractValue as any } : {}),
+          ...(typeof (updates as any).mobilizationValue === 'number' ? { mobilizationValue: (updates as any).mobilizationValue as any } : {}),
+          ...(typeof (updates as any).readjustValue === 'number' ? { readjustValue: (updates as any).readjustValue as any } : {}),
+        },
+      });
+
+      const agg = await tx.proposalAdditive.aggregate({
+        where: { proposalId },
+        _sum: {
+          subcontractValue: true,
+          mobilizationValue: true,
+          readjustValue: true,
+        },
+      });
+
+      const total =
+        Number((agg._sum.subcontractValue as any) ?? 0) +
+        Number((agg._sum.mobilizationValue as any) ?? 0) +
+        Number((agg._sum.readjustValue as any) ?? 0);
+
+      await tx.proposal.update({
+        where: { id: proposalId },
+        data: { additiveValue: total as any },
+      });
+
+      return { item, total };
+    });
+  }
+
+  async deleteProposalAdditive(proposalId: string, additiveId: string): Promise<{ total: number } | null> {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.proposalAdditive.findFirst({
+        where: { id: additiveId, proposalId },
+        select: { id: true },
+      });
+      if (!existing) return null;
+
+      await tx.proposalAdditive.delete({ where: { id: additiveId } });
+
+      const agg = await tx.proposalAdditive.aggregate({
+        where: { proposalId },
+        _sum: {
+          subcontractValue: true,
+          mobilizationValue: true,
+          readjustValue: true,
+        },
+      });
+
+      const total =
+        Number((agg._sum.subcontractValue as any) ?? 0) +
+        Number((agg._sum.mobilizationValue as any) ?? 0) +
+        Number((agg._sum.readjustValue as any) ?? 0);
+
+      await tx.proposal.update({
+        where: { id: proposalId },
+        data: { additiveValue: total as any },
+      });
+
+      return { total };
+    });
   }
 
   async createProposal(insertProposal: InsertProposal): Promise<Proposal> {
@@ -345,6 +618,125 @@ export class PrismaStorage implements IStorage {
         expectedEndDate: insertProposal.expectedEndDate,
         projectId: insertProposal.projectId,
       }
+    });
+  }
+
+  async createProposalRevision(proposalId: string): Promise<Proposal | null> {
+    return prisma.$transaction(async (tx) => {
+      const base = await tx.proposal.findUnique({ where: { id: proposalId } });
+      if (!base) return null;
+
+      const baseCode = this.normalizeProposalCode(base.code);
+      if (!baseCode) return null;
+
+      const revisionPrefix = `${baseCode}-R`;
+
+      const latest = await tx.proposal.findFirst({
+        where: {
+          OR: [
+            { code: baseCode },
+            { code: { startsWith: revisionPrefix } },
+          ],
+        },
+        orderBy: [{ revision: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+      });
+      if (!latest) return null;
+
+      const nextRevision = (latest.revision ?? 0) + 1;
+
+      const created = await tx.proposal.create({
+        data: {
+          code: baseCode,
+          revision: nextRevision,
+
+          title: latest.title,
+          description: latest.description,
+          clientId: latest.clientId,
+          coordinatorId: latest.coordinatorId,
+          coordinatorName: latest.coordinatorName,
+          type: latest.type,
+          status: latest.status,
+          totalValue: (latest as any).totalValue,
+          estimatedHours: latest.estimatedHours,
+          expectedStartDate: latest.expectedStartDate,
+          expectedEndDate: latest.expectedEndDate,
+          projectId: latest.projectId,
+          sentDate: latest.sentDate,
+
+          activityType: latest.activityType,
+          umbrellaRef: latest.umbrellaRef,
+          utility: latest.utility,
+          sentByName: latest.sentByName,
+          specialist: latest.specialist,
+          mainType: latest.mainType,
+          quantity: latest.quantity,
+          hourJustification: (latest as any).hourJustification,
+          rehabilitation: (latest as any).rehabilitation,
+          subcontracted: (latest as any).subcontracted,
+          paymentBook: (latest as any).paymentBook,
+          expense: (latest as any).expense,
+          additiveValue: (latest as any).additiveValue,
+          resource: (latest as any).resource,
+          workOrders: latest.workOrders,
+
+          contractCode: latest.contractCode,
+          deliveryDate: latest.deliveryDate,
+          dueDate: latest.dueDate,
+          duration: latest.duration,
+          expectation: latest.expectation,
+          termMonths: latest.termMonths,
+          hours: latest.hours,
+          riskAssessment: latest.riskAssessment,
+          maintenanceNum: latest.maintenanceNum,
+          acquisitionMargin: latest.acquisitionMargin,
+          anfibex: latest.anfibex,
+          discount: latest.discount,
+          proposalOrigin: latest.proposalOrigin,
+        },
+      });
+
+      const [categoryValues, expenses, additives] = await Promise.all([
+        tx.proposalCategoryValue.findMany({ where: { proposalId: latest.id } }),
+        tx.proposalExpense.findMany({ where: { proposalId: latest.id } }),
+        tx.proposalAdditive.findMany({ where: { proposalId: latest.id } }),
+      ]);
+
+      if (categoryValues.length > 0) {
+        await tx.proposalCategoryValue.createMany({
+          data: categoryValues.map((cv) => ({
+            proposalId: created.id,
+            categoryId: cv.categoryId ?? null,
+            customName: cv.customName ?? null,
+            value: (cv as any).value,
+            hours: cv.hours,
+          })),
+        });
+      }
+
+      if (expenses.length > 0) {
+        await tx.proposalExpense.createMany({
+          data: expenses.map((ex) => ({
+            proposalId: created.id,
+            description: ex.description,
+            value: (ex as any).value,
+            reimbursable: ex.reimbursable,
+          })),
+        });
+      }
+
+      if (additives.length > 0) {
+        await tx.proposalAdditive.createMany({
+          data: additives.map((ad) => ({
+            proposalId: created.id,
+            termMonths: ad.termMonths ?? null,
+            subcontractValue: (ad as any).subcontractValue,
+            mobilizationValue: (ad as any).mobilizationValue,
+            readjustValue: (ad as any).readjustValue,
+          })),
+        });
+      }
+
+      return created;
     });
   }
 

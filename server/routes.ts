@@ -28,11 +28,12 @@ const JWT_SECRET = process.env.SESSION_SECRET || 'dev-secret-key';
 const ALLOWED_STATUS_TRANSITIONS: Record<string, string[]> = {
   // New (legacy) statuses - aligned with the screenshot
   em_elaboracao: ['em_analise', 'cancelada'],
-  em_analise: ['em_elaboracao', 'com_sucesso', 'sucesso_aditivo', 'nao_sucesso', 'cancelada'],
+  em_analise: ['em_elaboracao', 'com_sucesso', 'sucesso_aditivo', 'nao_sucesso', 'cancelada', 'declinio'],
   com_sucesso: [],
   sucesso_aditivo: [],
   nao_sucesso: ['em_elaboracao'],
   cancelada: [],
+  declinio: ['em_elaboracao'],
 
   // Backward-compatibility for old statuses while deployments/migrations roll out
   draft: ['em_analise', 'cancelada'],
@@ -94,6 +95,34 @@ function getUserAgent(req: Request): string | null {
   return typeof ua === 'string' ? ua : null;
 }
 
+async function safeCreateUserActivity(
+  req: Request,
+  userId: string,
+  activity: {
+    category: 'security' | 'profile' | 'preferences' | 'system';
+    action: string;
+    title: string;
+    metadata?: any;
+  }
+): Promise<void> {
+  try {
+    await storage.createUserActivity(userId, {
+      category: activity.category,
+      action: activity.action,
+      title: activity.title,
+      metadata: typeof activity.metadata === 'undefined' ? undefined : activity.metadata,
+      ip: getRequestIp(req),
+      userAgent: getUserAgent(req),
+    });
+  } catch (error) {
+    console.warn('Failed to write user activity', {
+      userId,
+      action: activity.action,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function authenticateToken(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -149,86 +178,91 @@ export async function registerRoutes(
       return res.status(400).json({ message: 'Credenciais invalidas' });
     }
 
+    const normalizedIdentifier = identifier.trim().toLowerCase();
+    const forceLocalAuth = normalizedIdentifier === 'admin@empresa.com';
+
     // LDAP (AD -> OpenLDAP). If LDAP finds the user but password is wrong,
     // do NOT fall back to local auth.
-    const ldapAttempt = await authenticateViaLdap({ identifier, password: rawPassword });
-    if (ldapAttempt?.status === 'invalid_password') {
-      return res.status(401).json({
-        message: 'Credenciais invalidas',
-        ...(process.env.NODE_ENV !== 'production'
-          ? { provider: ldapAttempt.provider, reason: 'ldap_invalid_password' }
-          : {}),
-      });
-    }
+    if (!forceLocalAuth) {
+      const ldapAttempt = await authenticateViaLdap({ identifier, password: rawPassword });
+      if (ldapAttempt?.status === 'invalid_password') {
+        return res.status(401).json({
+          message: 'Credenciais invalidas',
+          ...(process.env.NODE_ENV !== 'production'
+            ? { provider: ldapAttempt.provider, reason: 'ldap_invalid_password' }
+            : {}),
+        });
+      }
 
-    if (ldapAttempt?.status === 'error') {
-      const errorDetails =
-        ldapAttempt.error instanceof Error
-          ? ldapAttempt.error.message
-          : typeof ldapAttempt.error === 'string'
-            ? ldapAttempt.error
-            : JSON.stringify(ldapAttempt.error);
+      if (ldapAttempt?.status === 'error') {
+        const errorDetails =
+          ldapAttempt.error instanceof Error
+            ? ldapAttempt.error.message
+            : typeof ldapAttempt.error === 'string'
+              ? ldapAttempt.error
+              : JSON.stringify(ldapAttempt.error);
 
-      console.error('LDAP authentication error:', {
-        provider: ldapAttempt.provider,
-        identifier,
-        error: errorDetails,
-      });
+        console.error('LDAP authentication error:', {
+          provider: ldapAttempt.provider,
+          identifier,
+          error: errorDetails,
+        });
 
-      return res.status(500).json({
-        message: 'Erro ao autenticar via LDAP',
-        ...(process.env.NODE_ENV !== 'production'
-          ? { provider: ldapAttempt.provider, details: errorDetails }
-          : {}),
-      });
-    }
+        return res.status(500).json({
+          message: 'Erro ao autenticar via LDAP',
+          ...(process.env.NODE_ENV !== 'production'
+            ? { provider: ldapAttempt.provider, details: errorDetails }
+            : {}),
+        });
+      }
 
-    if (ldapAttempt?.status === 'success') {
-      const { email: ldapEmail, name: ldapName, role: ldapRole } = ldapAttempt.profile;
+      if (ldapAttempt?.status === 'success') {
+        const { email: ldapEmail, name: ldapName, role: ldapRole } = ldapAttempt.profile;
 
-      let user = await storage.getUserByEmail(ldapEmail);
-      if (!user) {
-        user = await storage.createUser({
-          email: ldapEmail,
-          password: `ldap:${crypto.randomUUID()}`,
-          name: ldapName,
-          role: ldapRole,
-          isActive: true,
-        } as any);
-      } else {
-        user =
-          (await storage.updateUser(user.id, {
+        let user = await storage.getUserByEmail(ldapEmail);
+        if (!user) {
+          user = await storage.createUser({
+            email: ldapEmail,
+            password: `ldap:${crypto.randomUUID()}`,
             name: ldapName,
             role: ldapRole,
             isActive: true,
-          } as any)) || user;
+          } as any);
+        } else {
+          user =
+            (await storage.updateUser(user.id, {
+              name: ldapName,
+              role: ldapRole,
+              isActive: true,
+            } as any)) || user;
+        }
+
+        await storage.createUserActivity(user.id, {
+          category: 'security',
+          action: 'SECURITY_LOGIN_SUCCESS',
+          title: 'Login realizado',
+          metadata: { provider: `ldap:${ldapAttempt.provider}` },
+          ip: getRequestIp(req),
+          userAgent: getUserAgent(req),
+        });
+
+        const token = jwt.sign(
+          { sub: user.id, email: user.email, role: user.role },
+          JWT_SECRET,
+          { expiresIn: '24h' }
+        );
+
+        return res.json({
+          accessToken: token,
+          user: {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            photoUrl: user.photoUrl,
+          },
+        });
       }
-
-      await storage.createUserActivity(user.id, {
-        category: 'security',
-        action: 'SECURITY_LOGIN_SUCCESS',
-        title: 'Login realizado',
-        metadata: { provider: `ldap:${ldapAttempt.provider}` },
-        ip: getRequestIp(req),
-        userAgent: getUserAgent(req),
-      });
-
-      const token = jwt.sign(
-        { sub: user.id, email: user.email, role: user.role },
-        JWT_SECRET,
-        { expiresIn: '24h' }
-      );
-
-      return res.json({
-        accessToken: token,
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          photoUrl: user.photoUrl,
-        },
-      });
     }
     
     const user = await storage.getUserByEmail(identifier);
@@ -349,6 +383,8 @@ export async function registerRoutes(
         theme: user.theme || 'light',
         sidebarCollapsed: user.sidebarCollapsed || false,
         language: user.language || 'pt-BR',
+        notificationsEnabled: user.receivesEmails,
+        toastPosition: user.toastPosition || 'bottom-right',
       },
     });
   });
@@ -364,18 +400,33 @@ export async function registerRoutes(
       sidebarCollapsed: user.sidebarCollapsed || false,
       language: user.language || 'pt-BR',
       proposalColumns: user.proposalColumns || null,
+      notificationsEnabled: user.receivesEmails,
+      toastPosition: user.toastPosition || 'bottom-right',
     });
   });
 
   app.put('/api/auth/preferences', authenticateToken, async (req, res) => {
     const userId = (req as any).user.sub;
-    const { theme, sidebarCollapsed, language, proposalColumns } = req.body;
+    const { theme, sidebarCollapsed, language, proposalColumns, toastPosition, notificationsEnabled } = req.body;
     
     const updateData: any = {};
     if (theme !== undefined) updateData.theme = theme;
     if (sidebarCollapsed !== undefined) updateData.sidebarCollapsed = sidebarCollapsed;
     if (language !== undefined) updateData.language = language;
     if (proposalColumns !== undefined) updateData.proposalColumns = proposalColumns;
+    if (notificationsEnabled !== undefined) {
+      if (typeof notificationsEnabled !== 'boolean') {
+        return res.status(400).json({ message: 'Valor de notificações inválido' });
+      }
+      updateData.receivesEmails = notificationsEnabled;
+    }
+    if (toastPosition !== undefined) {
+      const allowed = new Set(['top-left', 'top-right', 'bottom-left', 'bottom-right']);
+      if (typeof toastPosition !== 'string' || !allowed.has(toastPosition)) {
+        return res.status(400).json({ message: 'Posição de toast inválida' });
+      }
+      updateData.toastPosition = toastPosition;
+    }
     
     const user = await storage.updateUser(userId, updateData);
     if (!user) {
@@ -391,6 +442,8 @@ export async function registerRoutes(
         sidebarCollapsedChanged: sidebarCollapsed !== undefined,
         languageChanged: language !== undefined,
         proposalColumnsChanged: proposalColumns !== undefined,
+        notificationsChanged: notificationsEnabled !== undefined,
+        toastPositionChanged: toastPosition !== undefined,
       },
       ip: getRequestIp(req),
       userAgent: getUserAgent(req),
@@ -401,6 +454,8 @@ export async function registerRoutes(
       sidebarCollapsed: user.sidebarCollapsed || false,
       language: user.language || 'pt-BR',
       proposalColumns: user.proposalColumns || null,
+      notificationsEnabled: user.receivesEmails,
+      toastPosition: user.toastPosition || 'bottom-right',
     });
   });
 
@@ -610,6 +665,22 @@ export async function registerRoutes(
 
   app.post('/api/proposals', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const proposal = await storage.createProposal(req.body);
+
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_CREATED',
+        title: `Proposta criada — ${proposal.code}`,
+        metadata: {
+          proposalId: proposal.id,
+          code: proposal.code,
+          revision: (proposal as any).revision ?? null,
+          clientId: proposal.clientId,
+        },
+      });
+    }
+
     res.status(201).json(proposal);
   });
 
@@ -618,6 +689,11 @@ export async function registerRoutes(
       const existing = await storage.getProposal(req.params.id);
       if (!existing) {
         return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      const latest = await storage.getLatestProposalByCode(existing.code);
+      if (latest && (latest.revision ?? 0) > (existing.revision ?? 0)) {
+        return res.status(400).json({ message: 'Somente a ultima revisao de uma proposta pode ser editada' });
       }
 
       if (req.body.status && req.body.status !== existing.status) {
@@ -630,6 +706,31 @@ export async function registerRoutes(
       }
 
       const proposal = await storage.updateProposal(req.params.id, req.body);
+
+      const userId = (req as any).user?.sub;
+      if (typeof userId === 'string') {
+        const requestedStatus = typeof req.body?.status === 'string' ? req.body.status : undefined;
+        const statusChanged = Boolean(requestedStatus && requestedStatus !== existing.status);
+        const fieldsChanged = req.body && typeof req.body === 'object' ? Object.keys(req.body) : [];
+
+        await safeCreateUserActivity(req, userId, {
+          category: 'system',
+          action: statusChanged ? 'PROPOSAL_STATUS_UPDATED' : 'PROPOSAL_UPDATED',
+          title: statusChanged
+            ? `Status da proposta atualizado — ${existing.code}`
+            : `Proposta atualizada — ${existing.code}`,
+          metadata: {
+            proposalId: existing.id,
+            code: existing.code,
+            revision: (existing as any).revision ?? null,
+            fieldsChanged,
+            ...(statusChanged
+              ? { statusFrom: existing.status, statusTo: requestedStatus }
+              : {}),
+          },
+        });
+      }
+
       res.json(proposal);
     } catch (error: any) {
       console.error('Error updating proposal:', error);
@@ -640,12 +741,89 @@ export async function registerRoutes(
     }
   });
 
-  app.delete('/api/proposals/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
-    const deleted = await storage.deleteProposal(req.params.id);
-    if (!deleted) {
-      return res.status(404).json({ message: 'Proposta nao encontrada' });
+  app.post('/api/proposals/:id/revision', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+    try {
+      const existing = await storage.getProposal(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      const latest = existing.code ? await storage.getLatestProposalByCode(existing.code) : null;
+      if (latest && (latest.revision ?? 0) > (existing.revision ?? 0)) {
+        return res.status(400).json({ message: 'Somente a ultima revisao de uma proposta pode ser revisada' });
+      }
+
+      const created = await storage.createProposalRevision(req.params.id);
+      if (!created) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      const userId = (req as any).user?.sub;
+      if (typeof userId === 'string') {
+        await safeCreateUserActivity(req, userId, {
+          category: 'system',
+          action: 'PROPOSAL_REVISED',
+          title: `Revisão criada — ${existing.code}`,
+          metadata: {
+            proposalId: existing.id,
+            code: existing.code,
+            fromRevision: (existing as any).revision ?? null,
+            toRevision: (created as any).revision ?? null,
+          },
+        });
+      }
+
+      res.status(201).json(created);
+    } catch (error: any) {
+      console.error('Error creating proposal revision:', error);
+      const message = typeof error?.message === 'string' ? error.message : 'Erro ao criar revisao da proposta';
+      res.status(500).json({ message });
     }
-    res.status(204).send();
+  });
+
+  app.delete('/api/proposals/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+    try {
+      const existing = await storage.getProposal(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      const latest = existing.code ? await storage.getLatestProposalByCode(existing.code) : null;
+      if (latest && (latest.revision ?? 0) > (existing.revision ?? 0)) {
+        return res.status(400).json({ message: 'Somente a ultima revisao de uma proposta pode ser excluida' });
+      }
+
+      if (['com_sucesso', 'sucesso_aditivo', 'approved', 'converted'].includes(existing.status)) {
+        return res.status(400).json({
+          message: 'Exclusão não permitida. Existe um ou mais valor por categoria vinculado a este item.',
+        });
+      }
+
+      const deleted = await storage.deleteProposal(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      const userId = (req as any).user?.sub;
+      if (typeof userId === 'string') {
+        await safeCreateUserActivity(req, userId, {
+          category: 'system',
+          action: 'PROPOSAL_DELETED',
+          title: `Proposta excluída — ${existing.code}`,
+          metadata: {
+            proposalId: existing.id,
+            code: existing.code,
+            revision: (existing as any).revision ?? null,
+          },
+        });
+      }
+
+      res.status(204).send();
+    } catch (error: any) {
+      console.error('Error deleting proposal:', error);
+      const message = typeof error?.message === 'string' ? error.message : 'Erro ao excluir proposta';
+      res.status(500).json({ message });
+    }
   });
 
   app.post('/api/proposals/convert', authenticateToken, requireRoles(['commercial']), async (req, res) => {
@@ -688,17 +866,56 @@ export async function registerRoutes(
       projectId: project.id,
     });
 
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_CONVERTED',
+        title: `Proposta convertida em projeto — ${proposal.code}`,
+        metadata: {
+          proposalId: proposal.id,
+          code: proposal.code,
+          revision: (proposal as any).revision ?? null,
+          projectId: project.id,
+          projectCode: (project as any).code ?? null,
+        },
+      });
+    }
+
     res.status(201).json(project);
   });
 
   app.get('/api/projects', authenticateToken, requireRoles(['projects']), async (_req, res) => {
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
+    const timeEntries = await storage.getAllTimeEntries();
     const clientMap = new Map(clients.map(c => [c.id, c]));
+
+    const approvedHoursByProject = new Map<string, number>();
+    const pendingHoursByProject = new Map<string, number>();
+
+    for (const entry of timeEntries) {
+      const hours = parseFloat(String(entry.hours || 0));
+      if (!Number.isFinite(hours)) continue;
+
+      if (entry.status === 'approved') {
+        approvedHoursByProject.set(
+          entry.projectId,
+          (approvedHoursByProject.get(entry.projectId) || 0) + hours
+        );
+      } else if (entry.status === 'pending') {
+        pendingHoursByProject.set(
+          entry.projectId,
+          (pendingHoursByProject.get(entry.projectId) || 0) + hours
+        );
+      }
+    }
     
     const enriched = projects.map(p => ({
       ...p,
       client: clientMap.get(p.clientId),
+      consumedHours: approvedHoursByProject.get(p.id) || 0,
+      pendingHours: pendingHoursByProject.get(p.id) || 0,
     }));
     res.json(enriched);
   });
@@ -708,8 +925,114 @@ export async function registerRoutes(
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
-    const client = await storage.getClient(project.clientId);
-    res.json({ ...project, client });
+
+    const [client, entries, users, categories] = await Promise.all([
+      storage.getClient(project.clientId),
+      storage.getTimeEntriesByProject(project.id),
+      storage.getAllUsers(),
+      storage.getAllProposalCategories({ includeInactive: true }),
+    ]);
+
+    const userMap = new Map(users.map((user) => [user.id, user]));
+    const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
+    const coordinator = project.coordinatorId
+      ? userMap.get(project.coordinatorId) || null
+      : null;
+
+    const parseHours = (value: unknown) => {
+      const parsed = parseFloat(String(value || 0));
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    let launchedHours = 0;
+    let approvedHours = 0;
+    let pendingApprovalHours = 0;
+    let rejectedHours = 0;
+
+    const hoursByCollaboratorMap = new Map<string, {
+      collaboratorId: string;
+      collaboratorName: string;
+      collaboratorEmail: string | null;
+      role: string | null;
+      profile: string | null;
+      launchedHours: number;
+      approvedHours: number;
+      pendingApprovalHours: number;
+      rejectedHours: number;
+      entriesCount: number;
+    }>();
+
+    for (const entry of entries) {
+      const hours = parseHours(entry.hours);
+      launchedHours += hours;
+
+      if (entry.status === 'approved') {
+        approvedHours += hours;
+      } else if (entry.status === 'pending') {
+        pendingApprovalHours += hours;
+      } else if (entry.status === 'rejected') {
+        rejectedHours += hours;
+      }
+
+      const user = userMap.get(entry.collaboratorId);
+      const profile = user?.professionalCategoryId
+        ? categoryMap.get(user.professionalCategoryId) || null
+        : null;
+
+      const existing = hoursByCollaboratorMap.get(entry.collaboratorId);
+      if (existing) {
+        existing.launchedHours += hours;
+        existing.entriesCount += 1;
+        if (entry.status === 'approved') existing.approvedHours += hours;
+        if (entry.status === 'pending') existing.pendingApprovalHours += hours;
+        if (entry.status === 'rejected') existing.rejectedHours += hours;
+      } else {
+        hoursByCollaboratorMap.set(entry.collaboratorId, {
+          collaboratorId: entry.collaboratorId,
+          collaboratorName: user?.name || entry.collaboratorId || 'Sem identificação',
+          collaboratorEmail: user?.email || null,
+          role: user?.role || null,
+          profile,
+          launchedHours: hours,
+          approvedHours: entry.status === 'approved' ? hours : 0,
+          pendingApprovalHours: entry.status === 'pending' ? hours : 0,
+          rejectedHours: entry.status === 'rejected' ? hours : 0,
+          entriesCount: 1,
+        });
+      }
+    }
+
+    const hoursByCollaborator = Array.from(hoursByCollaboratorMap.values()).sort(
+      (a, b) => b.launchedHours - a.launchedHours
+    );
+
+    const entriesCount = entries.length;
+    const approvedEntriesCount = entries.filter((entry) => entry.status === 'approved').length;
+    const pendingEntriesCount = entries.filter((entry) => entry.status === 'pending').length;
+    const rejectedEntriesCount = entries.filter((entry) => entry.status === 'rejected').length;
+
+    res.json({
+      ...project,
+      client,
+      coordinator: coordinator
+        ? {
+            id: coordinator.id,
+            name: coordinator.name,
+            email: coordinator.email,
+          }
+        : null,
+      timeSummary: {
+        launchedHours,
+        approvedHours,
+        pendingApprovalHours,
+        rejectedHours,
+        entriesCount,
+        approvedEntriesCount,
+        pendingEntriesCount,
+        rejectedEntriesCount,
+      },
+      hoursByCollaborator,
+    });
   });
 
   app.post('/api/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
@@ -942,16 +1265,16 @@ export async function registerRoutes(
   });
 
   // Proposal Category Values API
-  app.get('/api/proposals/:proposalId/category-values', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.get('/api/proposals/:proposalId/category-values', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
     const { proposalId } = req.params;
     const values = await storage.getProposalCategoryValues(proposalId);
     res.json(values);
   });
 
-  app.post('/api/proposals/:proposalId/category-values', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.post('/api/proposals/:proposalId/category-values', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
     const { proposalId } = req.params;
     const { values } = req.body;
-    
+
     if (!Array.isArray(values)) {
       return res.status(400).json({ message: 'Valores inválidos' });
     }
@@ -965,13 +1288,331 @@ export async function registerRoutes(
     }));
 
     const result = await storage.saveProposalCategoryValues(proposalId, valuesWithProposalId);
+
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      let proposal: any = null;
+      try {
+        proposal = await storage.getProposal(proposalId);
+      } catch {
+        proposal = null;
+      }
+
+      const code = proposal?.code ?? proposalId;
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_CATEGORY_VALUES_UPDATED',
+        title: `Valores por categoria atualizados — ${code}`,
+        metadata: {
+          proposalId,
+          code: proposal?.code ?? null,
+          revision: proposal?.revision ?? null,
+          valuesCount: Array.isArray(valuesWithProposalId) ? valuesWithProposalId.length : null,
+        },
+      });
+    }
+
     res.json(result);
   });
 
-  app.delete('/api/proposal-category-values/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.delete('/api/proposal-category-values/:id', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
     const { id } = req.params;
-    await storage.deleteProposalCategoryValue(id);
+
+    const deleted = await storage.deleteProposalCategoryValue(id);
+
+    const userId = (req as any).user?.sub;
+    if (deleted && typeof userId === 'string') {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_CATEGORY_VALUE_DELETED',
+        title: 'Valor por categoria removido',
+        metadata: { valueId: id },
+      });
+    }
+
     res.status(204).send();
+  });
+
+  // Proposal expenses
+  app.get('/api/proposals/:proposalId/expenses', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+    const { proposalId } = req.params;
+    const proposal = await storage.getProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+    const items = await storage.getProposalExpenses(proposalId);
+    const total = Number((proposal as any).expense ?? 0);
+    return res.json({ items, total });
+  });
+
+  app.post('/api/proposals/:proposalId/expenses', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+    const { proposalId } = req.params;
+    const proposal = await storage.getProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+
+    const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
+    const value = typeof req.body?.value === 'number' ? req.body.value : Number(req.body?.value);
+    const reimbursable = Boolean(req.body?.reimbursable);
+
+    if (!description || !Number.isFinite(value)) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+
+    const result = await storage.createProposalExpense(proposalId, { description, value, reimbursable });
+
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_EXPENSE_CREATED',
+        title: `Despesa adicionada — ${proposal.code}`,
+        metadata: {
+          proposalId,
+          code: proposal.code,
+          revision: (proposal as any).revision ?? null,
+          expenseId: result?.item?.id ?? null,
+          value,
+          reimbursable,
+        },
+      });
+    }
+
+    return res.status(201).json(result);
+  });
+
+  app.put('/api/proposals/:proposalId/expenses/:expenseId', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+    const { proposalId, expenseId } = req.params;
+    const proposal = await storage.getProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+
+    const updates: any = {};
+    if (typeof req.body?.description === 'string') updates.description = req.body.description.trim();
+    if (typeof req.body?.value !== 'undefined') updates.value = typeof req.body.value === 'number' ? req.body.value : Number(req.body.value);
+    if (typeof req.body?.reimbursable === 'boolean') updates.reimbursable = req.body.reimbursable;
+
+    if (updates.description !== undefined && !updates.description) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+    if (updates.value !== undefined && !Number.isFinite(updates.value)) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+
+    const result = await storage.updateProposalExpense(proposalId, expenseId, updates);
+    if (!result) {
+      return res.status(404).json({ message: 'Despesa nao encontrada' });
+    }
+
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      const fieldsChanged = Object.keys(updates ?? {});
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_EXPENSE_UPDATED',
+        title: `Despesa atualizada — ${proposal.code}`,
+        metadata: {
+          proposalId,
+          code: proposal.code,
+          revision: (proposal as any).revision ?? null,
+          expenseId,
+          fieldsChanged,
+        },
+      });
+    }
+
+    return res.json(result);
+  });
+
+  app.delete('/api/proposals/:proposalId/expenses/:expenseId', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+    const { proposalId, expenseId } = req.params;
+    const proposal = await storage.getProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+
+    const result = await storage.deleteProposalExpense(proposalId, expenseId);
+    if (!result) {
+      return res.status(404).json({ message: 'Despesa nao encontrada' });
+    }
+
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_EXPENSE_DELETED',
+        title: `Despesa removida — ${proposal.code}`,
+        metadata: {
+          proposalId,
+          code: proposal.code,
+          revision: (proposal as any).revision ?? null,
+          expenseId,
+        },
+      });
+    }
+
+    return res.json(result);
+  });
+
+  // Proposal additives (aditivos)
+  app.get('/api/proposals/:proposalId/additives', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+    const { proposalId } = req.params;
+    const proposal = await storage.getProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+    const items = await storage.getProposalAdditives(proposalId);
+    const total = Number((proposal as any).additiveValue ?? 0);
+    return res.json({ items, total });
+  });
+
+  app.post('/api/proposals/:proposalId/additives', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+    const { proposalId } = req.params;
+    const proposal = await storage.getProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+
+    const termMonthsRaw = req.body?.termMonths;
+    const termMonths = termMonthsRaw === null || typeof termMonthsRaw === 'undefined' || termMonthsRaw === ''
+      ? null
+      : Number(termMonthsRaw);
+
+    const subcontractValue = typeof req.body?.subcontractValue === 'number'
+      ? req.body.subcontractValue
+      : Number(req.body?.subcontractValue ?? 0);
+    const mobilizationValue = typeof req.body?.mobilizationValue === 'number'
+      ? req.body.mobilizationValue
+      : Number(req.body?.mobilizationValue ?? 0);
+    const readjustValue = typeof req.body?.readjustValue === 'number'
+      ? req.body.readjustValue
+      : Number(req.body?.readjustValue ?? 0);
+
+    if ((termMonths !== null && !Number.isFinite(termMonths)) || !Number.isFinite(subcontractValue) || !Number.isFinite(mobilizationValue) || !Number.isFinite(readjustValue)) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+    if (termMonths !== null && termMonths < 0) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+
+    const result = await storage.createProposalAdditive(proposalId, {
+      termMonths,
+      subcontractValue,
+      mobilizationValue,
+      readjustValue,
+    });
+
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_ADDITIVE_CREATED',
+        title: `Aditivo adicionado — ${proposal.code}`,
+        metadata: {
+          proposalId,
+          code: proposal.code,
+          revision: (proposal as any).revision ?? null,
+          additiveId: result?.item?.id ?? null,
+          termMonths,
+        },
+      });
+    }
+
+    return res.status(201).json(result);
+  });
+
+  app.put('/api/proposals/:proposalId/additives/:additiveId', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+    const { proposalId, additiveId } = req.params;
+    const proposal = await storage.getProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+
+    const updates: any = {};
+    if (typeof req.body?.termMonths !== 'undefined') {
+      updates.termMonths = req.body.termMonths === null || req.body.termMonths === '' ? null : Number(req.body.termMonths);
+    }
+    if (typeof req.body?.subcontractValue !== 'undefined') {
+      updates.subcontractValue = typeof req.body.subcontractValue === 'number' ? req.body.subcontractValue : Number(req.body.subcontractValue);
+    }
+    if (typeof req.body?.mobilizationValue !== 'undefined') {
+      updates.mobilizationValue = typeof req.body.mobilizationValue === 'number' ? req.body.mobilizationValue : Number(req.body.mobilizationValue);
+    }
+    if (typeof req.body?.readjustValue !== 'undefined') {
+      updates.readjustValue = typeof req.body.readjustValue === 'number' ? req.body.readjustValue : Number(req.body.readjustValue);
+    }
+
+    if (updates.termMonths !== undefined && updates.termMonths !== null && !Number.isFinite(updates.termMonths)) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+    if (updates.termMonths !== undefined && updates.termMonths !== null && updates.termMonths < 0) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+    if (updates.subcontractValue !== undefined && !Number.isFinite(updates.subcontractValue)) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+    if (updates.mobilizationValue !== undefined && !Number.isFinite(updates.mobilizationValue)) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+    if (updates.readjustValue !== undefined && !Number.isFinite(updates.readjustValue)) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
+
+    const result = await storage.updateProposalAdditive(proposalId, additiveId, updates);
+    if (!result) {
+      return res.status(404).json({ message: 'Aditivo nao encontrado' });
+    }
+
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      const fieldsChanged = Object.keys(updates ?? {});
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_ADDITIVE_UPDATED',
+        title: `Aditivo atualizado — ${proposal.code}`,
+        metadata: {
+          proposalId,
+          code: proposal.code,
+          revision: (proposal as any).revision ?? null,
+          additiveId,
+          fieldsChanged,
+        },
+      });
+    }
+
+    return res.json(result);
+  });
+
+  app.delete('/api/proposals/:proposalId/additives/:additiveId', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+    const { proposalId, additiveId } = req.params;
+    const proposal = await storage.getProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+
+    const result = await storage.deleteProposalAdditive(proposalId, additiveId);
+    if (!result) {
+      return res.status(404).json({ message: 'Aditivo nao encontrado' });
+    }
+
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROPOSAL_ADDITIVE_DELETED',
+        title: `Aditivo removido — ${proposal.code}`,
+        metadata: {
+          proposalId,
+          code: proposal.code,
+          revision: (proposal as any).revision ?? null,
+          additiveId,
+        },
+      });
+    }
+
+    return res.json(result);
   });
 
   // Proposal Favorites API

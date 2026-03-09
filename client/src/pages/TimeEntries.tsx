@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Calendar, Clock } from 'lucide-react';
+import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,7 +41,9 @@ const statusColors: Record<string, string> = {
 export default function TimeEntries() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [location] = useLocation();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [showFullCardsMobile, setShowFullCardsMobile] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [formData, setFormData] = useState({
     projectId: '',
@@ -55,11 +58,27 @@ export default function TimeEntries() {
     queryFn: () => projectsApi.getAll(),
   });
 
+  useEffect(() => {
+    const queryString = location.includes('?') ? location.split('?')[1] : '';
+    if (!queryString) return;
+
+    const params = new URLSearchParams(queryString);
+    const projectIdFromQuery = params.get('projectId');
+    if (projectIdFromQuery) {
+      setSelectedProjectId(projectIdFromQuery);
+      setFormData((prev) => ({ ...prev, projectId: projectIdFromQuery }));
+    }
+  }, [location]);
+
   const { data: timeEntries = [], isLoading } = useQuery<TimeEntry[]>({
     queryKey: ['/api/projects', selectedProjectId, 'time-entries'],
     queryFn: () => projectsApi.getTimeEntries(selectedProjectId),
     enabled: !!selectedProjectId,
   });
+
+  useEffect(() => {
+    setShowFullCardsMobile(false);
+  }, [selectedProjectId]);
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<TimeEntry>) => projectsApi.createTimeEntry(data),
@@ -127,7 +146,7 @@ export default function TimeEntries() {
                     </SelectTrigger>
                     <SelectContent>
                       {projects
-                        .filter((p) => p.status === 'in_progress')
+                        .filter((p) => p.status === 'in_progress' || p.status === 'active')
                         .map((project) => (
                           <SelectItem key={project.id} value={project.id}>
                             {project.name}
@@ -214,6 +233,16 @@ export default function TimeEntries() {
           </div>
         ) : (
           <div className="space-y-4">
+            <div className="sm:hidden flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setShowFullCardsMobile((prev) => !prev)}
+              >
+                {showFullCardsMobile ? 'Visão compacta' : 'Ver detalhes completos'}
+              </Button>
+            </div>
             {timeEntries.map((entry) => (
               <Card key={entry.id} data-testid={`card-time-entry-${entry.id}`}>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
@@ -232,7 +261,7 @@ export default function TimeEntries() {
                   </Badge>
                 </CardHeader>
                 {entry.description && (
-                  <CardContent>
+                  <CardContent className={showFullCardsMobile ? 'block' : 'hidden sm:block'}>
                     <p className="text-sm text-muted-foreground">{entry.description}</p>
                   </CardContent>
                 )}

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Table,
@@ -38,6 +39,7 @@ export default function Users() {
   const { hasRole } = useAuth();
   const [search, setSearch] = useState('');
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
+  const [showFullColumnsMobile, setShowFullColumnsMobile] = useState(false);
 
   const { data: professionals = [], isLoading } = useQuery<User[]>({
     queryKey: ['/api/auth/users'],
@@ -152,20 +154,30 @@ export default function Users() {
         </Card>
 
         <Card className="flex-1 min-h-0 overflow-hidden mt-4">
+          <div className="sm:hidden px-4 pt-4">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setShowFullColumnsMobile((prev) => !prev)}
+            >
+              {showFullColumnsMobile ? 'Visão compacta' : 'Ver colunas completas'}
+            </Button>
+          </div>
           <div className="h-full overflow-y-auto overflow-x-auto">
             <Table className="table-fixed w-full">
               <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
                   <TableHead className="w-[280px] text-xs font-medium">Profissional</TableHead>
-                  <TableHead className="w-[520px] text-xs font-medium">Categoria</TableHead>
-                  <TableHead className="w-[360px] text-xs font-medium">Grupo de e-mail</TableHead>
-                  <TableHead className="w-[180px] text-xs font-medium">Recebe e-mails?</TableHead>
+                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[520px] text-xs font-medium`}>Categoria</TableHead>
+                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden md:table-cell'} w-[360px] text-xs font-medium`}>Grupo de e-mail</TableHead>
+                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} w-[180px] text-xs font-medium`}>Recebe e-mails?</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredProfessionals.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-muted-foreground">
+                    <TableCell colSpan={showFullColumnsMobile ? 4 : 1} className="text-muted-foreground">
                       Nenhum profissional encontrado
                     </TableCell>
                   </TableRow>
@@ -182,7 +194,7 @@ export default function Users() {
                           </div>
                         </TableCell>
 
-                        <TableCell className="w-[520px] min-w-0">
+                        <TableCell className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[520px] min-w-0`}>
                           <Select
                             value={user.professionalCategoryId || ''}
                             disabled={isSaving}
@@ -207,7 +219,7 @@ export default function Users() {
                           </Select>
                         </TableCell>
 
-                        <TableCell className="w-[360px] min-w-0">
+                        <TableCell className={`${showFullColumnsMobile ? '' : 'hidden md:table-cell'} w-[360px] min-w-0`}>
                           <Select
                             value={user.emailGroup || ''}
                             disabled={isSaving}
@@ -232,7 +244,7 @@ export default function Users() {
                           </Select>
                         </TableCell>
 
-                        <TableCell className="w-[180px] min-w-0">
+                        <TableCell className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} w-[180px] min-w-0`}>
                           <Select
                             value={String(Boolean(user.receivesEmails))}
                             disabled={isSaving}

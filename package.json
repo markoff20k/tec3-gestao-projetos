@@ -11,7 +11,22 @@
     "build": "tsx script/build.ts",
     "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "import:legacy:clients": "tsx scripts/import-legacy-clients-sql.ts",
+    "import:legacy:proposal-extras": "tsx scripts/import-legacy-proposal-extras-sql.ts",
+    "import:legacy:projects": "tsx scripts/import-legacy-projects-sql.ts",
+    "import:legacy:project-hours": "tsx scripts/import-legacy-project-hours-sql.ts",
+    "link:project:budget-values": "tsx scripts/link-legacy-project-budget-values.ts",
+    "link:project:coordinators": "tsx scripts/link-project-coordinators.ts",
+    "link:time-entries:users": "tsx scripts/link-legacy-time-entry-users.ts",
+    "backfill:legacy:user-names": "tsx scripts/backfill-legacy-user-full-names.ts",
+    "backfill:proposal:project-links": "tsx scripts/backfill-proposal-project-links.ts",
+    "import:legacy:proposal-category-values": "tsx scripts/import-legacy-proposal-category-values-sql.ts",
+    "link:proposal:coordinators": "tsx scripts/link-proposal-coordinators.ts",
+    "link:proposal:legacy-fields": "tsx scripts/link-legacy-proposal-fields.ts",
+    "link:proposal:remaining-fields": "tsx scripts/link-legacy-proposal-remaining-fields.ts",
+    "normalize:proposal:revision-codes": "tsx scripts/normalize-proposal-revision-codes.ts",
+    "import:legacy:proposals:postload": "tsx scripts/run-legacy-proposals-postload.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.18.0",

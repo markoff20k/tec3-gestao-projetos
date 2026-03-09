@@ -31,6 +31,18 @@ function getLdapHexCode(error: unknown): string | null {
   return match ? match[0].toLowerCase() : null;
 }
 
+function getAdDataCode(error: unknown): string | null {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : null;
+  if (!message) return null;
+  const match = message.match(/data\s+([0-9a-f]{3,})/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
 function env(name: string): string | undefined {
   const v = process.env[name];
   return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
@@ -87,12 +99,39 @@ function getUserAttrMulti(entry: any, key: string): string[] {
   return [];
 }
 
+function buildAdBindPrincipal(params: {
+  identifier: string;
+  bindFormat?: string;
+  domain?: string;
+}): string {
+  const raw = params.identifier.trim();
+  const loginOnly = raw.includes('\\') ? raw.split('\\').pop() || raw : raw;
+  if (loginOnly.includes('@')) return loginOnly;
+
+  if (params.bindFormat) {
+    if (params.bindFormat.includes('%s')) {
+      return params.bindFormat.replace('%s', loginOnly);
+    }
+    if (params.bindFormat.includes('{{id}}')) {
+      return params.bindFormat.replace('{{id}}', loginOnly);
+    }
+  }
+
+  if (params.domain) {
+    return `${loginOnly}@${params.domain}`;
+  }
+
+  return loginOnly;
+}
+
 async function tryAuthenticateProvider(params: {
   provider: 'ad' | 'openldap';
   url?: string;
   baseDn?: string;
   bindDn?: string;
   bindPassword?: string;
+  adBindFormat?: string;
+  adDomain?: string;
   userFilterTemplate?: string;
   roleAdminDns: string[];
   roleCommercialDns: string[];
@@ -106,6 +145,8 @@ async function tryAuthenticateProvider(params: {
     baseDn,
     bindDn,
     bindPassword,
+    adBindFormat,
+    adDomain,
     userFilterTemplate,
     roleAdminDns,
     roleCommercialDns,
@@ -125,6 +166,7 @@ async function tryAuthenticateProvider(params: {
   });
 
   let serviceBindOk = false;
+  let userBoundDirectly = false;
   let serviceBindError: unknown = null;
 
   try {
@@ -147,6 +189,25 @@ async function tryAuthenticateProvider(params: {
       (provider === 'ad'
         ? `(|(userPrincipalName=${escapedId})(mail=${escapedId})(sAMAccountName=${escapedId}))`
         : `(|(mail=${escapedId})(email=${escapedId})(uid=${escapedId}))`);
+
+    if (provider === 'ad' && !serviceBindOk && !bindDn && !bindPassword) {
+      const principal = buildAdBindPrincipal({
+        identifier,
+        bindFormat: adBindFormat,
+        domain: adDomain,
+      });
+
+      try {
+        await client.bind(principal, password);
+        userBoundDirectly = true;
+      } catch (bindError) {
+        const dataCode = getAdDataCode(bindError);
+        if (dataCode === '525') {
+          return { status: 'not_found', provider };
+        }
+        return { status: 'invalid_password', provider };
+      }
+    }
 
     const { searchEntries } = await client.search(baseDn, {
       scope: 'sub',
@@ -177,9 +238,13 @@ async function tryAuthenticateProvider(params: {
       return { status: 'error', provider, error: new Error('LDAP entry missing DN') };
     }
 
+    const sam = getUserAttr(entry, 'sAMAccountName');
+    const upn = getUserAttr(entry, 'userPrincipalName');
     const email =
       getUserAttr(entry, 'mail') ??
       getUserAttr(entry, 'email') ??
+      upn ??
+      (sam && adDomain ? `${sam}@${adDomain}` : undefined) ??
       (identifier.includes('@') ? identifier : undefined);
     if (!email) {
       return { status: 'error', provider, error: new Error('LDAP user missing mail attribute') };
@@ -192,10 +257,12 @@ async function tryAuthenticateProvider(params: {
       identifier;
 
     // Verify password by binding as the user.
-    try {
-      await client.bind(userDn, password);
-    } catch {
-      return { status: 'invalid_password', provider };
+    if (!userBoundDirectly) {
+      try {
+        await client.bind(userDn, password);
+      } catch {
+        return { status: 'invalid_password', provider };
+      }
     }
 
     // Re-bind with service account to read groups (if configured).
@@ -288,6 +355,8 @@ export async function authenticateViaLdap(params: {
   const adBaseDn = env('LDAP_AD_BASE_DN');
   const adBindDn = env('LDAP_AD_BIND_DN');
   const adBindPassword = env('LDAP_AD_BIND_PASSWORD');
+  const adBindFormat = env('LDAP_AD_BIND_FORMAT');
+  const adDomain = env('LDAP_AD_DOMAIN');
   const adUserFilter = env('LDAP_AD_USER_FILTER');
 
   const openUrl = env('LDAP_OPENLDAP_URL');
@@ -315,6 +384,8 @@ export async function authenticateViaLdap(params: {
     baseDn: adBaseDn,
     bindDn: adBindDn,
     bindPassword: adBindPassword,
+    adBindFormat,
+    adDomain,
     userFilterTemplate: adUserFilter,
     roleAdminDns: adAdmin.length ? adAdmin : globalAdmin,
     roleCommercialDns: adCommercial.length ? adCommercial : globalCommercial,

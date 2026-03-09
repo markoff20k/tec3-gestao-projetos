@@ -45,6 +45,7 @@ export default function Categories() {
 
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [showFullColumnsMobile, setShowFullColumnsMobile] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<CategoryFormState>({ name: '', isActive: true });
 
@@ -225,23 +226,33 @@ export default function Categories() {
         </Card>
 
         <Card className="flex-1 min-h-0 overflow-hidden mt-4">
+          <div className="sm:hidden px-4 pt-4">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setShowFullColumnsMobile((prev) => !prev)}
+            >
+              {showFullColumnsMobile ? 'Visão compacta' : 'Ver colunas completas'}
+            </Button>
+          </div>
           <div className="h-full overflow-y-auto overflow-x-auto">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
                   <TableHead className="text-xs font-medium">Categoria</TableHead>
-                  <TableHead className="w-[140px] text-center text-xs font-medium">Ativo?</TableHead>
+                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[140px] text-center text-xs font-medium`}>Ativo?</TableHead>
                   <TableHead className="w-[120px] text-right text-xs font-medium">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={3} className="text-muted-foreground">Carregando...</TableCell>
+                    <TableCell colSpan={showFullColumnsMobile ? 3 : 2} className="text-muted-foreground">Carregando...</TableCell>
                   </TableRow>
                 ) : filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={3} className="text-muted-foreground">
+                    <TableCell colSpan={showFullColumnsMobile ? 3 : 2} className="text-muted-foreground">
                       Nenhuma categoria encontrada
                     </TableCell>
                   </TableRow>
@@ -249,7 +260,7 @@ export default function Categories() {
                   filtered.map((cat) => (
                     <TableRow key={cat.id} data-testid={`row-category-${cat.id}`}>
                       <TableCell className="font-medium">{cat.name}</TableCell>
-                      <TableCell className="text-center">
+                      <TableCell className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} text-center`}>
                         <Badge
                           variant={cat.isActive ? 'default' : 'destructive'}
                           className="w-14 justify-center"

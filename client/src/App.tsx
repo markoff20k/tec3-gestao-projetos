@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Clients from "@/pages/Clients";
@@ -77,10 +78,12 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Router />
-          </TooltipProvider>
+          <PreferencesProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Router />
+            </TooltipProvider>
+          </PreferencesProvider>
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>

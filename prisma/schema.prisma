@@ -34,6 +34,7 @@ model User {
   sidebarCollapsed Boolean  @default(false) @map("sidebar_collapsed")
   language         String   @default("pt-BR")
   proposalColumns  Json?    @map("proposal_columns")
+  toastPosition    String   @default("bottom-right") @map("toast_position")
 
   @@map("users")
 }
@@ -95,7 +96,7 @@ model Client {
 
 model Proposal {
   id                String    @id @default(uuid())
-  code              String    @unique
+  code              String
   revision          Int       @default(0)
   title             String
   description       String?
@@ -147,13 +148,50 @@ model Proposal {
 
   client            Client    @relation(fields: [clientId], references: [id])
   categoryValues    ProposalCategoryValue[]
+  expenses          ProposalExpense[]
+  additives         ProposalAdditive[]
 
+  @@unique([code, revision])
   @@map("proposals")
+}
+
+model ProposalAdditive {
+  id                String   @id @default(uuid())
+  proposalId         String   @map("proposal_id")
+  termMonths         Int?     @map("term_months")
+  subcontractValue   Decimal  @default(0) @map("subcontract_value") @db.Decimal(12, 2)
+  mobilizationValue  Decimal  @default(0) @map("mobilization_value") @db.Decimal(12, 2)
+  readjustValue      Decimal  @default(0) @map("readjust_value") @db.Decimal(12, 2)
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime? @updatedAt @map("updated_at")
+
+  proposal           Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@index([proposalId, createdAt])
+  @@map("proposal_additives")
+}
+
+model ProposalExpense {
+  id           String   @id @default(uuid())
+  proposalId   String   @map("proposal_id")
+  description  String
+  value        Decimal  @default(0) @db.Decimal(12, 2)
+  reimbursable Boolean  @default(false) @map("reimbursable")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime? @updatedAt @map("updated_at")
+
+  proposal     Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@index([proposalId, createdAt])
+  @@map("proposal_expenses")
 }
 
 model Project {
   id               String      @id @default(uuid())
   code             String      @unique
+  legacyProposalCode String?   @map("legacy_proposal_code")
+  legacyRevision   Int?        @map("legacy_revision")
+  legacyTermMonths Float?      @map("legacy_term_months")
   name             String
   description      String?
   clientId         String      @map("client_id")

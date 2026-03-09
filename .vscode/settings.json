@@ -10,5 +10,9 @@
   },
   "tailwindCSS.experimental.classRegex": [
     ["cn\\(([^)]*)\\)", "(?:'|\"|`)([^']*)(?:'|\"|`)"]
-  ]
+  ],
+  "chat.tools.terminal.autoApprove": {
+    "npm run -s typecheck": true,
+    "npm run typecheck": true
+  }
 }
