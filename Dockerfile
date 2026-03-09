@@ -16,6 +16,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=5000
 
+RUN apk add --no-cache wget
+
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 expressjs
 

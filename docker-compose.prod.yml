@@ -61,7 +61,14 @@ services:
       LDAP_OPENLDAP_ROLE_PROJECTS_DNS: ${LDAP_OPENLDAP_ROLE_PROJECTS_DNS:-}
     volumes:
       - tec3_uploads_data:/app/uploads
-    command: sh -c "npx prisma migrate deploy --schema=prisma/schema.prisma && npm run start"
+    command: >
+      sh -c "
+      if [ \"$APP_STARTUP_SEED_MODE\" = \"off\" ] || [ \"$APP_STARTUP_SEED_MODE\" = \"none\" ] || [ \"$APP_STARTUP_SEED_MODE\" = \"disabled\" ]; then
+        npm run start;
+      else
+        npx prisma migrate deploy --schema=prisma/schema.prisma && npm run start;
+      fi
+      "
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet http://localhost:5000/ || exit 1"]
       interval: 30s
