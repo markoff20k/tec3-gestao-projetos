@@ -73,7 +73,7 @@ function requireRoles(allowed: Role[]) {
     }
     if (role === 'admin') return next();
     if (!allowed.includes(role)) {
-      return res.status(403).json({ message: 'Acesso nao autorizado' });
+      return res.status(403).json({ message: 'Acesso não autorizado' });
     }
     next();
   };
@@ -128,20 +128,20 @@ async function authenticateToken(req: Request, res: Response, next: NextFunction
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ message: 'Token required' });
+    return res.status(401).json({ message: 'Token obrigatório' });
   }
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload;
     if (!decoded?.sub) {
-      return res.status(403).json({ message: 'Invalid token' });
+      return res.status(403).json({ message: 'Token inválido' });
     }
 
     // Always load the current user from DB to avoid stale role claims
     // (e.g. tokens issued before RBAC migration with role=owner).
     const dbUser = await storage.getUser(decoded.sub);
     if (!dbUser || !dbUser.isActive) {
-      return res.status(401).json({ message: 'Credenciais invalidas' });
+      return res.status(401).json({ message: 'Credenciais inválidas' });
     }
     if (!isRole(dbUser.role)) {
       return res.status(403).json({ message: 'Perfil inválido' });
@@ -155,7 +155,7 @@ async function authenticateToken(req: Request, res: Response, next: NextFunction
 
     next();
   } catch {
-    return res.status(403).json({ message: 'Invalid token' });
+    return res.status(403).json({ message: 'Token inválido' });
   }
 }
 
@@ -176,11 +176,14 @@ export async function registerRoutes(
       const rawPassword = typeof password === 'string' ? password : '';
 
     if (!identifier || !rawPassword) {
-      return res.status(400).json({ message: 'Credenciais invalidas' });
+      return res.status(400).json({ message: 'Credenciais inválidas' });
     }
 
     const normalizedIdentifier = identifier.trim().toLowerCase();
-    const forceLocalAuth = normalizedIdentifier === 'admin@empresa.com';
+    const isAdminFallback =
+      normalizedIdentifier === 'admin@empresa.com' || normalizedIdentifier === 'admin';
+    const forceLocalAuth = isAdminFallback;
+    const localIdentifier = isAdminFallback ? 'admin@empresa.com' : identifier;
 
     // LDAP (AD -> OpenLDAP). If LDAP finds the user but password is wrong,
     // do NOT fall back to local auth.
@@ -188,7 +191,7 @@ export async function registerRoutes(
       const ldapAttempt = await authenticateViaLdap({ identifier, password: rawPassword });
       if (ldapAttempt?.status === 'invalid_password') {
         return res.status(401).json({
-          message: 'Credenciais invalidas',
+          message: 'Credenciais inválidas',
           ...(process.env.NODE_ENV !== 'production'
             ? { provider: ldapAttempt.provider, reason: 'ldap_invalid_password' }
             : {}),
@@ -266,7 +269,7 @@ export async function registerRoutes(
       }
     }
     
-    const user = await storage.getUserByEmail(identifier);
+    const user = await storage.getUserByEmail(localIdentifier);
     if (!user || !user.isActive) {
       if (user) {
         await storage.createUserActivity(user.id, {
@@ -278,7 +281,7 @@ export async function registerRoutes(
           userAgent: getUserAgent(req),
         });
       }
-      return res.status(401).json({ message: 'Credenciais invalidas' });
+      return res.status(401).json({ message: 'Credenciais inválidas' });
     }
 
     const isValid = await bcrypt.compare(rawPassword, user.password);
@@ -291,7 +294,7 @@ export async function registerRoutes(
         ip: getRequestIp(req),
         userAgent: getUserAgent(req),
       });
-      return res.status(401).json({ message: 'Credenciais invalidas' });
+      return res.status(401).json({ message: 'Credenciais inválidas' });
     }
 
     await storage.createUserActivity(user.id, {
@@ -344,7 +347,7 @@ export async function registerRoutes(
     
     const existing = await storage.getUserByEmail(email);
     if (existing) {
-      return res.status(409).json({ message: 'Email ja cadastrado' });
+      return res.status(409).json({ message: 'E-mail já cadastrado' });
     }
 
     const requestedRole = role ?? 'projects';
@@ -390,7 +393,7 @@ export async function registerRoutes(
     const userId = (req as any).user.sub;
     const user = await storage.getUser(userId);
     if (!user) {
-      return res.status(404).json({ message: 'Usuario nao encontrado' });
+      return res.status(404).json({ message: 'Usuário não encontrado' });
     }
     res.json({
       id: user.id,
@@ -412,7 +415,7 @@ export async function registerRoutes(
     const userId = (req as any).user.sub;
     const user = await storage.getUser(userId);
     if (!user) {
-      return res.status(404).json({ message: 'Usuario nao encontrado' });
+      return res.status(404).json({ message: 'Usuário não encontrado' });
     }
     res.json({
       theme: user.theme || 'light',
@@ -449,7 +452,7 @@ export async function registerRoutes(
     
     const user = await storage.updateUser(userId, updateData);
     if (!user) {
-      return res.status(404).json({ message: 'Usuario nao encontrado' });
+      return res.status(404).json({ message: 'Usuário não encontrado' });
     }
 
     await storage.createUserActivity(userId, {
@@ -488,7 +491,7 @@ export async function registerRoutes(
     
     const user = await storage.getUser(userId);
     if (!user) {
-      return res.status(404).json({ message: 'Usuario nao encontrado' });
+      return res.status(404).json({ message: 'Usuário não encontrado' });
     }
 
     res.json({
@@ -514,7 +517,7 @@ export async function registerRoutes(
     const user = await storage.updateUserPhoto(userId, photoData, photoMimeType, photoUrl);
     
     if (!user) {
-      return res.status(404).json({ message: 'Usuario nao encontrado' });
+      return res.status(404).json({ message: 'Usuário não encontrado' });
     }
 
     await storage.createUserActivity(userId, {
@@ -551,7 +554,7 @@ export async function registerRoutes(
   app.get('/api/auth/users', authenticateToken, async (req, res) => {
     // Only admin can list users
     const role = (req as any).user?.role;
-    if (role !== 'admin') return res.status(403).json({ message: 'Acesso nao autorizado' });
+    if (role !== 'admin') return res.status(403).json({ message: 'Acesso não autorizado' });
     const users = await storage.getAllUsers();
     res.json(users.map(u => ({
       id: u.id,
@@ -615,7 +618,7 @@ export async function registerRoutes(
     const targetUserId = requestedUserId ?? requester.sub;
     const isAudit = targetUserId !== requester.sub;
     if (isAudit && requester.role !== 'admin') {
-      return res.status(403).json({ message: 'Acesso nao autorizado' });
+      return res.status(403).json({ message: 'Acesso não autorizado' });
     }
 
     const result = await storage.getUserActivities(targetUserId, {

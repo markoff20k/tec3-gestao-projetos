@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useLocation } from 'wouter';
@@ -39,6 +39,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { projectsApi, clientsApi, Project, Client } from '@/lib/api';
+import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 
 const statusColors: Record<string, string> = {
   planning: 'bg-gray-500',
@@ -118,6 +119,39 @@ export default function Projects() {
     queryKey: ['/api/projects'],
     queryFn: () => projectsApi.getAll(),
   });
+
+  const [showProjectsLoader, setShowProjectsLoader] = useState<boolean>(isLoading);
+  const projectsLoaderStartedAtRef = useRef<number | null>(isLoading ? Date.now() : null);
+
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    if (isLoading) {
+      if (projectsLoaderStartedAtRef.current === null) {
+        projectsLoaderStartedAtRef.current = Date.now();
+      }
+      setShowProjectsLoader(true);
+      return;
+    }
+
+    const startedAt = projectsLoaderStartedAtRef.current;
+    if (startedAt === null) {
+      setShowProjectsLoader(false);
+      return;
+    }
+
+    const elapsed = Date.now() - startedAt;
+    const remaining = Math.max(0, TEC3_LOADER_MIN_VISIBLE_MS - elapsed);
+
+    timeoutId = setTimeout(() => {
+      setShowProjectsLoader(false);
+      projectsLoaderStartedAtRef.current = null;
+    }, remaining);
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isLoading]);
 
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ['/api/clients'],
@@ -639,8 +673,39 @@ export default function Projects() {
           </CardContent>
         </Card>
 
-        {isLoading ? (
-          <div className="text-center py-8 text-muted-foreground">Carregando...</div>
+        {showProjectsLoader ? (
+          <div className="py-12 flex flex-col items-center justify-center gap-4 text-muted-foreground">
+            <style>{`
+              @keyframes tec3LogoFillGrayProjects {
+                0%, 100% {
+                  width: 12%;
+                  opacity: 0.45;
+                }
+                50% {
+                  width: 100%;
+                  opacity: 1;
+                }
+              }
+            `}</style>
+            <p>Carregando projetos...</p>
+            <div className="relative h-16 w-52" aria-label="Carregando projetos">
+              <img
+                src="/assets/tec3-logo.svg"
+                alt="Carregando"
+                className="absolute inset-0 h-full w-full object-contain grayscale opacity-25"
+              />
+              <div
+                className="absolute inset-y-0 left-0 overflow-hidden"
+                style={{ animation: `tec3LogoFillGrayProjects ${TEC3_LOADER_ANIMATION_SECONDS}s ease-in-out infinite` }}
+              >
+                <img
+                  src="/assets/tec3-logo.svg"
+                  alt="Carregando"
+                  className="h-full w-52 object-contain grayscale opacity-80"
+                />
+              </div>
+            </div>
+          </div>
         ) : filteredProjects.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">Nenhum projeto encontrado</div>
         ) : viewMode === 'table' ? (

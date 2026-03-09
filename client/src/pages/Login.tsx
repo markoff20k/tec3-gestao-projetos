@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Lock, Mail, ArrowRight, Shield, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
+import { Lock, User, ArrowRight, Shield, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 
 export default function Login() {
   const { login, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -63,12 +63,14 @@ export default function Login() {
         <div className="absolute inset-0 z-10 flex w-full flex-col items-center justify-center px-12 xl:px-20 text-white text-center">
           {/* Logo */}
           <div className="mb-10">
-            <img 
-              src="https://www.tec3engenharia.com.br/wp-content/uploads/2025/09/tec3-LogoTagline-Cor.svg" 
-              alt="TEC3 Engenharia" 
-              className="h-[clamp(4.5rem,9vw,8.5rem)] w-auto brightness-0 invert"
-              data-testid="img-logo-hero"
-            />
+            <div className="inline-block">
+              <img 
+                src="/assets/tec3-logo.svg" 
+                alt="TEC3 Engenharia" 
+                className="block h-[clamp(5rem,10vw,9.5rem)] w-auto brightness-0 invert"
+                data-testid="img-logo-hero"
+              />
+            </div>
           </div>
 
           <p className="text-sm uppercase tracking-[0.2em] text-white/80 mb-3">TEC3 Engenharia</p>
@@ -106,12 +108,14 @@ export default function Login() {
         <div className="w-full max-w-md rounded-2xl border border-border/70 bg-card p-6 sm:p-8 shadow-sm">
           {/* Mobile Logo */}
           <div className="lg:hidden flex justify-center mb-7">
-            <img 
-              src="https://www.tec3engenharia.com.br/wp-content/uploads/2025/09/tec3-LogoTagline-Cor.svg" 
-              alt="TEC3 Engenharia" 
-              className="h-[clamp(3rem,10vw,4.25rem)] w-auto"
-              data-testid="img-logo-mobile"
-            />
+            <div className="inline-block">
+              <img 
+                src="/assets/tec3-logo.svg" 
+                alt="TEC3 Engenharia" 
+                className="block h-[clamp(3.3rem,11vw,4.8rem)] w-auto brightness-0 invert drop-shadow-[0_0_1px_rgba(17,24,39,0.35)]"
+                data-testid="img-logo-mobile"
+              />
+            </div>
           </div>
 
           {/* Login Header */}
@@ -126,14 +130,14 @@ export default function Login() {
           {/* Login Form */}
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="identifier" className="text-sm font-medium">Usuário ou e-mail</Label>
+              <Label htmlFor="identifier" className="text-sm font-medium">Usuário</Label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                 <Input
                   id="identifier"
                   type="text"
                   data-testid="input-email"
-                  placeholder="seu.usuario ou seu@email.com"
+                  placeholder="Digite seu usuário"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   autoComplete="username"

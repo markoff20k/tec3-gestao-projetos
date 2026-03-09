@@ -77,6 +77,7 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { CategoryValuesDrawer } from '@/components/CategoryValuesDrawer';
+import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 
 const statusColors: Record<string, string> = {
   // New (legacy) statuses (aligned with the screenshot)
@@ -1024,6 +1025,39 @@ export default function Proposals() {
     queryKey: ['/api/proposals'],
     queryFn: () => proposalsApi.getAll(),
   });
+
+  const [showProposalsLoader, setShowProposalsLoader] = useState<boolean>(isLoading);
+  const proposalsLoaderStartedAtRef = useRef<number | null>(isLoading ? Date.now() : null);
+
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    if (isLoading) {
+      if (proposalsLoaderStartedAtRef.current === null) {
+        proposalsLoaderStartedAtRef.current = Date.now();
+      }
+      setShowProposalsLoader(true);
+      return;
+    }
+
+    const startedAt = proposalsLoaderStartedAtRef.current;
+    if (startedAt === null) {
+      setShowProposalsLoader(false);
+      return;
+    }
+
+    const elapsed = Date.now() - startedAt;
+    const remaining = Math.max(0, TEC3_LOADER_MIN_VISIBLE_MS - elapsed);
+
+    timeoutId = setTimeout(() => {
+      setShowProposalsLoader(false);
+      proposalsLoaderStartedAtRef.current = null;
+    }, remaining);
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isLoading]);
 
   const latestRevisionByCode = useMemo(() => {
     const map = new Map<string, number>();
@@ -2171,8 +2205,39 @@ export default function Proposals() {
         </Card>
 
         {/* Table */}
-        {isLoading ? (
-          <div className="text-center py-12 text-muted-foreground">Carregando propostas...</div>
+        {showProposalsLoader ? (
+          <div className="py-16 flex flex-col items-center justify-center gap-4 text-muted-foreground">
+            <style>{`
+              @keyframes tec3LogoFillGray {
+                0%, 100% {
+                  width: 12%;
+                  opacity: 0.45;
+                }
+                50% {
+                  width: 100%;
+                  opacity: 1;
+                }
+              }
+            `}</style>
+            <p>Carregando propostas...</p>
+            <div className="relative h-16 w-52" aria-label="Carregando propostas">
+              <img
+                src="/assets/tec3-logo.svg"
+                alt="Carregando"
+                className="absolute inset-0 h-full w-full object-contain grayscale opacity-25"
+              />
+              <div
+                className="absolute inset-y-0 left-0 overflow-hidden"
+                style={{ animation: `tec3LogoFillGray ${TEC3_LOADER_ANIMATION_SECONDS}s ease-in-out infinite` }}
+              >
+                <img
+                  src="/assets/tec3-logo.svg"
+                  alt="Carregando"
+                  className="h-full w-52 object-contain grayscale opacity-80"
+                />
+              </div>
+            </div>
+          </div>
         ) : filteredProposals.length === 0 ? (
           <Card className="mt-4">
             <CardContent className="py-16 text-center text-muted-foreground">

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Pencil, Trash2, Search, Building2, MapPin, Users, ChevronLeft, ChevronRight, LayoutGrid, List, ArrowUp, ArrowDown } from 'lucide-react';
 import { Layout } from '@/components/Layout';
@@ -41,6 +41,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { clientsApi, Client } from '@/lib/api';
+import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 import { formatCNPJ, validateCNPJ, formatPhone, validateEmail } from '@/lib/validators';
 import { CepInput, AddressData } from '@/components/CepInput';
 
@@ -136,6 +137,39 @@ export default function Clients() {
     queryKey: ['/api/clients'],
     queryFn: () => clientsApi.getAll(),
   });
+
+  const [showClientsLoader, setShowClientsLoader] = useState<boolean>(isLoading);
+  const clientsLoaderStartedAtRef = useRef<number | null>(isLoading ? Date.now() : null);
+
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    if (isLoading) {
+      if (clientsLoaderStartedAtRef.current === null) {
+        clientsLoaderStartedAtRef.current = Date.now();
+      }
+      setShowClientsLoader(true);
+      return;
+    }
+
+    const startedAt = clientsLoaderStartedAtRef.current;
+    if (startedAt === null) {
+      setShowClientsLoader(false);
+      return;
+    }
+
+    const elapsed = Date.now() - startedAt;
+    const remaining = Math.max(0, TEC3_LOADER_MIN_VISIBLE_MS - elapsed);
+
+    timeoutId = setTimeout(() => {
+      setShowClientsLoader(false);
+      clientsLoaderStartedAtRef.current = null;
+    }, remaining);
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isLoading]);
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<Client>) => clientsApi.create(data),
@@ -739,9 +773,40 @@ export default function Clients() {
           </CardContent>
         </Card>
 
-        {isLoading ? (
+        {showClientsLoader ? (
           <Card className="mt-4">
-            <CardContent className="py-16 text-center text-muted-foreground">Carregando...</CardContent>
+            <CardContent className="py-16 flex flex-col items-center justify-center gap-4 text-muted-foreground">
+              <style>{`
+                @keyframes tec3LogoFillGrayClients {
+                  0%, 100% {
+                    width: 12%;
+                    opacity: 0.45;
+                  }
+                  50% {
+                    width: 100%;
+                    opacity: 1;
+                  }
+                }
+              `}</style>
+              <p>Carregando clientes...</p>
+              <div className="relative h-16 w-52" aria-label="Carregando clientes">
+                <img
+                  src="/assets/tec3-logo.svg"
+                  alt="Carregando"
+                  className="absolute inset-0 h-full w-full object-contain grayscale opacity-25"
+                />
+                <div
+                  className="absolute inset-y-0 left-0 overflow-hidden"
+                  style={{ animation: `tec3LogoFillGrayClients ${TEC3_LOADER_ANIMATION_SECONDS}s ease-in-out infinite` }}
+                >
+                  <img
+                    src="/assets/tec3-logo.svg"
+                    alt="Carregando"
+                    className="h-full w-52 object-contain grayscale opacity-80"
+                  />
+                </div>
+              </div>
+            </CardContent>
           </Card>
         ) : filteredClients.length === 0 ? (
           <Card className="mt-4">

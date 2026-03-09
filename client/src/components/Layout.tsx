@@ -192,7 +192,7 @@ export function Layout({ children }: LayoutProps) {
             ) : (
               <div className="flex items-center justify-between gap-2">
                 <img 
-                  src="https://www.tec3engenharia.com.br/wp-content/uploads/2025/09/tec3-LogoTagline-Cor.svg" 
+                  src="/assets/tec3-logo.svg" 
                   alt="TEC3 Engenharia" 
                   className="w-full max-h-12 object-contain brightness-0 invert"
                   data-testid="img-sidebar-logo"
