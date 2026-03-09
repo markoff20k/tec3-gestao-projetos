@@ -165,14 +165,15 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   app.post('/api/auth/login', async (req, res) => {
-    const { identifier: identifierRaw, email, password } = req.body;
-    const identifier =
-      typeof identifierRaw === 'string'
-        ? identifierRaw.trim()
-        : typeof email === 'string'
-          ? email.trim()
-          : '';
-    const rawPassword = typeof password === 'string' ? password : '';
+    try {
+      const { identifier: identifierRaw, email, password } = req.body;
+      const identifier =
+        typeof identifierRaw === 'string'
+          ? identifierRaw.trim()
+          : typeof email === 'string'
+            ? email.trim()
+            : '';
+      const rawPassword = typeof password === 'string' ? password : '';
 
     if (!identifier || !rawPassword) {
       return res.status(400).json({ message: 'Credenciais invalidas' });
@@ -307,16 +308,34 @@ export async function registerRoutes(
       { expiresIn: '24h' }
     );
 
-    res.json({
-      accessToken: token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        photoUrl: user.photoUrl,
-      },
-    });
+      res.json({
+        accessToken: token,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          photoUrl: user.photoUrl,
+        },
+      });
+    } catch (error) {
+      const details =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : JSON.stringify(error);
+
+      console.error('Login route unexpected error:', {
+        identifier: typeof req.body?.identifier === 'string' ? req.body.identifier : undefined,
+        details,
+      });
+
+      return res.status(500).json({
+        message: 'Erro interno ao processar login',
+        ...(process.env.NODE_ENV !== 'production' ? { details } : {}),
+      });
+    }
   });
 
   // User creation is admin-only
