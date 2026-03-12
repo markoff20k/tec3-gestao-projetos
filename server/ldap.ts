@@ -13,6 +13,7 @@ type LdapAttemptResult =
         name: string;
         groups: string[];
         role: Role;
+        memberSince: string | null;
       };
     }
   | { status: 'not_found'; provider: 'ad' | 'openldap' }
@@ -51,10 +52,22 @@ function env(name: string): string | undefined {
 function parseCsvEnv(name: string): string[] {
   const v = env(name);
   if (!v) return [];
-  return v
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+
+  // Distinguished Names (DNs) include commas by nature, e.g.
+  // CN=grupo,OU=setor,DC=empresa,DC=local. Splitting by comma breaks
+  // exact DN matching and causes role fallback behavior.
+  //
+  // Supported multi-value formats:
+  // - semicolon: DN1;DN2
+  // - newline: DN1\nDN2
+  if (v.includes(';') || v.includes('\n')) {
+    return v
+      .split(/[;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  return [v.trim()];
 }
 
 function escapeFilterValue(value: string): string {
@@ -97,6 +110,33 @@ function getUserAttrMulti(entry: any, key: string): string[] {
   if (Array.isArray(v)) return v.filter((x) => typeof x === 'string') as string[];
   if (typeof v === 'string') return [v];
   return [];
+}
+
+function parseAdWhenCreated(value: string | undefined): string | null {
+  if (!value) return null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const adGeneralizedMatch = raw.match(
+    /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\.\d+)?Z$/i
+  );
+  if (adGeneralizedMatch) {
+    const [, year, month, day, hour, minute, second] = adGeneralizedMatch;
+    const date = new Date(
+      Date.UTC(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        Number(hour),
+        Number(minute),
+        Number(second)
+      )
+    );
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 function buildAdBindPrincipal(params: {
@@ -224,6 +264,7 @@ async function tryAuthenticateProvider(params: {
         'sAMAccountName',
         'userPrincipalName',
         'uid',
+        'whenCreated',
       ],
       sizeLimit: 5,
     });
@@ -255,6 +296,8 @@ async function tryAuthenticateProvider(params: {
       getUserAttr(entry, 'cn') ??
       getUserAttr(entry, 'givenName') ??
       identifier;
+    const memberSince =
+      provider === 'ad' ? parseAdWhenCreated(getUserAttr(entry, 'whenCreated')) : null;
 
     // Verify password by binding as the user.
     if (!userBoundDirectly) {
@@ -306,6 +349,7 @@ async function tryAuthenticateProvider(params: {
         name: name.trim(),
         groups,
         role,
+        memberSince,
       },
     };
   } catch (error) {

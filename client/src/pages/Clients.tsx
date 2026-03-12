@@ -39,11 +39,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { clientsApi, Client } from '@/lib/api';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 import { formatCNPJ, validateCNPJ, formatPhone, validateEmail } from '@/lib/validators';
 import { CepInput, AddressData } from '@/components/CepInput';
+import { DangerZoneConfirm } from '@/components/DangerZoneConfirm';
 
 const ESTADOS_BRASIL = [
   { value: 'AC', label: 'Acre' },
@@ -101,6 +103,11 @@ const emptyFormData = {
 type ViewMode = 'cards' | 'table';
 type SortColumn = 'razaoSocial' | 'nomeFantasia' | 'cnpj' | 'cidade' | 'emailComercial' | 'telefoneComercial';
 type SortDirection = 'asc' | 'desc';
+type FormTab = 'dados' | 'endereco' | 'contatos';
+
+const REQUIRED_FIELDS: Array<{ key: keyof typeof emptyFormData; label: string; tab: FormTab }> = [
+  { key: 'razaoSocial', label: 'Razão Social', tab: 'dados' },
+];
 
 export default function Clients() {
   const queryClient = useQueryClient();
@@ -112,11 +119,13 @@ export default function Clients() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [activeFormTab, setActiveFormTab] = useState<FormTab>('dados');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const [showFullColumnsMobile, setShowFullColumnsMobile] = useState(false);
   const [sortColumn, setSortColumn] = useState<SortColumn>('razaoSocial');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+  const [deleteConfirmClientInput, setDeleteConfirmClientInput] = useState('');
 
   useEffect(() => {
     const savedViewMode = localStorage.getItem('clientsViewMode') as ViewMode;
@@ -213,42 +222,70 @@ export default function Clients() {
     setEditingClient(null);
     setFormData(emptyFormData);
     setFieldErrors({});
+    setActiveFormTab('dados');
   };
+
+  const mapClientToFormData = (client: Client) => ({
+    cnpj: client.cnpj || '',
+    razaoSocial: client.razaoSocial,
+    nomeFantasia: client.nomeFantasia || '',
+    pais: client.pais || 'Brasil',
+    cep: client.cep || '',
+    rua: client.rua || '',
+    numero: client.numero || '',
+    complemento: client.complemento || '',
+    bairro: client.bairro || '',
+    cidade: client.cidade || '',
+    estado: client.estado || '',
+    nomeComercial: client.nomeComercial || '',
+    emailComercial: client.emailComercial || '',
+    telefoneComercial: client.telefoneComercial || '',
+    nomeMedicao: client.nomeMedicao || '',
+    emailMedicao: client.emailMedicao || '',
+    telefoneMedicao: client.telefoneMedicao || '',
+    nomeTecnico: client.nomeTecnico || '',
+    emailTecnico: client.emailTecnico || '',
+    telefoneTecnico: client.telefoneTecnico || '',
+  });
 
   const openEditDialog = (client: Client) => {
     setEditingClient(client);
-    setFormData({
-      cnpj: client.cnpj || '',
-      razaoSocial: client.razaoSocial,
-      nomeFantasia: client.nomeFantasia || '',
-      pais: client.pais || 'Brasil',
-      cep: client.cep || '',
-      rua: client.rua || '',
-      numero: client.numero || '',
-      complemento: client.complemento || '',
-      bairro: client.bairro || '',
-      cidade: client.cidade || '',
-      estado: client.estado || '',
-      nomeComercial: client.nomeComercial || '',
-      emailComercial: client.emailComercial || '',
-      telefoneComercial: client.telefoneComercial || '',
-      nomeMedicao: client.nomeMedicao || '',
-      emailMedicao: client.emailMedicao || '',
-      telefoneMedicao: client.telefoneMedicao || '',
-      nomeTecnico: client.nomeTecnico || '',
-      emailTecnico: client.emailTecnico || '',
-      telefoneTecnico: client.telefoneTecnico || '',
-    });
+    setFormData(mapClientToFormData(client));
     setFieldErrors({});
+    setActiveFormTab('dados');
     setDialogOpen(true);
   };
 
+  const missingRequiredFields = REQUIRED_FIELDS.filter(({ key }) => !String(formData[key] || '').trim());
+  const missingRequiredTabs = new Set<FormTab>(missingRequiredFields.map(({ tab }) => tab));
+  const hasMissingRequiredFields = missingRequiredFields.length > 0;
   const hasValidationErrors = Object.keys(fieldErrors).length > 0;
+  const hasEditChanges = !editingClient || JSON.stringify(formData) !== JSON.stringify(mapClientToFormData(editingClient));
+  const isSubmitting = createMutation.isPending || updateMutation.isPending;
+  const isSaveDisabled = isSubmitting || hasValidationErrors || hasMissingRequiredFields || (Boolean(editingClient) && !hasEditChanges);
+  const disabledReason =
+    isSubmitting
+      ? 'Salvando cliente...'
+      : hasMissingRequiredFields
+        ? `Preencha os campos obrigatórios: ${missingRequiredFields.map(({ label }) => label).join(', ')}`
+        : hasValidationErrors
+          ? 'Corrija os campos inválidos para continuar'
+          : Boolean(editingClient) && !hasEditChanges
+            ? 'Nenhuma alteração para salvar'
+            : '';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.razaoSocial.trim()) {
-      toast({ title: 'Razão Social é obrigatória', variant: 'destructive' });
+    if (hasMissingRequiredFields) {
+      setActiveFormTab(missingRequiredFields[0].tab);
+      toast({
+        title: 'Preencha os campos obrigatórios',
+        description: missingRequiredFields.map(({ label }) => label).join(', '),
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (editingClient && !hasEditChanges) {
       return;
     }
     if (formData.cnpj && formData.cnpj.replace(/\D/g, '').length > 0) {
@@ -443,19 +480,34 @@ export default function Clients() {
                 </DialogTitle>
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-6">
-                <Tabs defaultValue="dados" className="w-full">
+                <Tabs value={activeFormTab} onValueChange={(value) => setActiveFormTab(value as FormTab)} className="w-full">
                   <TabsList className="grid w-full grid-cols-3">
                     <TabsTrigger value="dados" className="flex items-center gap-2">
                       <Building2 className="h-4 w-4" />
                       Dados
+                      {missingRequiredTabs.has('dados') && (
+                        <span className="inline-flex h-4 w-4 animate-pulse items-center justify-center rounded-full border border-amber-300 bg-amber-100 text-[10px] font-bold leading-none text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-300" title="Campos obrigatórios pendentes nesta aba">
+                          !
+                        </span>
+                      )}
                     </TabsTrigger>
                     <TabsTrigger value="endereco" className="flex items-center gap-2">
                       <MapPin className="h-4 w-4" />
                       Endereço
+                      {missingRequiredTabs.has('endereco') && (
+                        <span className="inline-flex h-4 w-4 animate-pulse items-center justify-center rounded-full border border-amber-300 bg-amber-100 text-[10px] font-bold leading-none text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-300" title="Campos obrigatórios pendentes nesta aba">
+                          !
+                        </span>
+                      )}
                     </TabsTrigger>
                     <TabsTrigger value="contatos" className="flex items-center gap-2">
                       <Users className="h-4 w-4" />
                       Contatos
+                      {missingRequiredTabs.has('contatos') && (
+                        <span className="inline-flex h-4 w-4 animate-pulse items-center justify-center rounded-full border border-amber-300 bg-amber-100 text-[10px] font-bold leading-none text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-300" title="Campos obrigatórios pendentes nesta aba">
+                          !
+                        </span>
+                      )}
                     </TabsTrigger>
                   </TabsList>
 
@@ -719,13 +771,26 @@ export default function Clients() {
                   <Button type="button" variant="outline" onClick={closeDialog} className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50">
                     Cancelar
                   </Button>
-                  <Button
-                    type="submit"
-                    data-testid="button-save-client"
-                    disabled={createMutation.isPending || updateMutation.isPending || hasValidationErrors}
-                  >
-                    {createMutation.isPending || updateMutation.isPending ? 'Salvando...' : 'Confirmar'}
-                  </Button>
+                  <TooltipProvider delayDuration={150}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button
+                            type="submit"
+                            data-testid="button-save-client"
+                            disabled={isSaveDisabled}
+                          >
+                            {isSubmitting ? 'Salvando...' : 'Confirmar'}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {isSaveDisabled && disabledReason && (
+                        <TooltipContent side="top" align="end" className="max-w-[260px] whitespace-normal break-words">
+                          <p>{disabledReason}</p>
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
               </form>
             </DialogContent>
@@ -964,6 +1029,7 @@ export default function Clients() {
           onOpenChange={(open) => {
             if (!open && !deleteMutation.isPending) {
               setClientToDelete(null);
+              setDeleteConfirmClientInput('');
             }
           }}
         >
@@ -974,13 +1040,28 @@ export default function Clients() {
                 Esta ação não pode ser desfeita. O cliente “{clientToDelete?.razaoSocial}” será removido.
               </AlertDialogDescription>
             </AlertDialogHeader>
+
+            <DangerZoneConfirm
+              description="Para confirmar a exclusão, digite o nome do cliente exatamente como abaixo:"
+              expectedValue={clientToDelete?.razaoSocial || ''}
+              value={deleteConfirmClientInput}
+              onValueChange={setDeleteConfirmClientInput}
+              inputTestId={clientToDelete ? `input-confirm-delete-client-${clientToDelete.id}` : undefined}
+              inputPlaceholder="Digite o nome do cliente para confirmar"
+            />
+
             <AlertDialogFooter>
               <AlertDialogCancel disabled={deleteMutation.isPending}>Cancelar</AlertDialogCancel>
               <AlertDialogAction
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                disabled={deleteMutation.isPending || !clientToDelete}
+                disabled={
+                  deleteMutation.isPending ||
+                  !clientToDelete ||
+                  deleteConfirmClientInput.trim() !== (clientToDelete.razaoSocial || '')
+                }
                 onClick={() => {
                   if (!clientToDelete) return;
+                  if (deleteConfirmClientInput.trim() !== (clientToDelete.razaoSocial || '')) return;
                   deleteMutation.mutate(clientToDelete.id);
                 }}
               >

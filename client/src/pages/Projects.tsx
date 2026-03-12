@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,16 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Table,
   TableBody,
@@ -40,6 +50,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { projectsApi, clientsApi, Project, Client } from '@/lib/api';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
+import { DangerZoneConfirm } from '@/components/DangerZoneConfirm';
 
 const statusColors: Record<string, string> = {
   planning: 'bg-gray-500',
@@ -59,13 +70,25 @@ const statusLabels: Record<string, string> = {
   cancelled: 'Cancelado',
 };
 
+function parseQueryList(value: string | null): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function normalizeFilterValue(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
 type ViewMode = 'cards' | 'table';
 type SortOrder = 'recent' | 'oldest' | 'name_asc' | 'value_desc';
 
 export default function Projects() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const [sortOrder, setSortOrder] = useState<SortOrder>('recent');
@@ -84,6 +107,8 @@ export default function Projects() {
   const [hoursMax, setHoursMax] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+  const [deleteConfirmProjectInput, setDeleteConfirmProjectInput] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -92,6 +117,57 @@ export default function Projects() {
     budgetValue: '',
     dailyLimitHours: '8',
   });
+
+  useEffect(() => {
+    const queryStringFromLocation = location.includes('?') ? location.split('?')[1] ?? '' : '';
+    const queryStringFromWindow = typeof window !== 'undefined'
+      ? window.location.search.replace(/^\?/, '')
+      : '';
+    const queryString = queryStringFromLocation || queryStringFromWindow;
+    const params = new URLSearchParams(queryString);
+
+    const statusFromList = parseQueryList(params.get('statuses'));
+    const statusSingle = parseQueryList(params.get('status'));
+    const nextStatusFilters = Array.from(new Set([...statusFromList, ...statusSingle]));
+    const nextClientFilter = (params.get('clientId') ?? params.get('client') ?? '').trim();
+
+    setSearch(params.get('search') ?? '');
+    setStatusFilters(nextStatusFilters);
+    setClientFilter(nextClientFilter);
+
+    if (nextStatusFilters.length > 0 || nextClientFilter) {
+      setFiltersOpen(true);
+    }
+
+    setCurrentPage(1);
+  }, [location]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const normalizedStatuses = Array.from(
+      new Set(statusFilters.map(normalizeFilterValue).filter(Boolean))
+    );
+    const nextSearch = search.trim();
+    const nextClient = clientFilter.trim();
+
+    ['search', 'statuses', 'status', 'clientId', 'client'].forEach((key) => {
+      params.delete(key);
+    });
+
+    if (nextSearch) params.set('search', nextSearch);
+    if (normalizedStatuses.length) params.set('statuses', normalizedStatuses.join(','));
+    if (nextClient) params.set('clientId', nextClient);
+
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
+  }, [search, statusFilters, clientFilter]);
 
   useEffect(() => {
     const savedViewMode = localStorage.getItem('projectsViewMode') as ViewMode;
@@ -173,6 +249,23 @@ export default function Projects() {
     },
     onError: (error) => {
       toast({ title: 'Erro ao criar projeto', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => projectsApi.delete(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      toast({ title: 'Projeto excluído com sucesso', variant: 'success' });
+      if (selectedProjectId === id) {
+        setDetailsOpen(false);
+        setSelectedProjectId(null);
+      }
+      setProjectToDelete(null);
+      setDeleteConfirmProjectInput('');
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao excluir projeto', description: error.message, variant: 'destructive' });
     },
   });
 
@@ -273,7 +366,9 @@ export default function Projects() {
         p.name.toLowerCase().includes(search.toLowerCase()) ||
         p.code.toLowerCase().includes(search.toLowerCase());
 
-      const statusMatch = statusFilters.length === 0 || statusFilters.includes(p.status);
+      const projectStatus = normalizeFilterValue(p.status);
+      const normalizedStatusFilters = statusFilters.map(normalizeFilterValue);
+      const statusMatch = normalizedStatusFilters.length === 0 || normalizedStatusFilters.includes(projectStatus);
       const clientMatch = !clientFilter || p.clientId === clientFilter;
 
       const dateMatch = (() => {
@@ -756,6 +851,18 @@ export default function Projects() {
                             <Clock className="h-3 w-3 mr-1" />
                             Horas
                           </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            data-testid={`button-delete-project-table-${project.id}`}
+                            onClick={() => {
+                              setProjectToDelete(project);
+                              setDeleteConfirmProjectInput('');
+                            }}
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Excluir
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -814,6 +921,18 @@ export default function Projects() {
                         <Clock className="h-3 w-3 mr-1" />
                         Horas
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid={`button-delete-project-${project.id}`}
+                        onClick={() => {
+                          setProjectToDelete(project);
+                          setDeleteConfirmProjectInput('');
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3 mr-1" />
+                        Excluir
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
@@ -821,6 +940,52 @@ export default function Projects() {
             ))}
           </div>
         )}
+
+        <AlertDialog
+          open={Boolean(projectToDelete)}
+          onOpenChange={(open) => {
+            if (!open && !deleteMutation.isPending) {
+              setProjectToDelete(null);
+              setDeleteConfirmProjectInput('');
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Excluir projeto?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esta ação não pode ser desfeita. O projeto “{projectToDelete?.code}” será removido.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            <DangerZoneConfirm
+              description="Para confirmar a exclusão, digite o código do projeto exatamente como abaixo:"
+              expectedValue={projectToDelete?.code || ''}
+              value={deleteConfirmProjectInput}
+              onValueChange={setDeleteConfirmProjectInput}
+              inputTestId={projectToDelete ? `input-confirm-delete-project-${projectToDelete.id}` : undefined}
+            />
+
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteMutation.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={
+                  deleteMutation.isPending ||
+                  !projectToDelete ||
+                  deleteConfirmProjectInput.trim() !== (projectToDelete.code || '')
+                }
+                onClick={() => {
+                  if (!projectToDelete) return;
+                  if (deleteConfirmProjectInput.trim() !== (projectToDelete.code || '')) return;
+                  deleteMutation.mutate(projectToDelete.id);
+                }}
+              >
+                {deleteMutation.isPending ? 'Excluindo...' : 'Excluir'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {filteredProjects.length > 0 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 flex-shrink-0">

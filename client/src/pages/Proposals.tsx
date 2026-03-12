@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star, Maximize2, Minimize2, PanelRightClose, Trash2 } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star, StarOff, Maximize2, Minimize2, PanelRightClose, Trash2, Edit, Eye, Download, Upload, LayoutGrid, List, GripVertical } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -77,6 +77,7 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { CategoryValuesDrawer } from '@/components/CategoryValuesDrawer';
+import { DangerZoneConfirm } from '@/components/DangerZoneConfirm';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 
 const statusColors: Record<string, string> = {
@@ -131,6 +132,25 @@ const proposalStatusOptions: Array<{ value: string; label: string }> = [
   { value: 'declinio', label: 'Declínio' },
 ];
 
+const funnelQueryStatusMap: Record<string, string[]> = {
+  elaboracao: ['em_elaboracao', 'draft'],
+  analise: ['em_analise', 'in_review', 'sent', 'negotiating'],
+  ganho: ['com_sucesso', 'sucesso_aditivo', 'approved', 'converted', 'aprovada', 'convertida', 'sucesso'],
+  perdido: ['nao_sucesso', 'rejected', 'cancelada', 'cancelled', 'declinio'],
+};
+
+function parseQueryList(value: string | null): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function normalizeFilterValue(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
 const mainTypeOptions: string[] = [
   'ATO/Fiscalização de campo',
   'Acessos',
@@ -174,7 +194,7 @@ interface ColumnConfig {
   category: 'basic' | 'classification' | 'values' | 'dates' | 'people';
 }
 
-const COLUMNS_VERSION = 6;
+const COLUMNS_VERSION = 8;
 
 const defaultColumns: ColumnConfig[] = [
   { id: 'code', label: 'Código da proposta', visible: true, width: 'min-w-[90px]', category: 'basic' },
@@ -195,15 +215,16 @@ const defaultColumns: ColumnConfig[] = [
   { id: 'termMonths', label: 'Prazo (em meses)', visible: false, width: 'min-w-[70px]', category: 'values' },
   { id: 'riskAssessment', label: 'Aval. do risco', visible: false, width: 'min-w-[70px]', category: 'values' },
   { id: 'acquisitionMargin', label: '% contratação', visible: false, width: 'min-w-[70px]', category: 'values' },
-  { id: 'additiveValue', label: 'Aditivos', visible: false, width: 'min-w-[60px]', category: 'values' },
-  { id: 'expense', label: 'Despesas', visible: false, width: 'min-w-[60px]', category: 'values' },
-  { id: 'discount', label: 'Valor do desconto', visible: false, width: 'min-w-[60px]', category: 'values' },
-  { id: 'subcontracted', label: 'Vl. sub proposta', visible: false, width: 'min-w-[80px]', category: 'values' },
-  { id: 'quantity', label: 'Qtd proposta', visible: false, width: 'min-w-[70px]', category: 'values' },
+  { id: 'hourJustification', label: 'Valor da mobilização', visible: false, width: 'min-w-[80px]', category: 'values' },
+  { id: 'subcontracted', label: 'Valor da subcontratação', visible: false, width: 'min-w-[80px]', category: 'values' },
   { id: 'categoryValues', label: 'Valores por categoria', visible: false, width: 'w-32', category: 'values' },
+  { id: 'expense', label: 'Despesas', visible: false, width: 'min-w-[60px]', category: 'values' },
+  { id: 'additiveValue', label: 'Aditivos', visible: false, width: 'min-w-[60px]', category: 'values' },
+  { id: 'discount', label: 'Valor do desconto', visible: false, width: 'min-w-[60px]', category: 'values' },
+  { id: 'totalValue', label: 'Valor total da proposta', visible: false, width: 'w-32', category: 'values' },
+  { id: 'quantity', label: 'Qtd proposta', visible: false, width: 'min-w-[70px]', category: 'values' },
   { id: 'contractCode', label: 'Código do contrato', visible: false, width: 'w-28', category: 'basic' },
   { id: 'workOrders', label: 'OAs', visible: false, width: 'w-20', category: 'basic' },
-  { id: 'totalValue', label: 'Valor total da proposta', visible: false, width: 'w-32', category: 'values' },
   { id: 'description', label: 'Observação', visible: false, width: 'min-w-[80px]', category: 'basic' },
 ];
 
@@ -308,6 +329,8 @@ export default function Proposals() {
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [detailFullscreen, setDetailFullscreen] = useState(false);
   const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
+  const [deleteConfirmProposalId, setDeleteConfirmProposalId] = useState<string | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [expensesProposal, setExpensesProposal] = useState<Proposal | null>(null);
   const [additivesProposal, setAdditivesProposal] = useState<Proposal | null>(null);
@@ -345,6 +368,9 @@ export default function Proposals() {
   const [itemsPerPage, setItemsPerPage] = useState(15);
   const [columns, setColumns] = useState<ColumnConfig[]>(defaultColumns);
   const [columnConfigOpen, setColumnConfigOpen] = useState(false);
+  const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
+  const [draggedHeaderColumnId, setDraggedHeaderColumnId] = useState<string | null>(null);
+  const [draggedOverflowColumnId, setDraggedOverflowColumnId] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [showFullColumnsMobile, setShowFullColumnsMobile] = useState(false);
 
@@ -687,21 +713,48 @@ export default function Proposals() {
     return null;
   }, [additiveForm.mobilizationValue, additiveForm.readjustValue, additiveForm.subcontractValue, additiveForm.termMonths, createAdditiveMutation.isPending, editingAdditiveId, isEditingAdditiveDirty, parseMoneyMaskOrZero, parseTermMonthsInput, updateAdditiveMutation.isPending]);
 
-  useEffect(() => {
-    const queryString = location.split('?')[1] ?? '';
-    const params = new URLSearchParams(queryString);
-    setSearch(params.get('search') ?? '');
-  }, [location]);
-    
   const [formData, setFormData] = useState({
+    umbrellaRef: '',
+    code: '',
     title: '',
     description: '',
     clientId: '',
-    type: 'fixed_price',
-    totalValue: '',
-    estimatedHours: '',
     coordinatorName: '',
+    type: 'fixed_price',
+    createdAt: '',
+    sentDate: '',
+    dueDate: '',
+    updatedAt: '',
+    status: 'em_elaboracao',
+    expectation: '',
+    mainType: '',
+    termMonths: '',
+    riskAssessment: '',
+    hourJustification: '',
+    subcontracted: '',
+    discount: '',
+    coordinatorId: '',
+    proposalOrigin: '',
   });
+  type CreateFormData = typeof formData;
+  type CreateFormField = keyof CreateFormData;
+  const [createAttemptedSubmit, setCreateAttemptedSubmit] = useState(false);
+
+  const createValidationErrors = useMemo(() => {
+    const errors: Partial<Record<CreateFormField, string>> = {};
+    if (!formData.title.trim()) errors.title = 'Campo obrigatório';
+    if (!formData.clientId) errors.clientId = 'Campo obrigatório';
+    if (!formData.type) errors.type = 'Campo obrigatório';
+    if (!formData.coordinatorName) errors.coordinatorName = 'Campo obrigatório';
+    if (!formData.riskAssessment) errors.riskAssessment = 'Campo obrigatório';
+    if (formData.type === 'service_order' && !formData.umbrellaRef) errors.umbrellaRef = 'Campo obrigatório';
+    return errors;
+  }, [formData]);
+
+  const isCreateValid = Object.keys(createValidationErrors).length === 0;
+
+  const shouldShowCreateError = (field: CreateFormField) =>
+    createAttemptedSubmit && Boolean(createValidationErrors[field]);
   const [editFormData, setEditFormData] = useState({
     type: 'fixed_price',
     umbrellaRef: '',
@@ -750,6 +803,60 @@ export default function Proposals() {
   const [clientFilter, setClientFilter] = useState('');
   const [conversionFilter, setConversionFilter] = useState<'all' | 'converted' | 'not_converted'>('all');
   const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
+
+  useEffect(() => {
+    const queryStringFromLocation = location.includes('?') ? location.split('?')[1] ?? '' : '';
+    const queryStringFromWindow = typeof window !== 'undefined'
+      ? window.location.search.replace(/^\?/, '')
+      : '';
+    const queryString = queryStringFromLocation || queryStringFromWindow;
+    const params = new URLSearchParams(queryString);
+
+    const statusFromList = parseQueryList(params.get('statuses'));
+    const statusSingle = parseQueryList(params.get('status'));
+    const funnelKeys = parseQueryList(params.get('funnel'));
+    const funnelStatuses = funnelKeys.flatMap((funnelKey) => funnelQueryStatusMap[funnelKey] ?? []);
+
+    const nextStatusFilters = Array.from(new Set([...statusFromList, ...statusSingle, ...funnelStatuses]));
+    const nextClientFilter = (params.get('clientId') ?? params.get('client') ?? '').trim();
+
+    setSearch(params.get('search') ?? '');
+    setStatusFilters(nextStatusFilters);
+    setClientFilter(nextClientFilter);
+
+    if (nextStatusFilters.length > 0 || nextClientFilter) {
+      setFiltersOpen(true);
+    }
+
+    setCurrentPage(1);
+  }, [location]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const normalizedStatuses = Array.from(
+      new Set(statusFilters.map(normalizeFilterValue).filter(Boolean))
+    );
+    const nextSearch = search.trim();
+    const nextClient = clientFilter.trim();
+
+    ['search', 'statuses', 'status', 'clientId', 'client', 'funnel'].forEach((key) => {
+      params.delete(key);
+    });
+
+    if (nextSearch) params.set('search', nextSearch);
+    if (normalizedStatuses.length) params.set('statuses', normalizedStatuses.join(','));
+    if (nextClient) params.set('clientId', nextClient);
+
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
+  }, [search, statusFilters, clientFilter]);
 
   // Sort states
   const [sortColumn, setSortColumn] = useState<string>('code');
@@ -878,6 +985,19 @@ export default function Proposals() {
 
   const resetColumns = () => {
     saveColumnPreferences(defaultColumns);
+  };
+
+  const reorderColumns = (sourceId: string, targetId: string) => {
+    if (!sourceId || !targetId || sourceId === targetId) return;
+
+    const sourceIndex = columns.findIndex((col) => col.id === sourceId);
+    const targetIndex = columns.findIndex((col) => col.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+
+    const reordered = [...columns];
+    const [moved] = reordered.splice(sourceIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+    saveColumnPreferences(reordered);
   };
 
   const visibleColumns = columns.filter(col => col.visible);
@@ -1090,14 +1210,47 @@ export default function Proposals() {
     queryFn: () => usersApi.list(),
   });
 
-  const activeUserNames = useMemo(() => {
-    return new Set(
-      users
-        .filter((u) => u.isActive)
-        .map((u) => (u.name || '').trim())
-        .filter(Boolean)
+  const activeResponsibleNames = useMemo(() => {
+    const uniqueByNormalizedName = new Map<string, string>();
+
+    users
+      .filter((u) => u.isActive)
+      .forEach((u) => {
+        const name = String(u.name || '').trim();
+        if (!name) return;
+        const normalizedName = name.toLocaleLowerCase('pt-BR');
+        if (!uniqueByNormalizedName.has(normalizedName)) {
+          uniqueByNormalizedName.set(normalizedName, name);
+        }
+      });
+
+    return Array.from(uniqueByNormalizedName.values()).sort((a, b) =>
+      a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
     );
   }, [users]);
+
+  const activeProjectCoordinators = useMemo(() => {
+    const sortedActiveUsers = users
+      .filter((u) => u.isActive)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }));
+
+    const uniqueByNormalizedName = new Map<string, { id: string; name: string }>();
+
+    sortedActiveUsers.forEach((u) => {
+      const name = String(u.name || '').trim();
+      if (!name) return;
+      const normalizedName = name.toLocaleLowerCase('pt-BR');
+      if (!uniqueByNormalizedName.has(normalizedName)) {
+        uniqueByNormalizedName.set(normalizedName, { id: u.id, name });
+      }
+    });
+
+    return Array.from(uniqueByNormalizedName.values());
+  }, [users]);
+
+  const activeUserNames = useMemo(() => {
+    return new Set(activeResponsibleNames.map((name) => name.toLocaleLowerCase('pt-BR')));
+  }, [activeResponsibleNames]);
 
   const userNameById = useMemo(() => {
     return new Map(users.map((u) => [u.id, u.name] as const));
@@ -1111,7 +1264,10 @@ export default function Proposals() {
     if (!data.clientId) errors.clientId = 'Campo obrigatório';
     if (!data.coordinatorName) {
       errors.coordinatorName = 'Campo obrigatório';
-    } else if (activeUserNames.size > 0 && !activeUserNames.has(String(data.coordinatorName).trim())) {
+    } else if (
+      activeUserNames.size > 0 &&
+      !activeUserNames.has(String(data.coordinatorName).trim().toLocaleLowerCase('pt-BR'))
+    ) {
       errors.coordinatorName = 'Selecione um responsável';
     }
     if (!data.title?.trim()) errors.title = 'Campo obrigatório';
@@ -1169,6 +1325,28 @@ export default function Proposals() {
       toast({ title: 'Erro ao criar proposta', description: error.message, variant: 'destructive' });
     },
   });
+
+  const createDisabledReason = useMemo(() => {
+    if (createMutation.isPending) return 'Salvando proposta...';
+    if (isCreateValid) return null;
+
+    const fieldLabels: Partial<Record<CreateFormField, string>> = {
+      title: 'Título',
+      clientId: 'Cliente',
+      type: 'Tipo do contrato',
+      coordinatorName: 'Responsável pela proposta',
+      riskAssessment: 'Avaliação de risco',
+      umbrellaRef: 'Proposta original (guarda-chuva)',
+    };
+
+    const pending = Object.keys(createValidationErrors)
+      .map((key) => key as CreateFormField)
+      .map((key) => fieldLabels[key])
+      .filter((label): label is string => Boolean(label));
+
+    if (pending.length === 0) return 'Preencha os campos obrigatórios para salvar.';
+    return `Campos obrigatórios pendentes:\n${pending.map((label) => `• ${label}`).join('\n')}`;
+  }, [createMutation.isPending, createValidationErrors, isCreateValid]);
 
   const convertMutation = useMutation({
     mutationFn: (proposalId: string) => proposalsApi.convert(proposalId),
@@ -1292,9 +1470,9 @@ export default function Proposals() {
       mainType: proposal.mainType || '',
       termMonths: proposal.termMonths !== undefined && proposal.termMonths !== null ? String(proposal.termMonths) : '',
       riskAssessment: proposal.riskAssessment || 'Não',
-      hourJustification: proposal.hourJustification !== undefined && proposal.hourJustification !== null ? String(proposal.hourJustification) : '',
-      subcontracted: proposal.subcontracted !== undefined && proposal.subcontracted !== null ? String(proposal.subcontracted) : '',
-      discount: proposal.discount || '',
+      hourJustification: formatMoneyFromValue(proposal.hourJustification),
+      subcontracted: formatMoneyFromValue(proposal.subcontracted),
+      discount: formatMoneyFromValue(proposal.discount),
       coordinatorId: proposal.coordinatorId || '',
       description: proposal.description || '',
       proposalOrigin: proposal.proposalOrigin || '',
@@ -1341,9 +1519,9 @@ export default function Proposals() {
         mainType: editFormData.mainType || null,
         termMonths: editFormData.termMonths ? parseInt(editFormData.termMonths) : null,
         riskAssessment: editFormData.riskAssessment || null,
-        hourJustification: editFormData.hourJustification ? parseFloat(editFormData.hourJustification) : null,
-        subcontracted: editFormData.subcontracted ? parseFloat(editFormData.subcontracted) : null,
-        discount: editFormData.discount || null,
+        hourJustification: editFormData.hourJustification ? parseMoneyMaskToNumber(editFormData.hourJustification) : null,
+        subcontracted: editFormData.subcontracted ? parseMoneyMaskToNumber(editFormData.subcontracted) : null,
+        discount: editFormData.discount ? formatMoneyMask(editFormData.discount) : null,
         coordinatorId: editFormData.coordinatorId || null,
         description: editFormData.description || null,
         proposalOrigin: editFormData.proposalOrigin || null,
@@ -1353,47 +1531,104 @@ export default function Proposals() {
 
   const closeDialog = () => {
     setDialogOpen(false);
+    setCreateAttemptedSubmit(false);
     setFormData({
+      umbrellaRef: '',
+      code: '',
       title: '',
       description: '',
       clientId: '',
-      type: 'fixed_price',
-      totalValue: '',
-      estimatedHours: '',
       coordinatorName: '',
+      type: 'fixed_price',
+      createdAt: '',
+      sentDate: '',
+      dueDate: '',
+      updatedAt: '',
+      status: 'em_elaboracao',
+      expectation: '',
+      mainType: '',
+      termMonths: '',
+      riskAssessment: '',
+      hourJustification: '',
+      subcontracted: '',
+      discount: '',
+      coordinatorId: '',
+      proposalOrigin: '',
     });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setCreateAttemptedSubmit(true);
+
+    if (!isCreateValid) {
+      toast({ title: 'Preencha os campos obrigatórios', variant: 'destructive' });
+      return;
+    }
+
+    const toPrismaDateTime = (dateOnly: string): string | undefined => {
+      if (!dateOnly) return undefined;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return undefined;
+      return `${dateOnly}T00:00:00.000Z`;
+    };
+
     createMutation.mutate({
-      ...formData,
-      totalValue: parseFloat(formData.totalValue) || 0,
-      estimatedHours: parseInt(formData.estimatedHours) || 0,
+      type: formData.type,
+      umbrellaRef: formData.type === 'service_order' ? (formData.umbrellaRef || null) : null,
+      clientId: formData.clientId,
+      coordinatorName: formData.coordinatorName,
+      title: formData.title,
+      createdAt: toPrismaDateTime(formData.createdAt),
+      sentDate: toPrismaDateTime(formData.sentDate),
+      dueDate: toPrismaDateTime(formData.dueDate),
+      status: formData.status,
+      expectation: formData.expectation || null,
+      mainType: formData.mainType || null,
+      termMonths: formData.termMonths ? parseInt(formData.termMonths, 10) : null,
+      riskAssessment: formData.riskAssessment || null,
+      hourJustification: formData.hourJustification ? parseMoneyMaskToNumber(formData.hourJustification) : null,
+      subcontracted: formData.subcontracted ? parseMoneyMaskToNumber(formData.subcontracted) : null,
+      discount: formData.discount ? formatMoneyMask(formData.discount) : null,
+      coordinatorId: formData.coordinatorId || null,
+      description: formData.description || null,
+      proposalOrigin: formData.proposalOrigin || null,
+      totalValue: 0,
+      estimatedHours: 0,
     });
   };
 
+  const parseMoneyLike = useCallback((value: unknown): number => {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    const raw = String(value ?? '').trim();
+    if (!raw) return 0;
+
+    const normalized = raw.includes(',')
+      ? raw.replace(/\./g, '').replace(',', '.')
+      : raw;
+
+    const num = Number(normalized);
+    return Number.isFinite(num) ? num : 0;
+  }, []);
+
   const formatCurrency = (value: number | string | null | undefined) => {
-    const numValue = typeof value === 'string' ? parseFloat(value) : (value || 0);
+    const numValue = parseMoneyLike(value);
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(numValue);
   };
 
   const getProposalTotalValue = useCallback((proposal: Proposal): number => {
-    const categoryBaseRaw = (proposal as any).categoryValuesTotal;
-    const categoryBase = typeof categoryBaseRaw === 'number' ? categoryBaseRaw : Number(categoryBaseRaw);
-    const baseValue = Number.isFinite(categoryBase) && categoryBase > 0
-      ? categoryBase
-      : Number(proposal.totalValue || 0);
+    const mobilization = parseMoneyLike((proposal as any).hourJustification);
+    const subcontracted = parseMoneyLike((proposal as any).subcontracted);
+    const categoryValues = parseMoneyLike((proposal as any).categoryValuesTotal);
+    const expense = parseMoneyLike((proposal as any).expense);
+    const additiveValue = parseMoneyLike((proposal as any).additiveValue);
+    const discount = parseMoneyLike((proposal as any).discount);
 
-    const expense = Number((proposal as any).expense || 0);
-    const additiveValue = Number((proposal as any).additiveValue || 0);
-    const subcontracted = Number((proposal as any).subcontracted || 0);
-    const resource = Number((proposal as any).resource || 0);
-    const paymentBook = Number((proposal as any).paymentBook || 0);
-
-    const sum = baseValue + expense + additiveValue + subcontracted + resource + paymentBook;
-    return Number.isFinite(sum) ? sum : 0;
-  }, []);
+    const total = mobilization + subcontracted + categoryValues + expense + additiveValue - discount;
+    return Number.isFinite(total) ? total : 0;
+  }, [parseMoneyLike]);
 
   const formatDate = (dateStr?: string | null) => {
     if (!dateStr) return '-';
@@ -1418,7 +1653,9 @@ export default function Proposals() {
         p.client?.razaoSocial?.toLowerCase().includes(search.toLowerCase()) ||
         p.client?.cnpj?.toLowerCase().includes(search.toLowerCase());
 
-      const statusMatch = statusFilters.length === 0 || statusFilters.includes(p.status);
+      const proposalStatus = normalizeFilterValue(p.status);
+      const normalizedStatusFilters = statusFilters.map(normalizeFilterValue);
+      const statusMatch = normalizedStatusFilters.length === 0 || normalizedStatusFilters.includes(proposalStatus);
       const typeMatch = typeFilters.length === 0 || typeFilters.includes(p.type);
       
       // Date filter
@@ -1444,7 +1681,7 @@ export default function Proposals() {
       const coordMatch = !coordinatorFilter || p.coordinatorName === coordinatorFilter;
 
       // Client filter
-      const clientMatch = !clientFilter || p.clientId === clientFilter;
+      const clientMatch = !clientFilter || String(p.clientId ?? '') === String(clientFilter);
 
       // Conversion filter
       const conversionMatch = (() => {
@@ -1562,6 +1799,9 @@ export default function Proposals() {
     setCurrentPage(1);
   };
 
+  const tableValueClassName = 'text-sm font-normal leading-normal';
+  const tableValueLinkClassName = `${tableValueClassName} text-primary hover:text-primary/90`;
+
   const getCellValue = (proposal: Proposal, columnId: string) => {
     switch (columnId) {
       case 'code':
@@ -1599,7 +1839,7 @@ export default function Proposals() {
           </span>
         );
       case 'totalValue':
-        return <span className="font-medium">{formatCurrency(getProposalTotalValue(proposal))}</span>;
+        return <span className={tableValueClassName}>{formatCurrency(getProposalTotalValue(proposal))}</span>;
       case 'coordinatorName':
         return proposal.coordinatorName || '-';
       case 'specialist':
@@ -1641,15 +1881,16 @@ export default function Proposals() {
       case 'maintenanceNum':
         return (proposal as any).maintenanceNum || '-';
       case 'subcontracted':
-        return (proposal as any).subcontracted || '-';
+        return (proposal as any).subcontracted !== null && (proposal as any).subcontracted !== undefined && String((proposal as any).subcontracted).trim() !== ''
+          ? <span className={tableValueClassName}>{formatCurrency((proposal as any).subcontracted)}</span>
+          : <span className={tableValueClassName}>-</span>;
       case 'acquisitionMargin':
         return (proposal as any).acquisitionMargin || '-';
       case 'expense':
         return (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-primary hover-elevate underline-offset-4 hover:underline"
+          <button
+            type="button"
+            className={`${tableValueLinkClassName} underline-offset-4 hover:underline`}
             onClick={(e) => {
               e.stopPropagation();
               setExpensesProposal(proposal);
@@ -1659,12 +1900,18 @@ export default function Proposals() {
             title="Clique para ver/editar despesas"
           >
             {formatCurrency((proposal as any).expense ?? 0)}
-          </Button>
+          </button>
         );
       case 'anfibex':
         return (proposal as any).anfibex || '-';
       case 'discount':
-        return (proposal as any).discount || '-';
+        return (proposal as any).discount !== null && (proposal as any).discount !== undefined && String((proposal as any).discount).trim() !== ''
+          ? <span className={tableValueClassName}>{formatCurrency((proposal as any).discount)}</span>
+          : <span className={tableValueClassName}>-</span>;
+      case 'hourJustification':
+        return (proposal as any).hourJustification
+          ? <span className={tableValueClassName}>{formatCurrency((proposal as any).hourJustification)}</span>
+          : <span className={tableValueClassName}>-</span>;
       case 'proposalOrigin':
         return (proposal as any).proposalOrigin || '-';
       case 'quantity':
@@ -1673,10 +1920,9 @@ export default function Proposals() {
         return proposal.description || '-';
       case 'additiveValue':
         return (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-primary hover-elevate underline-offset-4 hover:underline"
+          <button
+            type="button"
+            className={`${tableValueLinkClassName} underline-offset-4 hover:underline`}
             onClick={(e) => {
               e.stopPropagation();
               setAdditivesProposal(proposal);
@@ -1686,15 +1932,14 @@ export default function Proposals() {
             title="Clique para ver/editar aditivos"
           >
             {formatCurrency((proposal as any).additiveValue ?? 0)}
-          </Button>
+          </button>
         );
       case 'categoryValues':
         const categoryTotal = (proposal as any).categoryValuesTotal || 0;
         return (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-primary hover-elevate underline-offset-4 hover:underline"
+          <button
+            type="button"
+            className={`${tableValueLinkClassName} underline-offset-4 hover:underline`}
             onClick={(e) => {
               e.stopPropagation();
               setSelectedProposal(proposal);
@@ -1704,7 +1949,7 @@ export default function Proposals() {
             title="Clique para ver valores por categoria"
           >
             {formatCurrency(categoryTotal)}
-          </Button>
+          </button>
         );
       default:
         return '-';
@@ -1732,61 +1977,37 @@ export default function Proposals() {
             </p>
           </div>
 
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(open) => {
+              if (!open) {
+                closeDialog();
+                return;
+              }
+              setDialogOpen(true);
+            }}
+          >
             <DialogTrigger asChild>
               <Button data-testid="button-new-proposal">
                 <Plus className="h-4 w-4 mr-2" />
                 Nova Proposta
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Nova Proposta</DialogTitle>
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="title">Título *</Label>
-                  <Input
-                    id="title"
-                    data-testid="input-proposal-title"
-                    value={formData.title}
-                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="description">Descrição</Label>
-                  <Textarea
-                    id="description"
-                    data-testid="input-proposal-description"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  />
-                </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Cliente *</Label>
-                    <Select
-                      value={formData.clientId}
-                      onValueChange={(value) => setFormData({ ...formData, clientId: value })}
-                    >
-                      <SelectTrigger data-testid="select-proposal-client">
-                        <SelectValue placeholder="Selecione um cliente" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {clients.map((client) => (
-                          <SelectItem key={client.id} value={client.id}>
-                            {client.razaoSocial}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Label>Código da proposta</Label>
+                    <Input value="Gerado automaticamente" disabled className="bg-muted" />
                   </div>
                   <div className="space-y-2">
-                    <Label>Tipo</Label>
+                    <Label>Tipo do contrato *</Label>
                     <Select
                       value={formData.type}
-                      onValueChange={(value) => setFormData({ ...formData, type: value })}
+                      onValueChange={(value) => setFormData({ ...formData, type: value, umbrellaRef: value === 'service_order' ? formData.umbrellaRef : '' })}
                     >
                       <SelectTrigger data-testid="select-proposal-type">
                         <SelectValue />
@@ -1800,45 +2021,367 @@ export default function Proposals() {
                     </Select>
                   </div>
                 </div>
+
+                {formData.type === 'service_order' && (
+                  <div className="space-y-2">
+                    <Label>Proposta original (guarda-chuva) *</Label>
+                    <Select
+                      value={formData.umbrellaRef || undefined}
+                      onValueChange={(value) => setFormData({ ...formData, umbrellaRef: value })}
+                    >
+                      <SelectTrigger
+                        data-testid="select-proposal-umbrella"
+                        className={shouldShowCreateError('umbrellaRef') ? 'border-destructive' : ''}
+                      >
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {proposals
+                          .filter((p) => p.type === 'umbrella')
+                          .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
+                          .map((p) => (
+                            <SelectItem key={p.id} value={p.code}>
+                              {p.title ? `${p.code} - ${p.title}` : p.code}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    {shouldShowCreateError('umbrellaRef') && (
+                      <p className="text-xs text-destructive">{createValidationErrors.umbrellaRef}</p>
+                    )}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="totalValue">Valor Total (R$)</Label>
+                    <Label>Cliente *</Label>
+                    <Select
+                      value={formData.clientId}
+                      onValueChange={(value) => setFormData({ ...formData, clientId: value })}
+                    >
+                      <SelectTrigger
+                        data-testid="select-proposal-client"
+                        className={shouldShowCreateError('clientId') ? 'border-destructive' : ''}
+                      >
+                        <SelectValue placeholder="Selecione um cliente" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clients.map((client) => (
+                          <SelectItem key={client.id} value={client.id}>
+                            {client.razaoSocial}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {shouldShowCreateError('clientId') && (
+                      <p className="text-xs text-destructive">{createValidationErrors.clientId}</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Responsável pela proposta *</Label>
+                    <Select
+                      value={formData.coordinatorName || undefined}
+                      onValueChange={(value) => setFormData({ ...formData, coordinatorName: value })}
+                    >
+                      <SelectTrigger
+                        data-testid="select-proposal-responsible"
+                        className={shouldShowCreateError('coordinatorName') ? 'border-destructive' : ''}
+                      >
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeResponsibleNames.map((name) => (
+                          <SelectItem key={name} value={name}>
+                            {name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {shouldShowCreateError('coordinatorName') && (
+                      <p className="text-xs text-destructive">{createValidationErrors.coordinatorName}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="title">Título *</Label>
                     <Input
-                      id="totalValue"
-                      type="number"
-                      step="0.01"
-                      data-testid="input-proposal-value"
-                      value={formData.totalValue}
-                      onChange={(e) => setFormData({ ...formData, totalValue: e.target.value })}
+                      id="title"
+                      data-testid="input-proposal-title"
+                      value={formData.title}
+                      onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                      required
+                      className={shouldShowCreateError('title') ? 'border-destructive' : ''}
+                    />
+                    {shouldShowCreateError('title') && (
+                      <p className="text-xs text-destructive">{createValidationErrors.title}</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="requestDate">Data de solicitação</Label>
+                    <Input
+                      id="requestDate"
+                      type="date"
+                      data-testid="input-proposal-request-date"
+                      value={formData.createdAt}
+                      onChange={(e) => setFormData({ ...formData, createdAt: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="issueDate">Data de emissão</Label>
+                    <Input
+                      id="issueDate"
+                      type="date"
+                      data-testid="input-proposal-issue-date"
+                      value={formData.sentDate}
+                      onChange={(e) => setFormData({ ...formData, sentDate: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="estimatedHours">Horas Estimadas</Label>
+                    <Label htmlFor="dueDate">Data de validade</Label>
                     <Input
-                      id="estimatedHours"
-                      type="number"
-                      data-testid="input-proposal-hours"
-                      value={formData.estimatedHours}
-                      onChange={(e) => setFormData({ ...formData, estimatedHours: e.target.value })}
+                      id="dueDate"
+                      type="date"
+                      data-testid="input-proposal-due-date"
+                      value={formData.dueDate}
+                      onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
                     />
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="coordinatorName">Coordenador</Label>
-                  <Input
-                    id="coordinatorName"
-                    data-testid="input-proposal-coordinator"
-                    value={formData.coordinatorName}
-                    onChange={(e) => setFormData({ ...formData, coordinatorName: e.target.value })}
-                  />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Data de atualização</Label>
+                    <Input value="" disabled className="bg-muted" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Situação</Label>
+                    <Select
+                      value={formData.status}
+                      onValueChange={(value) => setFormData({ ...formData, status: value })}
+                    >
+                      <SelectTrigger data-testid="select-proposal-status">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {proposalStatusOptions.map(({ value, label }) => (
+                          <SelectItem key={value} value={value}>{label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Expectativa</Label>
+                    <Select
+                      value={formData.expectation || undefined}
+                      onValueChange={(value) => setFormData({ ...formData, expectation: value })}
+                    >
+                      <SelectTrigger data-testid="select-proposal-expectation">
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Positiva">Positiva</SelectItem>
+                        <SelectItem value="Negativa">Negativa</SelectItem>
+                        <SelectItem value="Não se sabe">Não se sabe</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Tipo principal</Label>
+                    <Select
+                      value={formData.mainType || undefined}
+                      onValueChange={(value) => setFormData({ ...formData, mainType: value })}
+                    >
+                      <SelectTrigger data-testid="select-proposal-main-type">
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {mainTypeOptions.map((opt) => (
+                          <SelectItem key={opt} value={opt}>
+                            {opt}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="termMonths">Prazo (em meses)</Label>
+                    <Input
+                      id="termMonths"
+                      type="number"
+                      data-testid="input-proposal-term-months"
+                      value={formData.termMonths}
+                      onChange={(e) => setFormData({ ...formData, termMonths: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Avaliação de risco *</Label>
+                    <Select
+                      value={formData.riskAssessment}
+                      onValueChange={(value) => setFormData({ ...formData, riskAssessment: value })}
+                    >
+                      <SelectTrigger
+                        data-testid="select-proposal-risk"
+                        className={shouldShowCreateError('riskAssessment') ? 'border-destructive' : ''}
+                      >
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Não">Não</SelectItem>
+                        <SelectItem value="Sim">Sim</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {shouldShowCreateError('riskAssessment') && (
+                      <p className="text-xs text-destructive">{createValidationErrors.riskAssessment}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="hourJustification">Valor da mobilização</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground select-none">
+                        R$
+                      </span>
+                      <Input
+                        id="hourJustification"
+                        type="text"
+                        inputMode="numeric"
+                        data-testid="input-proposal-mobilization"
+                        value={formData.hourJustification}
+                        onChange={(e) => setFormData({ ...formData, hourJustification: formatMoneyMask(e.target.value) })}
+                        placeholder="0,00"
+                        className="pl-10"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="subcontracted">Valor da subcontratação</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground select-none">
+                        R$
+                      </span>
+                      <Input
+                        id="subcontracted"
+                        type="text"
+                        inputMode="numeric"
+                        data-testid="input-proposal-subcontracted"
+                        value={formData.subcontracted}
+                        onChange={(e) => setFormData({ ...formData, subcontracted: formatMoneyMask(e.target.value) })}
+                        placeholder="0,00"
+                        className="pl-10"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="discount">Valor do desconto</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground select-none">
+                        R$
+                      </span>
+                      <Input
+                        id="discount"
+                        type="text"
+                        inputMode="numeric"
+                        data-testid="input-proposal-discount"
+                        value={formData.discount}
+                        onChange={(e) => setFormData({ ...formData, discount: formatMoneyMask(e.target.value) })}
+                        placeholder="0,00"
+                        className="pl-10"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Quem será o coordenador do projeto?</Label>
+                    <Select
+                      value={formData.coordinatorId || undefined}
+                      onValueChange={(value) => setFormData({ ...formData, coordinatorId: value })}
+                    >
+                      <SelectTrigger data-testid="select-proposal-project-coordinator">
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeProjectCoordinators.map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="description">Observação</Label>
+                    <Textarea
+                      id="description"
+                      data-testid="input-proposal-description"
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="proposalOrigin">Código da proposta antigo</Label>
+                    <Input
+                      id="proposalOrigin"
+                      data-testid="input-proposal-origin"
+                      value={formData.proposalOrigin}
+                      onChange={(e) => setFormData({ ...formData, proposalOrigin: e.target.value })}
+                    />
+                  </div>
+                </div>
+
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="outline" onClick={closeDialog} className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50">
                     Cancelar
                   </Button>
-                  <Button type="submit" data-testid="button-save-proposal" disabled={createMutation.isPending}>
-                    {createMutation.isPending ? 'Salvando...' : 'Salvar'}
-                  </Button>
+                  {createDisabledReason ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex">
+                          <Button
+                            type="submit"
+                            data-testid="button-save-proposal"
+                            disabled={createMutation.isPending || !isCreateValid}
+                          >
+                            {createMutation.isPending ? 'Salvando...' : 'Salvar'}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="top"
+                        align="end"
+                        avoidCollisions
+                        collisionPadding={16}
+                        className="max-w-[min(20rem,calc(100vw-2rem))] whitespace-pre-line break-words text-left"
+                      >
+                        {createDisabledReason}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      type="submit"
+                      data-testid="button-save-proposal"
+                      disabled={createMutation.isPending || !isCreateValid}
+                    >
+                      {createMutation.isPending ? 'Salvando...' : 'Salvar'}
+                    </Button>
+                  )}
                 </div>
               </form>
             </DialogContent>
@@ -1930,9 +2473,27 @@ export default function Proposals() {
                               {cols.map(col => (
                                 <label
                                   key={col.id}
-                                  className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded px-2 py-1.5"
+                                  className={`flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded px-2 py-1.5 ${draggedColumnId === col.id ? 'opacity-60' : ''}`}
                                   data-testid={`column-toggle-${col.id}`}
+                                  draggable
+                                  onDragStart={(e) => {
+                                    setDraggedColumnId(col.id);
+                                    e.dataTransfer.setData('text/plain', col.id);
+                                    e.dataTransfer.effectAllowed = 'move';
+                                  }}
+                                  onDragOver={(e) => {
+                                    e.preventDefault();
+                                    e.dataTransfer.dropEffect = 'move';
+                                  }}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    const sourceId = draggedColumnId || e.dataTransfer.getData('text/plain');
+                                    reorderColumns(sourceId, col.id);
+                                    setDraggedColumnId(null);
+                                  }}
+                                  onDragEnd={() => setDraggedColumnId(null)}
                                 >
+                                  <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
                                   <Checkbox
                                     checked={col.visible}
                                     onCheckedChange={() => toggleColumn(col.id)}
@@ -2315,11 +2876,29 @@ export default function Proposals() {
                       <TableHead
                         key={col.id}
                         style={{ width: estimateColumnWidthPx(col.width) }}
-                        className={`text-xs font-medium cursor-pointer select-none overflow-hidden ${col.width || 'w-24'} min-w-[60px]`}
+                        className={`text-xs font-medium cursor-pointer select-none overflow-hidden ${col.width || 'w-24'} min-w-[60px] ${draggedHeaderColumnId === col.id ? 'opacity-60' : ''}`}
                         data-testid={`header-sort-${col.id}`}
                         onClick={() => handleSort(col.id)}
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggedHeaderColumnId(col.id);
+                          e.dataTransfer.setData('text/plain', col.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const sourceId = draggedHeaderColumnId || e.dataTransfer.getData('text/plain');
+                          reorderColumns(sourceId, col.id);
+                          setDraggedHeaderColumnId(null);
+                        }}
+                        onDragEnd={() => setDraggedHeaderColumnId(null)}
                       >
                         <div className="flex items-center gap-1">
+                          <GripVertical className="h-3.5 w-3.5 text-muted-foreground cursor-grab" />
                           <span className="break-words leading-tight">{col.label}</span>
                           {getSortIcon(col.id)}
                         </div>
@@ -2348,7 +2927,7 @@ export default function Proposals() {
                       <React.Fragment key={proposal.id}>
                         <TableRow
                           data-testid={`row-proposal-${proposal.id}`}
-                          className={`cursor-pointer transition-colors ${isExpanded ? 'bg-muted/30' : 'hover:bg-muted/50'}`}
+                          className={`cursor-pointer transition-colors ${isExpanded ? 'bg-muted/30' : 'hover:bg-muted/65'}`}
                           onClick={() => handleRowClick(proposal)}
                         >
                           <TableCell className="w-10 px-2">
@@ -2471,7 +3050,19 @@ export default function Proposals() {
                                   }
 
                                   return (
-                                    <AlertDialog>
+                                    <AlertDialog
+                                      onOpenChange={(open) => {
+                                        if (open) {
+                                          setDeleteConfirmProposalId(proposal.id);
+                                          setDeleteConfirmInput('');
+                                          return;
+                                        }
+                                        if (deleteConfirmProposalId === proposal.id) {
+                                          setDeleteConfirmProposalId(null);
+                                          setDeleteConfirmInput('');
+                                        }
+                                      }}
+                                    >
                                       <AlertDialogTrigger asChild>
                                         <Button
                                           size="icon"
@@ -2486,13 +3077,26 @@ export default function Proposals() {
                                           <Trash2 className="h-4 w-4" />
                                         </Button>
                                       </AlertDialogTrigger>
-                                      <AlertDialogContent>
+                                      <AlertDialogContent
+                                        onClick={(e) => e.stopPropagation()}
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                      >
                                         <AlertDialogHeader>
                                           <AlertDialogTitle>Excluir proposta?</AlertDialogTitle>
                                           <AlertDialogDescription>
                                             Esta ação não pode ser desfeita. A proposta “{proposal.code}” será removida.
                                           </AlertDialogDescription>
                                         </AlertDialogHeader>
+
+                                        <DangerZoneConfirm
+                                          description="Para confirmar a exclusão, digite o código da proposta exatamente como abaixo:"
+                                          expectedValue={proposal.code}
+                                          value={deleteConfirmProposalId === proposal.id ? deleteConfirmInput : ''}
+                                          onValueChange={setDeleteConfirmInput}
+                                          inputTestId={`input-confirm-delete-proposal-${proposal.id}`}
+                                        />
+
                                         <AlertDialogFooter>
                                           <AlertDialogCancel
                                             onClick={(e) => e.stopPropagation()}
@@ -2509,8 +3113,14 @@ export default function Proposals() {
                                           </AlertDialogCancel>
                                           <AlertDialogAction
                                             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                            disabled={
+                                              deleteProposalMutation.isPending ||
+                                              deleteConfirmProposalId !== proposal.id ||
+                                              deleteConfirmInput.trim() !== proposal.code
+                                            }
                                             onClick={(e) => {
                                               e.stopPropagation();
+                                              if (deleteConfirmInput.trim() !== proposal.code) return;
                                               deleteProposalMutation.mutate(proposal.id);
                                             }}
                                             onMouseDown={(e) => {
@@ -2548,9 +3158,27 @@ export default function Proposals() {
                                   {overflowColumns.map((col) => (
                                     <div
                                       key={col.id}
-                                      className="flex flex-col gap-1 p-3 rounded-lg bg-background/50 border border-border/50 overflow-hidden"
+                                      className={`flex flex-col gap-1 p-3 rounded-lg bg-background/50 border border-border/50 overflow-hidden cursor-grab ${draggedOverflowColumnId === col.id ? 'opacity-60' : ''}`}
+                                      draggable
+                                      onDragStart={(e) => {
+                                        setDraggedOverflowColumnId(col.id);
+                                        e.dataTransfer.setData('text/plain', col.id);
+                                        e.dataTransfer.effectAllowed = 'move';
+                                      }}
+                                      onDragOver={(e) => {
+                                        e.preventDefault();
+                                        e.dataTransfer.dropEffect = 'move';
+                                      }}
+                                      onDrop={(e) => {
+                                        e.preventDefault();
+                                        const sourceId = draggedOverflowColumnId || e.dataTransfer.getData('text/plain');
+                                        reorderColumns(sourceId, col.id);
+                                        setDraggedOverflowColumnId(null);
+                                      }}
+                                      onDragEnd={() => setDraggedOverflowColumnId(null)}
                                     >
-                                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider break-words leading-tight">
+                                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider break-words leading-tight inline-flex items-center gap-1">
+                                        <GripVertical className="h-3 w-3" />
                                         {col.label}
                                       </span>
                                       <span className="text-sm font-medium whitespace-normal break-words">
@@ -2822,7 +3450,7 @@ export default function Proposals() {
                           <p>{selectedProposal.quantity || '-'}</p>
                         </div>
                         <div>
-                          <Label className="text-xs text-muted-foreground">Vl. sub proposta</Label>
+                          <Label className="text-xs text-muted-foreground">Valor da subcontratação</Label>
                           <p>{formatCurrency((selectedProposal as any).subcontracted)}</p>
                         </div>
                         <div>
@@ -3057,7 +3685,7 @@ export default function Proposals() {
                             <p>{selectedProposal.quantity || '-'}</p>
                           </div>
                           <div>
-                            <Label className="text-xs text-muted-foreground">Vl. sub proposta</Label>
+                            <Label className="text-xs text-muted-foreground">Valor da subcontratação</Label>
                             <p>{formatCurrency((selectedProposal as any).subcontracted)}</p>
                           </div>
                           <div>
@@ -3967,14 +4595,11 @@ export default function Proposals() {
                       <SelectValue placeholder="Selecione" />
                     </SelectTrigger>
                     <SelectContent>
-                      {users
-                        .filter((u) => u.isActive)
-                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-                        .map((u) => (
-                          <SelectItem key={u.id} value={u.name}>
-                            {u.name}
-                          </SelectItem>
-                        ))}
+                      {activeResponsibleNames.map((name) => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   {shouldShowEditError('coordinatorName') && (
@@ -4140,40 +4765,60 @@ export default function Proposals() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-hourJustification">Valor da mobilização</Label>
-                  <Input
-                    id="edit-hourJustification"
-                    type="number"
-                    step="0.01"
-                    data-testid="input-edit-proposal-mobilization"
-                    value={editFormData.hourJustification}
-                    onChange={(e) => setEditFormData({ ...editFormData, hourJustification: e.target.value })}
-                    placeholder="Não usar separador de milhar (ex.: 1500.80)"
-                  />
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground select-none">
+                      R$
+                    </span>
+                    <Input
+                      id="edit-hourJustification"
+                      type="text"
+                      inputMode="numeric"
+                      data-testid="input-edit-proposal-mobilization"
+                      value={editFormData.hourJustification}
+                      onChange={(e) => setEditFormData({ ...editFormData, hourJustification: formatMoneyMask(e.target.value) })}
+                      placeholder="0,00"
+                      className="pl-10"
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit-subcontracted">Valor da subcontratação</Label>
-                  <Input
-                    id="edit-subcontracted"
-                    type="number"
-                    step="0.01"
-                    data-testid="input-edit-proposal-subcontracted"
-                    value={editFormData.subcontracted}
-                    onChange={(e) => setEditFormData({ ...editFormData, subcontracted: e.target.value })}
-                    placeholder="Não usar separador de milhar (ex.: 1500.80)"
-                  />
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground select-none">
+                      R$
+                    </span>
+                    <Input
+                      id="edit-subcontracted"
+                      type="text"
+                      inputMode="numeric"
+                      data-testid="input-edit-proposal-subcontracted"
+                      value={editFormData.subcontracted}
+                      onChange={(e) => setEditFormData({ ...editFormData, subcontracted: formatMoneyMask(e.target.value) })}
+                      placeholder="0,00"
+                      className="pl-10"
+                    />
+                  </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-discount">Valor do desconto</Label>
-                  <Input
-                    id="edit-discount"
-                    data-testid="input-edit-proposal-discount"
-                    value={editFormData.discount}
-                    onChange={(e) => setEditFormData({ ...editFormData, discount: e.target.value })}
-                    placeholder="Não usar separador de milhar (ex.: 1500.80)"
-                  />
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground select-none">
+                      R$
+                    </span>
+                    <Input
+                      id="edit-discount"
+                      type="text"
+                      inputMode="numeric"
+                      data-testid="input-edit-proposal-discount"
+                      value={editFormData.discount}
+                      onChange={(e) => setEditFormData({ ...editFormData, discount: formatMoneyMask(e.target.value) })}
+                      placeholder="0,00"
+                      className="pl-10"
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label>Quem será o coordenador do projeto?</Label>
@@ -4185,14 +4830,11 @@ export default function Proposals() {
                       <SelectValue placeholder="Selecione" />
                     </SelectTrigger>
                     <SelectContent>
-                      {users
-                        .filter((u) => u.isActive)
-                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-                        .map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name}
-                          </SelectItem>
-                        ))}
+                      {activeProjectCoordinators.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

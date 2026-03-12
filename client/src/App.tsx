@@ -1,8 +1,18 @@
+import { useEffect, useState } from 'react';
 import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
@@ -73,6 +83,47 @@ function Router() {
   );
 }
 
+function SessionExpiredDialog() {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      if (typeof window !== 'undefined' && window.location.pathname === '/login') return;
+      setOpen(true);
+    };
+
+    window.addEventListener('tec3:session-expired', handleSessionExpired);
+    return () => {
+      window.removeEventListener('tec3:session-expired', handleSessionExpired);
+    };
+  }, []);
+
+  return (
+    <AlertDialog open={open}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Por segurança, sua sessão expirou.</AlertDialogTitle>
+          <AlertDialogDescription>
+            Faça login novamente para continuar.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogAction
+            onClick={() => {
+              setOpen(false);
+              if (typeof window !== 'undefined') {
+                window.location.assign('/login');
+              }
+            }}
+          >
+            OK
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -81,6 +132,7 @@ function App() {
           <PreferencesProvider>
             <TooltipProvider>
               <Toaster />
+              <SessionExpiredDialog />
               <Router />
             </TooltipProvider>
           </PreferencesProvider>

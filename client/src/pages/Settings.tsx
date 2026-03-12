@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -50,6 +50,52 @@ export default function Settings() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    authApi
+      .me()
+      .then((freshUser) => {
+        if (!mounted) return;
+        updateUser(freshUser);
+      })
+      .catch(() => {
+        // ignore: session handling is centralized in api client
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [updateUser]);
+
+  const memberSinceDate = user?.accountSummary?.memberSince
+    ? new Date(user.accountSummary.memberSince)
+    : null;
+  const hasMemberSince = Boolean(memberSinceDate && !Number.isNaN(memberSinceDate.getTime()));
+  const memberSinceMonth = memberSinceDate
+    ? new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(memberSinceDate)
+    : '—';
+  const memberSinceShort = memberSinceDate
+    ? new Intl.DateTimeFormat('pt-BR').format(memberSinceDate)
+    : '—';
+  const lastLoginDate = user?.accountSummary?.lastLoginAt
+    ? new Date(user.accountSummary.lastLoginAt)
+    : null;
+  const lastLoginDisplay =
+    lastLoginDate && !Number.isNaN(lastLoginDate.getTime())
+      ? new Intl.DateTimeFormat('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        }).format(lastLoginDate)
+      : '—';
+  const hoursThisMonth = user?.accountSummary?.hoursThisMonth ?? 0;
+  const approvedHoursThisMonth = user?.accountSummary?.approvedHoursThisMonth ?? 0;
+  const accountStatus = user?.accountSummary?.status ?? (user?.isActive ? 'active' : 'inactive');
+  const accountStatusLabel = accountStatus === 'active' ? 'Ativo' : 'Inativo';
 
   const toastPositionLabel: Record<ToastPosition, string> = {
     'top-left': 'Superior esquerdo',
@@ -260,13 +306,33 @@ export default function Settings() {
 
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                  Membro Desde
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  Status da Conta
                 </Label>
                 <div className="h-10 flex items-center">
-                  <span className="text-sm text-muted-foreground">Janeiro 2026</span>
+                  <Badge
+                    variant="outline"
+                    className="inline-flex items-center gap-2 border-border/80 bg-muted/40 text-foreground"
+                  >
+                    <span
+                      className={`h-2 w-2 rounded-full ${accountStatus === 'active' ? 'bg-green-500' : 'bg-amber-500'}`}
+                    />
+                    {accountStatusLabel}
+                  </Badge>
                 </div>
               </div>
+
+              {hasMemberSince && (
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <Calendar className="h-4 w-4 text-muted-foreground" />
+                    Membro Desde
+                  </Label>
+                  <div className="h-10 flex items-center">
+                    <span className="text-sm text-muted-foreground">{memberSinceMonth}</span>
+                  </div>
+                </div>
+              )}
             </div>
 
           </CardContent>
@@ -283,23 +349,27 @@ export default function Settings() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className={`grid gap-4 ${hasMemberSince ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
               <div className="p-4 rounded-lg bg-muted/50">
-                <p className="text-2xl font-bold text-foreground">0</p>
+                <p className="text-2xl font-bold text-foreground">{hoursThisMonth}</p>
                 <p className="text-sm text-muted-foreground">Horas Registradas</p>
                 <p className="text-xs text-muted-foreground mt-1">Este mês</p>
               </div>
               <div className="p-4 rounded-lg bg-muted/50">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500" />
-                  <span className="text-sm font-medium text-foreground">Ativo</span>
-                </div>
-                <p className="text-sm text-muted-foreground mt-1">Status da Conta</p>
+                <p className="text-2xl font-bold text-foreground">{approvedHoursThisMonth}</p>
+                <p className="text-sm text-muted-foreground">Horas Aprovadas</p>
+                <p className="text-xs text-muted-foreground mt-1">Este mês</p>
               </div>
               <div className="p-4 rounded-lg bg-muted/50">
-                <p className="text-sm font-medium text-foreground">06/01/2026</p>
-                <p className="text-sm text-muted-foreground">Membro Desde</p>
+                <p className="text-sm font-medium text-foreground">{lastLoginDisplay}</p>
+                <p className="text-sm text-muted-foreground">Último Login</p>
               </div>
+              {hasMemberSince && (
+                <div className="p-4 rounded-lg bg-muted/50">
+                  <p className="text-sm font-medium text-foreground">{memberSinceShort}</p>
+                  <p className="text-sm text-muted-foreground">Membro Desde</p>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

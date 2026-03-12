@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Lock, User, ArrowRight, Shield, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
+import { Lock, User, ArrowRight, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 
 export default function Login() {
   const { login, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -121,7 +121,12 @@ export default function Login() {
           {/* Login Header */}
           <div className="text-center mb-7">
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-primary/10 mb-4">
-              <Shield className="w-7 h-7 text-primary" />
+              <img
+                src="/assets/tec3-logo.svg"
+                alt="TEC3 Engenharia"
+                className="h-7 w-auto"
+                data-testid="img-logo-login-header"
+              />
             </div>
             <h2 className="text-2xl font-semibold text-foreground">Acessar plataforma</h2>
             <p className="text-muted-foreground mt-2 text-sm">Entre com suas credenciais corporativas</p>

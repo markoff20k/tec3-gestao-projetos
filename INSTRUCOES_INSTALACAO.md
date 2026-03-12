@@ -282,7 +282,7 @@ SESSION_SECRET=sua-chave-secreta-aqui-minimo-32-caracteres
 DATABASE_URL=postgresql://usuario:senha@localhost:5432/tec3_gestao
 
 # Configurações do JWT
-JWT_EXPIRES_IN=24h
+JWT_EXPIRES_MINUTES=1440
 ```
 
 ### 2.4 Configurar Banco de Dados (Opcional)

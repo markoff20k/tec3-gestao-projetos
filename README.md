@@ -72,7 +72,8 @@ DATABASE_URL=postgresql://usuario:senha@localhost:5432/tec3_system
 
 # Autenticação JWT
 JWT_SECRET=sua-chave-secreta-muito-segura-aqui-min-32-caracteres
-JWT_EXPIRES_IN=24h
+# Duração do token em minutos (padrão: 1440 = 24h)
+JWT_EXPIRES_MINUTES=1440
 
 # Sessão
 SESSION_SECRET=outra-chave-secreta-para-sessao-min-32-caracteres

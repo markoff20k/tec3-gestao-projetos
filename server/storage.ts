@@ -39,7 +39,7 @@ export const TimeEntryStatus = {
 
 export type InsertUser = Omit<Prisma.UserCreateInput, 'id'>;
 export type InsertClient = Omit<Prisma.ClientCreateInput, 'id' | 'proposals' | 'projects'>;
-export type InsertProposal = Omit<Prisma.ProposalCreateInput, 'id' | 'code' | 'createdAt' | 'client'> & { clientId: string };
+export type InsertProposal = Omit<Prisma.ProposalCreateInput, 'id' | 'code' | 'client'> & { clientId: string };
 export type InsertProject = Omit<Prisma.ProjectCreateInput, 'id' | 'code' | 'createdAt' | 'client' | 'timeEntries'> & { clientId: string };
 export type InsertTimeEntry = Omit<Prisma.TimeEntryCreateInput, 'id' | 'status' | 'approvedById' | 'approvedAt' | 'rejectionReason' | 'createdAt' | 'project'> & { projectId: string };
 export type InsertProposalCategory = { code?: string; name: string; isActive?: boolean };
@@ -48,6 +48,7 @@ export type InsertProposalCategoryValue = { proposalId: string; categoryId?: str
 export interface IStorage {
   getUser(id: string): Promise<User | null>;
   getUserByEmail(email: string): Promise<User | null>;
+  getUserProfileSummary(userId: string): Promise<{ hoursThisMonth: number; approvedHoursThisMonth: number; memberSince: Date | null; lastLoginAt: Date | null }>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User | null>;
   updateUserPhoto(id: string, photoData: Buffer, photoMimeType: string, photoUrl: string): Promise<User | null>;
@@ -219,6 +220,75 @@ export class PrismaStorage implements IStorage {
     return prisma.user.findUnique({ where: { email } });
   }
 
+  async getUserProfileSummary(userId: string): Promise<{ hoursThisMonth: number; approvedHoursThisMonth: number; memberSince: Date | null; lastLoginAt: Date | null }> {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const [hoursAggregate, approvedHoursAggregate, loginActivities] = await Promise.all([
+      prisma.timeEntry.aggregate({
+        where: {
+          collaboratorId: userId,
+          entryDate: {
+            gte: monthStart,
+            lt: nextMonthStart,
+          },
+        },
+        _sum: {
+          hours: true,
+        },
+      }),
+      prisma.timeEntry.aggregate({
+        where: {
+          collaboratorId: userId,
+          status: TimeEntryStatus.APPROVED,
+          entryDate: {
+            gte: monthStart,
+            lt: nextMonthStart,
+          },
+        },
+        _sum: {
+          hours: true,
+        },
+      }),
+      prisma.userActivity.findMany({
+        where: {
+          userId,
+          category: 'security',
+          action: 'SECURITY_LOGIN_SUCCESS',
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 50,
+        select: { metadata: true, createdAt: true },
+      }),
+    ]);
+
+    const rawHours = hoursAggregate._sum.hours;
+    const hoursThisMonth = rawHours == null ? 0 : Number(rawHours.toString());
+    const rawApprovedHours = approvedHoursAggregate._sum.hours;
+    const approvedHoursThisMonth = rawApprovedHours == null ? 0 : Number(rawApprovedHours.toString());
+
+    let memberSince: Date | null = null;
+    for (const activity of loginActivities) {
+      const metadata = (activity.metadata ?? null) as { directoryWhenCreated?: unknown } | null;
+      const rawDate = metadata?.directoryWhenCreated;
+      if (typeof rawDate !== 'string' || !rawDate.trim()) continue;
+      const parsed = new Date(rawDate);
+      if (Number.isNaN(parsed.getTime())) continue;
+      memberSince = parsed;
+      break;
+    }
+
+    const lastLoginAt = loginActivities[0]?.createdAt ?? null;
+
+    return {
+      hoursThisMonth: Number.isFinite(hoursThisMonth) ? hoursThisMonth : 0,
+      approvedHoursThisMonth: Number.isFinite(approvedHoursThisMonth) ? approvedHoursThisMonth : 0,
+      memberSince,
+      lastLoginAt,
+    };
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
     const hashedPassword = await bcrypt.hash(insertUser.password, 10);
     return prisma.user.create({
@@ -331,10 +401,28 @@ export class PrismaStorage implements IStorage {
   }
 
   private async generateProposalCode(): Promise<string> {
-    const year = new Date().getFullYear();
-    const count = await prisma.proposal.count();
-    const num = String(count + 1).padStart(4, '0');
-    return `PROP-${year}-${num}`;
+    const yearTwoDigits = String(new Date().getFullYear() % 100).padStart(2, '0');
+    const prefix = `P${yearTwoDigits}`;
+
+    const sameYearCodes = await prisma.proposal.findMany({
+      where: {
+        code: {
+          startsWith: prefix,
+        },
+      },
+      select: { code: true },
+    });
+
+    const maxSequence = sameYearCodes.reduce((max, row) => {
+      const match = String(row.code).match(new RegExp(`^P${yearTwoDigits}(\\d{3})$`));
+      if (!match) return max;
+      const seq = Number.parseInt(match[1], 10);
+      if (!Number.isFinite(seq)) return max;
+      return Math.max(max, seq);
+    }, 0);
+
+    const nextSequence = String(maxSequence + 1).padStart(3, '0');
+    return `P${yearTwoDigits}${nextSequence}`;
   }
 
   private async generateProjectCode(): Promise<string> {
@@ -610,13 +698,26 @@ export class PrismaStorage implements IStorage {
         description: insertProposal.description,
         clientId: insertProposal.clientId,
         coordinatorId: insertProposal.coordinatorId,
+        coordinatorName: insertProposal.coordinatorName,
         type: insertProposal.type || 'fixed_price',
-        status: ProposalStatus.EM_ELABORACAO,
+        status: insertProposal.status || ProposalStatus.EM_ELABORACAO,
         totalValue: insertProposal.totalValue ?? 0,
         estimatedHours: insertProposal.estimatedHours ?? 0,
         expectedStartDate: insertProposal.expectedStartDate,
         expectedEndDate: insertProposal.expectedEndDate,
+        sentDate: insertProposal.sentDate,
+        dueDate: insertProposal.dueDate,
         projectId: insertProposal.projectId,
+        umbrellaRef: insertProposal.umbrellaRef,
+        expectation: insertProposal.expectation,
+        mainType: insertProposal.mainType,
+        termMonths: insertProposal.termMonths,
+        riskAssessment: insertProposal.riskAssessment,
+        hourJustification: insertProposal.hourJustification as any,
+        subcontracted: insertProposal.subcontracted as any,
+        discount: insertProposal.discount,
+        proposalOrigin: insertProposal.proposalOrigin,
+        ...(insertProposal.createdAt ? { createdAt: insertProposal.createdAt } : {}),
       }
     });
   }
@@ -643,6 +744,19 @@ export class PrismaStorage implements IStorage {
       if (!latest) return null;
 
       const nextRevision = (latest.revision ?? 0) + 1;
+      const latestStatusNormalized = String(latest.status ?? '').trim().toLowerCase();
+      const successStatuses = new Set([
+        ProposalStatus.COM_SUCESSO,
+        ProposalStatus.SUCESSO_ADITIVO,
+        'approved',
+        'converted',
+        'aprovada',
+        'convertida',
+        'sucesso',
+      ]);
+      const revisionStatus = successStatuses.has(latestStatusNormalized)
+        ? ProposalStatus.EM_ELABORACAO
+        : latest.status;
 
       const created = await tx.proposal.create({
         data: {
@@ -655,7 +769,7 @@ export class PrismaStorage implements IStorage {
           coordinatorId: latest.coordinatorId,
           coordinatorName: latest.coordinatorName,
           type: latest.type,
-          status: latest.status,
+          status: revisionStatus,
           totalValue: (latest as any).totalValue,
           estimatedHours: latest.estimatedHours,
           expectedStartDate: latest.expectedStartDate,

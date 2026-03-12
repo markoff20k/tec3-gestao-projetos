@@ -1,4 +1,39 @@
 const API_BASE = '/api';
+let isRedirectingToLogin = false;
+
+function shouldHandleSessionExpiration(params: {
+  endpoint: string;
+  status: number;
+  message: string;
+  hasToken: boolean;
+}): boolean {
+  const { endpoint, status, message, hasToken } = params;
+  if (!hasToken) return false;
+  if (endpoint === '/auth/login') return false;
+  if (![401, 403].includes(status)) return false;
+
+  const normalizedMessage = String(message || '').toLowerCase();
+  const tokenError =
+    normalizedMessage.includes('token inválido') ||
+    normalizedMessage.includes('token invalido') ||
+    normalizedMessage.includes('token obrigatório') ||
+    normalizedMessage.includes('token obrigatorio') ||
+    normalizedMessage.includes('credenciais inválidas') ||
+    normalizedMessage.includes('credenciais invalidas');
+
+  return tokenError;
+}
+
+function redirectToLoginWithSessionExpiredReason(): void {
+  if (isRedirectingToLogin) return;
+  isRedirectingToLogin = true;
+
+  localStorage.removeItem('token');
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('tec3:session-expired'));
+  }
+}
 
 async function getToken(): Promise<string | null> {
   return localStorage.getItem('token');
@@ -26,7 +61,20 @@ async function request<T>(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Request failed' }));
-    throw new Error(error.message || 'Request failed');
+    const message = error.message || 'Request failed';
+
+    if (
+      shouldHandleSessionExpiration({
+        endpoint,
+        status: response.status,
+        message,
+        hasToken: Boolean(token),
+      })
+    ) {
+      redirectToLoginWithSessionExpiredReason();
+    }
+
+    throw new Error(message);
   }
 
   // Handle 204 No Content responses
@@ -70,6 +118,13 @@ export interface User {
   role: 'admin' | 'commercial' | 'projects';
   photoUrl?: string;
   isActive?: boolean;
+  accountSummary?: {
+    hoursThisMonth: number;
+    approvedHoursThisMonth: number;
+    status: 'active' | 'inactive';
+    memberSince: string | null;
+    lastLoginAt: string | null;
+  };
   professionalCategoryId?: string | null;
   emailGroup?: string | null;
   receivesEmails?: boolean;
@@ -385,20 +440,76 @@ export interface DashboardMetrics {
   proposals: { total: number; byStatus: any[] };
   projects: { total: number; active: number; byStatus: any[] };
   clients: { total: number; active: number };
-  hours: { monthlyTotal: number; pendingApprovals: number };
+  hours: {
+    monthlyTotal: number;
+    launchedMonthly?: number;
+    approvedMonthly?: number;
+    pendingMonthly?: number;
+    approvalRate?: number;
+    pendingApprovals: number;
+  };
   financial: { approvedProposalsValue: number };
+  trends?: {
+    approvedValue: Array<{ label: string; atual: number; meta: number }>;
+  };
+  comparisons?: {
+    currentApprovedValue: number;
+    previousApprovedValue: number;
+    approvedValueDeltaPct: number;
+  };
+  funnel?: {
+    elaboracao: number;
+    analise: number;
+    ganho: number;
+    perdido: number;
+  };
+  topClients?: Array<{
+    clientId: string;
+    clientName: string;
+    approvedValue: number;
+    proposalsCount: number;
+  }>;
 }
 
 export interface CommercialDashboardMetrics {
   proposals: { total: number; byStatus: any[] };
   clients: { total: number; active: number };
   financial: { approvedProposalsValue: number };
+  hours?: {
+    launchedMonthly: number;
+    approvedMonthly: number;
+    pendingMonthly: number;
+    approvalRate: number;
+  };
+  trends?: {
+    approvedValue: Array<{ label: string; atual: number; meta: number }>;
+  };
+  comparisons?: {
+    currentApprovedValue: number;
+    previousApprovedValue: number;
+    approvedValueDeltaPct: number;
+  };
 }
 
 export interface ProjectsDashboardMetrics {
   projects: { total: number; active: number; byStatus: any[] };
   clients: { total: number };
-  hours: { monthlyApprovedHours: number; pendingCount: number };
+  hours: {
+    monthlyApprovedHours: number;
+    launchedMonthly?: number;
+    approvedMonthly?: number;
+    pendingMonthly?: number;
+    approvalRate?: number;
+    pendingCount: number;
+  };
+  trends?: {
+    approvedHours: Array<{ label: string; atual: number; meta: number }>;
+  };
+  comparisons?: {
+    currentApprovedHours: number;
+    previousApprovedHours: number;
+    approvedHoursDeltaPct: number;
+  };
 }
 
 export const clientsApi = {
@@ -431,7 +542,8 @@ export const projectsApi = {
 };
 
 export const reportsApi = {
-  getDashboard: () => api.get<DashboardMetrics>('/reports/dashboard'),
+  getDashboard: (period?: '30d' | '90d' | '180d') =>
+    api.get<DashboardMetrics>(`/reports/dashboard${period ? `?period=${period}` : ''}`),
   getHours: (startDate: string, endDate: string) =>
     api.get<any>(`/reports/hours?startDate=${startDate}&endDate=${endDate}`),
   getProposals: () => api.get<any>('/reports/proposals'),
@@ -440,8 +552,10 @@ export const reportsApi = {
 };
 
 export const dashboardApi = {
-  getCommercial: () => api.get<CommercialDashboardMetrics>('/dashboard/commercial'),
-  getProjects: () => api.get<ProjectsDashboardMetrics>('/dashboard/projects'),
+  getCommercial: (period?: '30d' | '90d' | '180d') =>
+    api.get<CommercialDashboardMetrics>(`/dashboard/commercial${period ? `?period=${period}` : ''}`),
+  getProjects: (period?: '30d' | '90d' | '180d') =>
+    api.get<ProjectsDashboardMetrics>(`/dashboard/projects${period ? `?period=${period}` : ''}`),
 };
 
 export const favoritesApi = {

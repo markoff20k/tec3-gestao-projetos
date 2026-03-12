@@ -24,6 +24,12 @@ const upload = multer({
 });
 
 const JWT_SECRET = process.env.SESSION_SECRET || 'dev-secret-key';
+const DEFAULT_JWT_EXPIRES_MINUTES = 24 * 60;
+const parsedJwtExpiresMinutes = Number.parseInt(String(process.env.JWT_EXPIRES_MINUTES ?? '').trim(), 10);
+const JWT_EXPIRES_MINUTES = Number.isFinite(parsedJwtExpiresMinutes) && parsedJwtExpiresMinutes > 0
+  ? parsedJwtExpiresMinutes
+  : DEFAULT_JWT_EXPIRES_MINUTES;
+const JWT_EXPIRES_SECONDS = JWT_EXPIRES_MINUTES * 60;
 
 const ALLOWED_STATUS_TRANSITIONS: Record<string, string[]> = {
   // New (legacy) statuses - aligned with the screenshot
@@ -60,6 +66,138 @@ interface TokenPayload {
 
 const ROLES = ['admin', 'commercial', 'projects'] as const;
 type Role = typeof ROLES[number];
+
+const APPROVED_PROPOSAL_STATUSES = new Set([
+  'com_sucesso',
+  'sucesso_aditivo',
+  'approved',
+  'converted',
+  'aprovada',
+  'convertida',
+  'sucesso',
+]);
+
+const PROPOSAL_FUNNEL_STATUS = {
+  elaboracao: new Set(['em_elaboracao', 'draft']),
+  analise: new Set(['em_analise', 'in_review', 'sent', 'negotiating']),
+  ganho: APPROVED_PROPOSAL_STATUSES,
+  perdido: new Set(['nao_sucesso', 'rejected', 'cancelada', 'cancelled', 'declinio']),
+};
+
+function normalizeStatus(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function parseNumericValue(value: unknown): number {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (value === null || value === undefined) return 0;
+
+  const raw = String(value).trim();
+  if (!raw) return 0;
+
+  const normalized = raw.includes(',')
+    ? raw.replace(/\./g, '').replace(',', '.')
+    : raw;
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getProposalApprovedAmount(proposal: { totalValue?: unknown; categoryValuesTotal?: unknown }): number {
+  const totalValue = parseNumericValue((proposal as any).totalValue);
+  const categoryValuesTotal = parseNumericValue((proposal as any).categoryValuesTotal);
+  return totalValue > 0 ? totalValue : categoryValuesTotal;
+}
+
+type DashboardPeriodDays = 30 | 90 | 180;
+
+type TrendBucket = {
+  label: string;
+  start: Date;
+  end: Date;
+};
+
+type DateRange = {
+  start: Date;
+  end: Date;
+};
+
+function parseDashboardPeriod(value: unknown): DashboardPeriodDays {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === '30d' || normalized === '30') return 30;
+  if (normalized === '180d' || normalized === '180') return 180;
+  return 90;
+}
+
+function toValidDate(value: unknown): Date | null {
+  const date = new Date(value as any);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function buildTrendBuckets(periodDays: DashboardPeriodDays, now = new Date()): TrendBucket[] {
+  if (periodDays === 30) {
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    return Array.from({ length: 4 }).map((_, index) => {
+      const end = new Date(now.getTime() - weekMs * (3 - index));
+      const start = new Date(end.getTime() - weekMs + 1);
+      return {
+        label: `S${index + 1}`,
+        start,
+        end,
+      };
+    });
+  }
+
+  const monthCount = periodDays === 90 ? 3 : 6;
+  return Array.from({ length: monthCount }).map((_, index) => {
+    const cursor = new Date(now.getFullYear(), now.getMonth() - (monthCount - 1 - index), 1);
+    const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    const end = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 23, 59, 59, 999);
+    return {
+      label: monthCount === 3 ? `M-${monthCount - 1 - index}` : `M-${monthCount - 1 - index}`,
+      start,
+      end,
+    };
+  });
+}
+
+function buildTrendPoints(values: number[], labels: string[]) {
+  const average = values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  return values.map((value, index) => ({
+    label: labels[index],
+    atual: Number(value.toFixed(2)),
+    meta: Number(Math.max(value * 1.08, average * 1.03).toFixed(2)),
+  }));
+}
+
+function buildPeriodRanges(periodDays: DashboardPeriodDays, now = new Date()): { current: DateRange; previous: DateRange } {
+  const currentEnd = new Date(now);
+  const currentStart = new Date(now);
+  currentStart.setDate(currentStart.getDate() - periodDays + 1);
+
+  const previousEnd = new Date(currentStart);
+  previousEnd.setDate(previousEnd.getDate() - 1);
+
+  const previousStart = new Date(previousEnd);
+  previousStart.setDate(previousStart.getDate() - periodDays + 1);
+
+  return {
+    current: { start: currentStart, end: currentEnd },
+    previous: { start: previousStart, end: previousEnd },
+  };
+}
+
+function isWithinRange(date: Date, range: DateRange): boolean {
+  return date >= range.start && date <= range.end;
+}
+
+function calculateDeltaPercent(current: number, previous: number): number {
+  if (previous <= 0) return current > 0 ? 100 : 0;
+  return ((current - previous) / previous) * 100;
+}
 
 function isRole(value: unknown): value is Role {
   return typeof value === 'string' && (ROLES as readonly string[]).includes(value);
@@ -143,14 +281,18 @@ async function authenticateToken(req: Request, res: Response, next: NextFunction
     if (!dbUser || !dbUser.isActive) {
       return res.status(401).json({ message: 'Credenciais inválidas' });
     }
-    if (!isRole(dbUser.role)) {
+    const normalizedRole: unknown = String((dbUser as any).role).toLowerCase() === 'owner'
+      ? 'admin'
+      : (dbUser as any).role;
+
+    if (!isRole(normalizedRole)) {
       return res.status(403).json({ message: 'Perfil inválido' });
     }
 
     (req as any).user = {
       sub: dbUser.id,
       email: dbUser.email,
-      role: dbUser.role,
+      role: normalizedRole,
     } satisfies JwtPayload;
 
     next();
@@ -221,7 +363,12 @@ export async function registerRoutes(
       }
 
       if (ldapAttempt?.status === 'success') {
-        const { email: ldapEmail, name: ldapName, role: ldapRole } = ldapAttempt.profile;
+        const {
+          email: ldapEmail,
+          name: ldapName,
+          role: ldapRole,
+          memberSince: ldapMemberSince,
+        } = ldapAttempt.profile;
 
         let user = await storage.getUserByEmail(ldapEmail);
         if (!user) {
@@ -245,7 +392,10 @@ export async function registerRoutes(
           category: 'security',
           action: 'SECURITY_LOGIN_SUCCESS',
           title: 'Login realizado',
-          metadata: { provider: `ldap:${ldapAttempt.provider}` },
+          metadata: {
+            provider: `ldap:${ldapAttempt.provider}`,
+            directoryWhenCreated: ldapMemberSince,
+          },
           ip: getRequestIp(req),
           userAgent: getUserAgent(req),
         });
@@ -253,7 +403,7 @@ export async function registerRoutes(
         const token = jwt.sign(
           { sub: user.id, email: user.email, role: user.role },
           JWT_SECRET,
-          { expiresIn: '24h' }
+          { expiresIn: JWT_EXPIRES_SECONDS }
         );
 
         return res.json({
@@ -308,7 +458,7 @@ export async function registerRoutes(
     const token = jwt.sign(
       { sub: user.id, email: user.email, role: user.role },
       JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: JWT_EXPIRES_SECONDS }
     );
 
       res.json({
@@ -374,7 +524,7 @@ export async function registerRoutes(
     const token = jwt.sign(
       { sub: user.id, email: user.email, role: user.role },
       JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: JWT_EXPIRES_SECONDS }
     );
 
     res.json({
@@ -391,7 +541,10 @@ export async function registerRoutes(
 
   app.get('/api/auth/me', authenticateToken, async (req, res) => {
     const userId = (req as any).user.sub;
-    const user = await storage.getUser(userId);
+    const [user, profileSummary] = await Promise.all([
+      storage.getUser(userId),
+      storage.getUserProfileSummary(userId),
+    ]);
     if (!user) {
       return res.status(404).json({ message: 'Usuário não encontrado' });
     }
@@ -400,7 +553,15 @@ export async function registerRoutes(
       email: user.email,
       name: user.name,
       role: user.role,
+      isActive: user.isActive,
       photoUrl: user.photoUrl,
+      accountSummary: {
+        hoursThisMonth: profileSummary.hoursThisMonth,
+        approvedHoursThisMonth: profileSummary.approvedHoursThisMonth,
+        status: user.isActive ? 'active' : 'inactive',
+        memberSince: profileSummary.memberSince,
+        lastLoginAt: profileSummary.lastLoginAt,
+      },
       preferences: {
         theme: user.theme || 'light',
         sidebarCollapsed: user.sidebarCollapsed || false,
@@ -686,6 +847,33 @@ export async function registerRoutes(
   });
 
   app.post('/api/proposals', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+    const body = req.body ?? {};
+    const title = String(body.title ?? '').trim();
+    const clientId = String(body.clientId ?? '').trim();
+    const type = String(body.type ?? '').trim();
+    const coordinatorName = String(body.coordinatorName ?? '').trim();
+    const riskAssessment = String(body.riskAssessment ?? '').trim();
+    const umbrellaRef = String(body.umbrellaRef ?? '').trim();
+
+    if (!title) {
+      return res.status(400).json({ message: 'Título é obrigatório' });
+    }
+    if (!clientId) {
+      return res.status(400).json({ message: 'Cliente é obrigatório' });
+    }
+    if (!type) {
+      return res.status(400).json({ message: 'Tipo do contrato é obrigatório' });
+    }
+    if (!coordinatorName) {
+      return res.status(400).json({ message: 'Responsável pela proposta é obrigatório' });
+    }
+    if (!riskAssessment) {
+      return res.status(400).json({ message: 'Avaliação de risco é obrigatória' });
+    }
+    if (type === 'service_order' && !umbrellaRef) {
+      return res.status(400).json({ message: 'Proposta original (guarda-chuva) é obrigatória' });
+    }
+
     const proposal = await storage.createProposal(req.body);
 
     const userId = (req as any).user?.sub;
@@ -1135,10 +1323,17 @@ export async function registerRoutes(
   });
 
   // Admin-only consolidated dashboard (used by admin profile)
-  app.get('/api/reports/dashboard', authenticateToken, requireRoles(['admin']), async (_req, res) => {
+  app.get('/api/reports/dashboard', authenticateToken, requireRoles(['admin']), async (req, res) => {
     const proposals = await storage.getAllProposals();
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
+    const timeEntries = await storage.getAllTimeEntries();
+    const periodDays = parseDashboardPeriod(req.query.period);
+    const trendBuckets = buildTrendBuckets(periodDays);
+    const periodRanges = buildPeriodRanges(periodDays);
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
 
     const proposalsByStatus = proposals.reduce((acc, p) => {
       acc[p.status] = (acc[p.status] || 0) + 1;
@@ -1151,8 +1346,106 @@ export async function registerRoutes(
     }, {} as Record<string, number>);
 
     const approvedValue = proposals
-      .filter(p => ['com_sucesso', 'sucesso_aditivo', 'approved', 'converted'].includes(p.status))
-      .reduce((sum, p) => sum + parseFloat(String(p.totalValue || 0)), 0);
+      .filter(p => APPROVED_PROPOSAL_STATUSES.has(p.status))
+      .reduce((sum, p) => sum + getProposalApprovedAmount(p), 0);
+
+    const approvedValueTrend = buildTrendPoints(
+      trendBuckets.map((bucket) => {
+        return proposals
+          .filter((proposal) => {
+            if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
+            const createdAt = toValidDate((proposal as any).createdAt);
+            if (!createdAt) return false;
+            return createdAt >= bucket.start && createdAt <= bucket.end;
+          })
+          .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
+      }),
+      trendBuckets.map((bucket) => bucket.label)
+    );
+
+    const currentApprovedValue = proposals
+      .filter((proposal) => {
+        if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
+        const createdAt = toValidDate((proposal as any).createdAt);
+        if (!createdAt) return false;
+        return isWithinRange(createdAt, periodRanges.current);
+      })
+      .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
+
+    const previousApprovedValue = proposals
+      .filter((proposal) => {
+        if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
+        const createdAt = toValidDate((proposal as any).createdAt);
+        if (!createdAt) return false;
+        return isWithinRange(createdAt, periodRanges.previous);
+      })
+      .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
+
+    const funnel = {
+      elaboracao: proposals.filter((proposal) => PROPOSAL_FUNNEL_STATUS.elaboracao.has(normalizeStatus(proposal.status))).length,
+      analise: proposals.filter((proposal) => PROPOSAL_FUNNEL_STATUS.analise.has(normalizeStatus(proposal.status))).length,
+      ganho: proposals.filter((proposal) => PROPOSAL_FUNNEL_STATUS.ganho.has(normalizeStatus(proposal.status))).length,
+      perdido: proposals.filter((proposal) => PROPOSAL_FUNNEL_STATUS.perdido.has(normalizeStatus(proposal.status))).length,
+    };
+
+    const clientNameById = new Map(
+      clients.map((client: any) => [
+        client.id,
+        String(client.nomeFantasia || client.razaoSocial || 'Cliente sem nome'),
+      ])
+    );
+
+    const topClientsMap = proposals
+      .filter((proposal) => APPROVED_PROPOSAL_STATUSES.has(normalizeStatus(proposal.status)))
+      .reduce((acc, proposal: any) => {
+        const clientId = String(proposal.clientId || 'unknown');
+        const current = acc.get(clientId) || { approvedValue: 0, proposalsCount: 0 };
+        current.approvedValue += getProposalApprovedAmount(proposal);
+        current.proposalsCount += 1;
+        acc.set(clientId, current);
+        return acc;
+      }, new Map<string, { approvedValue: number; proposalsCount: number }>());
+
+    const topClients = Array.from(topClientsMap.entries())
+      .map(([clientId, data]) => ({
+        clientId,
+        clientName: clientNameById.get(clientId) || 'Cliente sem nome',
+        approvedValue: Number(data.approvedValue.toFixed(2)),
+        proposalsCount: data.proposalsCount,
+      }))
+      .sort((a, b) => b.approvedValue - a.approvedValue)
+      .slice(0, 5);
+
+    const monthlyLaunchedHours = timeEntries
+      .filter((entry) => {
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+
+    const monthlyApprovedHours = timeEntries
+      .filter((entry) => {
+        if (entry.status !== 'approved') return false;
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+
+    const monthlyPendingHours = timeEntries
+      .filter((entry) => {
+        if (entry.status !== 'pending') return false;
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+
+    const pendingApprovals = timeEntries.filter((entry) => entry.status === 'pending').length;
+    const approvalRate = monthlyLaunchedHours > 0
+      ? (monthlyApprovedHours / monthlyLaunchedHours) * 100
+      : 0;
 
     res.json({
       proposals: {
@@ -1169,19 +1462,40 @@ export async function registerRoutes(
         active: clients.filter(c => c.isActive).length,
       },
       hours: {
-        monthlyTotal: 0,
-        pendingApprovals: 0,
+        monthlyTotal: monthlyApprovedHours,
+        launchedMonthly: monthlyLaunchedHours,
+        approvedMonthly: monthlyApprovedHours,
+        pendingMonthly: monthlyPendingHours,
+        approvalRate,
+        pendingApprovals,
       },
       financial: {
         approvedProposalsValue: approvedValue,
       },
+      trends: {
+        approvedValue: approvedValueTrend,
+      },
+      comparisons: {
+        currentApprovedValue,
+        previousApprovedValue,
+        approvedValueDeltaPct: calculateDeltaPercent(currentApprovedValue, previousApprovedValue),
+      },
+      funnel,
+      topClients,
     });
   });
 
   // Commercial dashboard (pipeline)
-  app.get('/api/dashboard/commercial', authenticateToken, requireRoles(['commercial']), async (_req, res) => {
+  app.get('/api/dashboard/commercial', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const proposals = await storage.getAllProposals();
     const clients = await storage.getAllClients();
+    const timeEntries = await storage.getAllTimeEntries();
+    const periodDays = parseDashboardPeriod(req.query.period);
+    const trendBuckets = buildTrendBuckets(periodDays);
+    const periodRanges = buildPeriodRanges(periodDays);
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
 
     const proposalsByStatus = proposals.reduce((acc, p) => {
       acc[p.status] = (acc[p.status] || 0) + 1;
@@ -1189,8 +1503,68 @@ export async function registerRoutes(
     }, {} as Record<string, number>);
 
     const approvedValue = proposals
-      .filter(p => ['com_sucesso', 'sucesso_aditivo', 'approved', 'converted'].includes(p.status))
-      .reduce((sum, p) => sum + parseFloat(String(p.totalValue || 0)), 0);
+      .filter(p => APPROVED_PROPOSAL_STATUSES.has(p.status))
+      .reduce((sum, p) => sum + getProposalApprovedAmount(p), 0);
+
+    const approvedValueTrend = buildTrendPoints(
+      trendBuckets.map((bucket) => {
+        return proposals
+          .filter((proposal) => {
+            if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
+            const createdAt = toValidDate((proposal as any).createdAt);
+            if (!createdAt) return false;
+            return createdAt >= bucket.start && createdAt <= bucket.end;
+          })
+          .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
+      }),
+      trendBuckets.map((bucket) => bucket.label)
+    );
+
+    const currentApprovedValue = proposals
+      .filter((proposal) => {
+        if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
+        const createdAt = toValidDate((proposal as any).createdAt);
+        if (!createdAt) return false;
+        return isWithinRange(createdAt, periodRanges.current);
+      })
+      .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
+
+    const previousApprovedValue = proposals
+      .filter((proposal) => {
+        if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
+        const createdAt = toValidDate((proposal as any).createdAt);
+        if (!createdAt) return false;
+        return isWithinRange(createdAt, periodRanges.previous);
+      })
+      .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
+
+    const launchedMonthly = timeEntries
+      .filter((entry) => {
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+
+    const approvedMonthly = timeEntries
+      .filter((entry) => {
+        if (entry.status !== 'approved') return false;
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+
+    const pendingMonthly = timeEntries
+      .filter((entry) => {
+        if (entry.status !== 'pending') return false;
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+
+    const approvalRate = launchedMonthly > 0 ? (approvedMonthly / launchedMonthly) * 100 : 0;
 
     res.json({
       proposals: {
@@ -1204,14 +1578,31 @@ export async function registerRoutes(
       financial: {
         approvedProposalsValue: approvedValue,
       },
+      hours: {
+        launchedMonthly,
+        approvedMonthly,
+        pendingMonthly,
+        approvalRate,
+      },
+      trends: {
+        approvedValue: approvedValueTrend,
+      },
+      comparisons: {
+        currentApprovedValue,
+        previousApprovedValue,
+        approvedValueDeltaPct: calculateDeltaPercent(currentApprovedValue, previousApprovedValue),
+      },
     });
   });
 
   // Projects dashboard (execution)
-  app.get('/api/dashboard/projects', authenticateToken, requireRoles(['projects']), async (_req, res) => {
+  app.get('/api/dashboard/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
     const timeEntries = await storage.getAllTimeEntries();
+    const periodDays = parseDashboardPeriod(req.query.period);
+    const trendBuckets = buildTrendBuckets(periodDays);
+    const periodRanges = buildPeriodRanges(periodDays);
 
     const projectsByStatus = projects.reduce((acc, p) => {
       acc[p.status] = (acc[p.status] || 0) + 1;
@@ -1222,14 +1613,68 @@ export async function registerRoutes(
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
 
-    const monthlyApprovedHours = timeEntries
-      .filter(e => {
-        const d = new Date(e.entryDate as any);
-        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && e.status === 'approved';
+    const monthlyLaunchedHours = timeEntries
+      .filter((entry) => {
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
       })
-      .reduce((sum, e) => sum + parseFloat(String(e.hours)), 0);
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+
+    const monthlyApprovedHours = timeEntries
+      .filter((entry) => {
+        if (entry.status !== 'approved') return false;
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+
+    const monthlyPendingHours = timeEntries
+      .filter((entry) => {
+        if (entry.status !== 'pending') return false;
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
 
     const pendingCount = timeEntries.filter(e => e.status === 'pending').length;
+    const approvalRate = monthlyLaunchedHours > 0
+      ? (monthlyApprovedHours / monthlyLaunchedHours) * 100
+      : 0;
+
+    const approvedHoursTrend = buildTrendPoints(
+      trendBuckets.map((bucket) => {
+        return timeEntries
+          .filter((entry) => {
+            if (entry.status !== 'approved') return false;
+            const entryDate = toValidDate((entry as any).entryDate);
+            if (!entryDate) return false;
+            return entryDate >= bucket.start && entryDate <= bucket.end;
+          })
+          .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+      }),
+      trendBuckets.map((bucket) => bucket.label)
+    );
+
+    const currentApprovedHours = timeEntries
+      .filter((entry) => {
+        if (entry.status !== 'approved') return false;
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return isWithinRange(entryDate, periodRanges.current);
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
+
+    const previousApprovedHours = timeEntries
+      .filter((entry) => {
+        if (entry.status !== 'approved') return false;
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) return false;
+        return isWithinRange(entryDate, periodRanges.previous);
+      })
+      .reduce((sum, entry) => sum + parseNumericValue(entry.hours), 0);
 
     res.json({
       projects: {
@@ -1241,8 +1686,20 @@ export async function registerRoutes(
         total: clients.length,
       },
       hours: {
+        launchedMonthly: monthlyLaunchedHours,
         monthlyApprovedHours,
+        approvedMonthly: monthlyApprovedHours,
+        pendingMonthly: monthlyPendingHours,
+        approvalRate,
         pendingCount,
+      },
+      trends: {
+        approvedHours: approvedHoursTrend,
+      },
+      comparisons: {
+        currentApprovedHours,
+        previousApprovedHours,
+        approvedHoursDeltaPct: calculateDeltaPercent(currentApprovedHours, previousApprovedHours),
       },
     });
   });

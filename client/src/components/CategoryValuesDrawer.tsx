@@ -344,6 +344,32 @@ export function CategoryValuesDrawer({
     }).format(value);
   };
 
+  const formatMoneyMask = (input: string): string => {
+    const digits = input.replace(/\D/g, '');
+    if (!digits) return '';
+
+    const value = Number(digits) / 100;
+    return value.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
+
+  const parseMoneyMaskToNumber = (masked: string): number => {
+    const digits = masked.replace(/\D/g, '');
+    if (!digits) return 0;
+    const value = Number(digits) / 100;
+    return Number.isFinite(value) ? value : 0;
+  };
+
+  const formatMoneyInputFromNumber = (value: number): string => {
+    if (!value || value <= 0) return '';
+    return value.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
+
   const handleClose = () => {
     onOpenChange(false);
     setIsFullscreen(false);
@@ -487,8 +513,8 @@ export function CategoryValuesDrawer({
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[40%]">Categoria</TableHead>
-                <TableHead className="w-[25%]">Valor (R$)</TableHead>
-                <TableHead className="w-[20%]">Horas</TableHead>
+                <TableHead className="w-[25%]">Valor por hora (R$)</TableHead>
+                <TableHead className="w-[20%]">Quantidade de horas</TableHead>
                 <TableHead className="w-[15%]"></TableHead>
               </TableRow>
             </TableHeader>
@@ -499,15 +525,23 @@ export function CategoryValuesDrawer({
                     {item.categoryName}
                   </TableCell>
                   <TableCell>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={item.value || ''}
-                      onChange={(e) => updateValue(index, 'value', e.target.value)}
-                      className="h-8"
-                      data-testid={`input-value-${index}`}
-                    />
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground select-none">
+                        R$
+                      </span>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={formatMoneyInputFromNumber(Number(item.value) || 0)}
+                        onChange={(e) => {
+                          const masked = formatMoneyMask(e.target.value);
+                          updateValue(index, 'value', String(parseMoneyMaskToNumber(masked)));
+                        }}
+                        placeholder="0,00"
+                        className="h-8 pl-9"
+                        data-testid={`input-value-${index}`}
+                      />
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Input

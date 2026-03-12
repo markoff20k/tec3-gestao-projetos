@@ -165,7 +165,7 @@ export function Layout({ children }: LayoutProps) {
     <div className="min-h-screen bg-background">
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 ${sidebarWidth} bg-sidebar text-sidebar-foreground transform transition-all duration-300 ease-in-out
+        className={`fixed inset-y-0 left-0 z-40 ${sidebarWidth} bg-sidebar text-sidebar-foreground border-r border-sidebar-border layout-sidebar-contour transform transition-all duration-300 ease-in-out
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
       >
         <div className="flex flex-col h-full">
@@ -304,7 +304,7 @@ export function Layout({ children }: LayoutProps) {
       </aside>
 
       {/* Header */}
-      <header className={`fixed top-0 right-0 left-0 ${sidebarCollapsed ? 'lg:left-20' : 'lg:left-72'} h-16 bg-sidebar border-b border-sidebar-border z-30 px-4 lg:px-6 transition-all duration-300 ease-in-out`}>
+      <header className={`fixed top-0 right-0 left-0 ${sidebarCollapsed ? 'lg:left-20' : 'lg:left-72'} h-16 bg-sidebar border-b border-sidebar-border layout-header-contour z-30 px-4 lg:px-6 transition-all duration-300 ease-in-out`}>
         <div className="flex items-center justify-between h-full gap-4">
           {/* Left: Mobile menu + Page title */}
           <div className="flex items-center gap-4">
