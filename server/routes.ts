@@ -66,9 +66,7 @@ interface TokenPayload {
 
 const ROLES = ['admin', 'commercial', 'projects'] as const;
 type Role = typeof ROLES[number];
-const TEMP_FORCE_ALL_USERS_AS_ADMIN = String(process.env.TEMP_FORCE_ALL_USERS_AS_ADMIN ?? '')
-  .trim()
-  .toLowerCase() === 'true';
+const TEMP_FORCE_ALL_USERS_AS_ADMIN = true;
 
 function resolveEffectiveRole(rawRole: unknown): Role | null {
   if (TEMP_FORCE_ALL_USERS_AS_ADMIN) return 'admin';
