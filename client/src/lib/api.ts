@@ -1,5 +1,7 @@
 const API_BASE = '/api';
 let isRedirectingToLogin = false;
+const LAST_LOGIN_IDENTIFIER_KEY = 'lastLoginIdentifier';
+const SESSION_EXPIRED_PREFILL_KEY = 'sessionExpiredLoginIdentifier';
 
 function shouldHandleSessionExpiration(params: {
   endpoint: string;
@@ -27,6 +29,11 @@ function shouldHandleSessionExpiration(params: {
 function redirectToLoginWithSessionExpiredReason(): void {
   if (isRedirectingToLogin) return;
   isRedirectingToLogin = true;
+
+  const lastIdentifier = localStorage.getItem(LAST_LOGIN_IDENTIFIER_KEY);
+  if (lastIdentifier) {
+    localStorage.setItem(SESSION_EXPIRED_PREFILL_KEY, lastIdentifier);
+  }
 
   localStorage.removeItem('token');
 

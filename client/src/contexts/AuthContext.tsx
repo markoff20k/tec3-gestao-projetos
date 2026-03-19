@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, authApi } from '@/lib/api';
 
+const LAST_LOGIN_IDENTIFIER_KEY = 'lastLoginIdentifier';
+
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
@@ -35,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (identifier: string, password: string) => {
     const response = await authApi.login(identifier, password);
     localStorage.setItem('token', response.accessToken);
+    localStorage.setItem(LAST_LOGIN_IDENTIFIER_KEY, identifier);
     setUser(response.user);
   };
 

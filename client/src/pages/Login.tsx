@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Lock, User, ArrowRight, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 
+const SESSION_EXPIRED_PREFILL_KEY = 'sessionExpiredLoginIdentifier';
+
 export default function Login() {
   const { login, isAuthenticated, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
@@ -19,6 +21,12 @@ export default function Login() {
 
   useEffect(() => {
     document.documentElement.classList.remove('dark');
+
+    const prefillIdentifier = localStorage.getItem(SESSION_EXPIRED_PREFILL_KEY);
+    if (prefillIdentifier) {
+      setIdentifier(prefillIdentifier);
+      localStorage.removeItem(SESSION_EXPIRED_PREFILL_KEY);
+    }
   }, []);
 
   if (!authLoading && isAuthenticated) {
