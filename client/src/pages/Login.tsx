@@ -120,8 +120,14 @@ export default function Login() {
               <img 
                 src="/assets/tec3-logo.svg" 
                 alt="TEC3 Engenharia" 
-                className="block h-[clamp(3.4rem,11vw,4.9rem)] w-auto [filter:brightness(0)_saturate(100%)_invert(29%)_sepia(88%)_saturate(1569%)_hue-rotate(188deg)_brightness(94%)_contrast(88%)]"
+                className="block dark:hidden h-[clamp(3.4rem,11vw,4.9rem)] w-auto [filter:brightness(0)_saturate(100%)_invert(29%)_sepia(88%)_saturate(1569%)_hue-rotate(188deg)_brightness(94%)_contrast(88%)]"
                 data-testid="img-logo-mobile"
+              />
+              <img
+                src="/assets/tec3-logo.svg"
+                alt="TEC3 Engenharia"
+                className="hidden dark:block h-[clamp(3.4rem,11vw,4.9rem)] w-auto brightness-0 invert drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
+                data-testid="img-logo-mobile-dark"
               />
             </div>
           </div>
