@@ -7,9 +7,16 @@ import {
   Clock,
   DollarSign,
   AlertCircle,
+  CircleHelp,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Tooltip as UiTooltip,
+  TooltipContent as UiTooltipContent,
+  TooltipProvider as UiTooltipProvider,
+  TooltipTrigger as UiTooltipTrigger,
+} from '@/components/ui/tooltip';
 import { dashboardApi, reportsApi, type CommercialDashboardMetrics, type DashboardMetrics, type ProjectsDashboardMetrics } from '@/lib/api';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -24,17 +31,19 @@ import {
   Line,
   LineChart,
   ResponsiveContainer,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 
-type DashboardPeriod = '30d' | '90d' | '180d';
+type DashboardPeriod = '7d' | '30d' | '90d' | '180d' | '365d';
 
 const PERIOD_OPTIONS: Array<{ value: DashboardPeriod; label: string }> = [
+  { value: '7d', label: '7 dias' },
   { value: '30d', label: '30 dias' },
   { value: '90d', label: '90 dias' },
   { value: '180d', label: '180 dias' },
+  { value: '365d', label: '365 dias' },
 ];
 
 const SUCCESS_PROPOSAL_STATUSES = [
@@ -86,9 +95,11 @@ function formatDelta(value: number): string {
 
 function buildTrendSeries(baseValue: number, period: DashboardPeriod) {
   const pointsByPeriod: Record<DashboardPeriod, string[]> = {
+    '7d': ['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7'],
     '30d': ['S1', 'S2', 'S3', 'S4'],
     '90d': ['M-2', 'M-1', 'M0'],
     '180d': ['M-5', 'M-4', 'M-3', 'M-2', 'M-1', 'M0'],
+    '365d': ['M-11', 'M-10', 'M-9', 'M-8', 'M-7', 'M-6', 'M-5', 'M-4', 'M-3', 'M-2', 'M-1', 'M0'],
   };
 
   const multipliers = [0.78, 0.84, 0.9, 0.96, 1.04, 1.1];
@@ -181,7 +192,7 @@ function ChartCard({
                   axisLine={{ stroke: 'hsl(var(--border))' }}
                   tickLine={{ stroke: 'hsl(var(--border))' }}
                 />
-                <Tooltip
+                <RechartsTooltip
                   cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
                   contentStyle={{
                     background: 'hsl(var(--popover))',
@@ -246,7 +257,7 @@ function FunnelCard({
           <div className="h-[260px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Tooltip
+                <RechartsTooltip
                   formatter={(value: number, _name: string, payload: { payload?: { count?: number } }) => {
                     const count = Number(payload?.payload?.count || 0);
                     const percent = total > 0 ? (count / total) * 100 : 0;
@@ -312,23 +323,66 @@ function StatCard({
   value,
   description,
   icon: Icon,
+  delta,
+  emphasis,
+  tooltipText,
 }: {
   title: string;
   value: string | number;
   description?: string;
   icon: typeof FileText;
+  delta?: number;
+  emphasis?: boolean;
+  tooltipText?: string;
 }) {
+  const isPositive = (delta ?? 0) >= 0;
+
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
+    <Card className={emphasis ? 'border-[#1d5d96] bg-gradient-to-br from-[#1e6aa8] to-[#12487a] text-white shadow-md' : 'border-border/70'}>
+      <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
+        <div>
+          <CardTitle className={`flex items-center gap-1 text-xs font-semibold uppercase tracking-wide ${emphasis ? 'text-white/80' : 'text-muted-foreground'}`}>
+            <span>{title}</span>
+            {tooltipText && (
+              <UiTooltipProvider delayDuration={120}>
+                <UiTooltip>
+                  <UiTooltipTrigger asChild>
+                    <button type="button" className="inline-flex" aria-label={`Detalhes de ${title}`}>
+                      <CircleHelp className={`h-3.5 w-3.5 ${emphasis ? 'text-white/85' : 'text-muted-foreground'}`} />
+                    </button>
+                  </UiTooltipTrigger>
+                  <UiTooltipContent className="max-w-[300px] whitespace-normal text-xs leading-relaxed">
+                    <p>{tooltipText}</p>
+                  </UiTooltipContent>
+                </UiTooltip>
+              </UiTooltipProvider>
+            )}
+          </CardTitle>
+        </div>
+        <div className={`inline-flex h-8 w-8 items-center justify-center rounded-md ${emphasis ? 'bg-white/15' : 'bg-[#e9f2fa] text-[#1d5d96]'}`}>
+          <Icon className={`h-4 w-4 ${emphasis ? 'text-white' : 'text-[#1d5d96]'}`} />
+        </div>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
-        {description && (
-          <p className="text-xs text-muted-foreground">{description}</p>
-        )}
+        <div className="flex items-end justify-between gap-3">
+          <div className={`text-3xl font-semibold leading-none ${emphasis ? 'text-white' : 'text-foreground'}`}>{value}</div>
+          {typeof delta === 'number' && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                isPositive
+                  ? emphasis
+                    ? 'bg-emerald-400/20 text-emerald-100'
+                    : 'bg-emerald-100 text-emerald-700'
+                  : emphasis
+                    ? 'bg-red-400/20 text-red-100'
+                    : 'bg-red-100 text-red-700'
+              }`}
+            >
+              {formatDelta(delta)}
+            </span>
+          )}
+        </div>
+        {description && <p className={`mt-2 text-xs ${emphasis ? 'text-white/80' : 'text-muted-foreground'}`}>{description}</p>}
       </CardContent>
     </Card>
   );
@@ -409,15 +463,56 @@ function TrendCard({
   data: Array<{ label: string; atual: number; meta: number }>;
   formatter: (value: number) => string;
 }) {
+  const formatYAxisTick = (value: number) => {
+    const numeric = Number(value || 0);
+    const abs = Math.abs(numeric);
+
+    if (abs >= 1_000_000_000) {
+      return `${(numeric / 1_000_000_000).toFixed(1).replace('.', ',')} bi`;
+    }
+    if (abs >= 1_000_000) {
+      return `${(numeric / 1_000_000).toFixed(1).replace('.', ',')} mi`;
+    }
+    if (abs >= 1_000) {
+      return `${(numeric / 1_000).toFixed(0)}k`;
+    }
+
+    return `${Math.round(numeric)}`;
+  };
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">{title}</CardTitle>
+    <Card className="border-border/70">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg">{title}</CardTitle>
+          <div className="flex items-center gap-3 text-xs">
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              <span className="h-2 w-2 rounded-full bg-[#2b6ea6]" />Atual
+            </span>
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              <span className="h-2 w-2 rounded-full bg-[#9fb8cf]" />Projetado
+            </span>
+            <UiTooltipProvider delayDuration={120}>
+              <UiTooltip>
+                <UiTooltipTrigger asChild>
+                  <button type="button" className="inline-flex" aria-label="Como o gráfico calcula atual e projetado">
+                    <CircleHelp className="h-3.5 w-3.5 text-muted-foreground" />
+                  </button>
+                </UiTooltipTrigger>
+                <UiTooltipContent className="max-w-[320px] whitespace-normal text-xs leading-relaxed">
+                  <p>
+                    Atual: valor realizado em cada período. Projetado: linha de tendência calculada por regressão linear com base no histórico exibido no gráfico.
+                  </p>
+                </UiTooltipContent>
+              </UiTooltip>
+            </UiTooltipProvider>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="h-[260px]">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
+            <LineChart data={data} margin={{ top: 8, right: 12, bottom: 8, left: 12 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis
                 dataKey="label"
@@ -426,11 +521,14 @@ function TrendCard({
                 tickLine={{ stroke: 'hsl(var(--border))' }}
               />
               <YAxis
+                width={64}
+                tickMargin={8}
+                tickFormatter={formatYAxisTick}
                 tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
                 axisLine={{ stroke: 'hsl(var(--border))' }}
                 tickLine={{ stroke: 'hsl(var(--border))' }}
               />
-              <Tooltip
+              <RechartsTooltip
                 formatter={(value: number) => formatter(Number(value || 0))}
                 cursor={{ fill: 'hsl(var(--muted))', opacity: 0.35 }}
                 contentStyle={{
@@ -441,11 +539,143 @@ function TrendCard({
                 }}
                 labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
               />
-              <Line type="monotone" dataKey="meta" stroke="hsl(var(--chart-3))" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="atual" stroke="hsl(var(--chart-1))" strokeWidth={2.4} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="meta" stroke="#9fb8cf" strokeDasharray="4 4" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="atual" stroke="#1f6fb0" strokeWidth={2.6} dot={{ r: 3, fill: '#1f6fb0' }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function StatusDistributionCard({
+  title,
+  data,
+  onItemClick,
+}: {
+  title: string;
+  data: Array<{ status: string; count: number; key?: string }>;
+  onItemClick?: (item: { status: string; count: number; key?: string }) => void;
+}) {
+  const ordered = [...data].sort((a, b) => b.count - a.count).slice(0, 5);
+  const total = ordered.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+
+  return (
+    <Card className="border-border/70">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-lg">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {ordered.length === 0 || total === 0 ? (
+          <p className="text-sm text-muted-foreground">Sem dados para exibir</p>
+        ) : (
+          <div className="space-y-4">
+            {ordered.map((item) => {
+              const pct = (item.count / total) * 100;
+
+              return (
+                <button
+                  key={item.key ?? item.status}
+                  type="button"
+                  onClick={() => onItemClick?.(item)}
+                  className="w-full text-left"
+                >
+                  <div className="mb-1 flex items-center justify-between text-xs">
+                    <span className="font-medium uppercase tracking-wide text-muted-foreground">{item.status}</span>
+                    <span className="font-semibold text-foreground">{pct.toFixed(0).replace('.', ',')}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-[#e6edf4]">
+                    <div
+                      className="h-2 rounded-full bg-[#1f6fb0] transition-all"
+                      style={{ width: `${Math.max(8, Math.min(100, pct))}%` }}
+                    />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function FunnelStepsCard({
+  title,
+  data,
+  onItemClick,
+}: {
+  title: string;
+  data: Array<{ status: string; count: number; key?: string }>;
+  onItemClick?: (item: { status: string; count: number; key?: string }) => void;
+}) {
+  const total = data.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+  const palette = ['#0f2f55', '#1c4d80', '#2d6aa3', '#5f89b2'];
+
+  return (
+    <Card className="border-border/70">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-lg">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {total === 0 ? (
+          <p className="text-sm text-muted-foreground">Sem dados para exibir</p>
+        ) : (
+          <div className="space-y-4">
+            {data.map((item, index) => (
+              <button
+                key={item.key ?? item.status}
+                type="button"
+                onClick={() => onItemClick?.(item)}
+                className="flex w-full items-center justify-between rounded-md px-4 py-3 text-white shadow-sm transition-transform hover:translate-x-0.5"
+                style={{ backgroundColor: palette[index % palette.length] }}
+              >
+                <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">{item.status}</span>
+                <span className="text-xl font-semibold leading-none">{item.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SimpleStatusListCard({
+  title,
+  data,
+  onItemClick,
+}: {
+  title: string;
+  data: Array<{ status: string; count: number; key?: string }>;
+  onItemClick?: (item: { status: string; count: number; key?: string }) => void;
+}) {
+  const ordered = [...data].sort((a, b) => b.count - a.count).slice(0, 5);
+
+  return (
+    <Card className="border-border/70">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-lg">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {ordered.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sem dados para exibir</p>
+        ) : (
+          <div className="space-y-2">
+            {ordered.map((item) => (
+              <button
+                key={item.key ?? item.status}
+                type="button"
+                onClick={() => onItemClick?.(item)}
+                className="flex w-full items-center justify-between rounded-md border border-border/60 bg-card px-3 py-2 text-left transition-colors hover:bg-muted/40"
+              >
+                <span className="text-sm font-medium capitalize">{item.status}</span>
+                <span className="rounded-md bg-[#e9f2fa] px-2 py-0.5 text-xs font-semibold text-[#1d5d96]">{item.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -456,7 +686,7 @@ export default function Dashboard() {
   const [, setLocation] = useLocation();
   const [period, setPeriod] = useState<DashboardPeriod>('90d');
 
-  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+  const isAdmin = user?.role === 'admin';
   const isCommercial = user?.role === 'commercial';
   const isProjects = user?.role === 'projects';
 
@@ -528,17 +758,21 @@ export default function Dashboard() {
   };
 
   const adminSuccessCount = statusCount(adminProposalByStatus, SUCCESS_PROPOSAL_STATUSES);
+  const adminPeriodTotal = adminProposalByStatus.reduce((sum, item) => sum + Number(item.count || 0), 0);
   const adminPipelineCount = statusCount(adminProposalByStatus, PIPELINE_PROPOSAL_STATUSES);
-  const adminSuccessRate = metrics?.proposals.total
-    ? (adminSuccessCount / metrics.proposals.total) * 100
-    : 0;
+  const adminSuccessRatePeriod = metrics?.proposals.success?.period.rate ??
+    (adminPeriodTotal ? (adminSuccessCount / adminPeriodTotal) * 100 : 0);
+  const adminSuccessRateOverall = metrics?.proposals.success?.overall.rate ??
+    (metrics?.proposals.total ? (adminSuccessCount / metrics.proposals.total) * 100 : 0);
   const adminProjectsAtRisk = statusCount(adminProjectByStatus, ['on_hold', 'cancelled', 'canceled']);
 
   const commercialSuccessCount = statusCount(commercialByStatus, SUCCESS_PROPOSAL_STATUSES);
+  const commercialPeriodTotal = commercialByStatus.reduce((sum, item) => sum + Number(item.count || 0), 0);
   const commercialPipelineCount = statusCount(commercialByStatus, PIPELINE_PROPOSAL_STATUSES);
-  const commercialSuccessRate = commercial?.proposals.total
-    ? (commercialSuccessCount / commercial.proposals.total) * 100
-    : 0;
+  const commercialSuccessRatePeriod = commercial?.proposals.success?.period.rate ??
+    (commercialPeriodTotal ? (commercialSuccessCount / commercialPeriodTotal) * 100 : 0);
+  const commercialSuccessRateOverall = commercial?.proposals.success?.overall.rate ??
+    (commercial?.proposals.total ? (commercialSuccessCount / commercial.proposals.total) * 100 : 0);
   const commercialTicket = commercialSuccessCount > 0
     ? (commercial?.financial.approvedProposalsValue || 0) / commercialSuccessCount
     : 0;
@@ -555,6 +789,26 @@ export default function Dashboard() {
     },
     [metrics?.trends?.approvedValue, metrics?.financial.approvedProposalsValue, period]
   );
+
+  const adminProposalCountTrendData = useMemo(
+    () => {
+      const serverTrend = metrics?.trends?.proposalCount;
+      if (serverTrend && serverTrend.length > 0) return serverTrend;
+      return buildTrendSeries(metrics?.proposals.total || 0, period).map((point) => ({
+        ...point,
+        atual: Math.round(point.atual),
+        meta: Math.round(point.meta),
+      }));
+    },
+    [metrics?.trends?.proposalCount, metrics?.proposals.total, period]
+  );
+  const adminProposalsCreatedInWindow = adminProposalCountTrendData.reduce(
+    (sum, point) => sum + Number(point.atual || 0),
+    0
+  );
+  const adminProposalWindowShare = (metrics?.proposals.total || 0) > 0
+    ? (adminProposalsCreatedInWindow / (metrics?.proposals.total || 1)) * 100
+    : 0;
 
   const adminTrendDelta = adminTrendData.length >= 2
     ? ((adminTrendData.at(-1)?.atual || 0) - (adminTrendData.at(-2)?.atual || 0)) /
@@ -619,88 +873,66 @@ export default function Dashboard() {
     <Layout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
+          <h1 className="text-3xl font-semibold tracking-tight">Dashboard de Performance</h1>
           <p className="text-muted-foreground">
-            Visão geral do sistema de gestão de projetos
+            Visão geral da estrutura operacional e comercial da TEC3 Engenharia.
           </p>
         </div>
 
         {(isAdmin || isCommercial || isProjects) && (
-          <div className="flex items-center justify-end">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <PeriodSelector value={period} onChange={setPeriod} />
+            <button
+              type="button"
+              onClick={() => setLocation('/reports')}
+              className="rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
+            >
+              Exportar dados
+            </button>
           </div>
         )}
 
         {isAdmin && (
           <>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <StatCard
                 title="Total de Propostas"
                 value={metrics?.proposals.total || 0}
                 description="Total cadastrado"
                 icon={FileText}
+                delta={adminDelta}
               />
               <StatCard
                 title="Projetos Ativos"
                 value={metrics?.projects.active || 0}
                 description={`De ${metrics?.projects.total || 0} projetos`}
                 icon={FolderKanban}
+                delta={projectsActiveRate}
               />
               <StatCard
-                title="Clientes Ativos"
-                value={metrics?.clients.active || 0}
-                description={`De ${metrics?.clients.total || 0} clientes`}
-                icon={Building2}
-              />
-              <StatCard
-                title="Horas no Mês"
+                title="Horas Lançadas"
                 value={`${metrics?.hours.launchedMonthly ?? metrics?.hours.monthlyTotal ?? 0}h`}
-                description={`Aprovadas no mês: ${metrics?.hours.approvedMonthly ?? metrics?.hours.monthlyTotal ?? 0}h`}
+                description="No período atual"
                 icon={Clock}
               />
               <StatCard
                 title="Taxa de Sucesso"
-                value={formatPercent(adminSuccessRate)}
-                description={`Propostas com sucesso: ${adminSuccessCount}`}
-                icon={DollarSign}
+                value={formatPercent(adminSuccessRatePeriod)}
+                description={`Período: ${formatPercent(adminSuccessRatePeriod)} | Histórico: ${formatPercent(adminSuccessRateOverall)}`}
+                tooltipText="Taxa de sucesso do período = propostas com sucesso no período dividido pelo total de propostas criadas no período. Taxa histórica = propostas com sucesso no histórico dividido pelo total histórico de propostas."
+                icon={Building2}
+                emphasis
               />
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <StatCard
-                title="Horas Lançadas (Mês)"
-                value={`${metrics?.hours.launchedMonthly ?? 0}h`}
-                description="Total registrado no mês"
-                icon={Clock}
-              />
-              <StatCard
-                title="Horas Aprovadas (Mês)"
-                value={`${metrics?.hours.approvedMonthly ?? metrics?.hours.monthlyTotal ?? 0}h`}
-                description="Total aprovado no mês"
-                icon={Clock}
-              />
-              <StatCard
-                title="Horas Pendentes (Mês)"
-                value={`${metrics?.hours.pendingMonthly ?? 0}h`}
-                description="Aguardando aprovação"
-                icon={Clock}
-              />
-              <StatCard
-                title="Taxa de Aprovação"
-                value={formatPercent(metrics?.hours.approvalRate ?? 0)}
-                description="Aprovadas sobre lançadas no mês"
-                icon={DollarSign}
-              />
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 lg:grid-cols-3">
               <TrendCard
-                title={`Evolução do Indicador Principal (${PERIOD_OPTIONS.find((p) => p.value === period)?.label})`}
+                title={`Evolução do Valor Aprovado (R$) (${PERIOD_OPTIONS.find((p) => p.value === period)?.label})`}
                 data={adminTrendData}
                 formatter={formatCurrency}
               />
 
-              <ChartCard
+              <StatusDistributionCard
                 title="Distribuição por Status"
                 data={toCountChart(metrics?.proposals.byStatus)}
                 onItemClick={(item) => {
@@ -708,53 +940,57 @@ export default function Dashboard() {
                   openProposalsWithFilters({ statuses: [item.key] });
                 }}
               />
-            </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <ChartCard
-                title="Status dos Projetos"
-                data={toProjectStatusChart(metrics?.projects.byStatus)}
-                onItemClick={(item) => {
-                  if (!item.key) return;
-                  openProjectsWithFilters({ statuses: [item.key] });
-                }}
-              />
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Resumo Executivo</CardTitle>
+              <Card className="border-border/70">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Evolução do Volume de Propostas</CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Criadas no período: {adminProposalsCreatedInWindow} de {metrics?.proposals.total || 0} ({formatPercent(adminProposalWindowShare)})
+                  </p>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Propostas</span>
-                      <span className="font-medium">{metrics?.proposals.total || 0}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Projetos</span>
-                      <span className="font-medium">{metrics?.projects.total || 0}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Clientes</span>
-                      <span className="font-medium">{metrics?.clients.total || 0}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Valor aprovado</span>
-                      <span className="font-medium">{formatCurrency(metrics?.financial.approvedProposalsValue || 0)}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Variação vs período anterior</span>
-                      <span className={`font-medium ${adminDelta >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {formatDelta(adminDelta)}
-                      </span>
-                    </div>
+                  <div className="h-[260px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={adminProposalCountTrendData} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis
+                          dataKey="label"
+                          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+                          axisLine={{ stroke: 'hsl(var(--border))' }}
+                          tickLine={{ stroke: 'hsl(var(--border))' }}
+                        />
+                        <YAxis
+                          allowDecimals={false}
+                          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+                          axisLine={{ stroke: 'hsl(var(--border))' }}
+                          tickLine={{ stroke: 'hsl(var(--border))' }}
+                        />
+                        <RechartsTooltip
+                          formatter={(value: number) => {
+                            const v = Math.round(Number(value || 0));
+                            const total = metrics?.proposals.total || 0;
+                            const pct = total > 0 ? (v / total) * 100 : 0;
+                            return `${v} propostas (${pct.toFixed(1).replace('.', ',')}% do total)`;
+                          }}
+                          cursor={{ fill: 'hsl(var(--muted))', opacity: 0.35 }}
+                          contentStyle={{
+                            background: 'hsl(var(--popover))',
+                            borderColor: 'hsl(var(--border))',
+                            color: 'hsl(var(--popover-foreground))',
+                            borderRadius: 8,
+                          }}
+                          labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
+                        />
+                        <Bar dataKey="atual" radius={[6, 6, 0, 0]} fill="#1f6fb0" />
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
                 </CardContent>
               </Card>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <FunnelCard
+              <FunnelStepsCard
                 title="Funil de Conversão"
                 data={adminFunnelData}
                 onItemClick={(item) => {
@@ -763,14 +999,25 @@ export default function Dashboard() {
                 }}
               />
 
+              <ChartCard
+                title="Status dos Projetos"
+                data={toProjectStatusChart(metrics?.projects.byStatus)}
+                onItemClick={(item) => {
+                  if (!item.key) return;
+                  openProjectsWithFilters({ statuses: [item.key] });
+                }}
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-lg">Top 5 Clientes (Valor Aprovado)</CardTitle>
+                  <CardTitle className="text-lg">Top 5 Clientes</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {metrics?.topClients && metrics.topClients.length > 0 ? (
-                    <div className="space-y-3">
-                      {metrics.topClients.map((client, index) => (
+                    <div className="space-y-2">
+                      {metrics.topClients.map((client) => (
                         <button
                           key={client.clientId}
                           type="button"
@@ -778,13 +1025,13 @@ export default function Dashboard() {
                             clientId: client.clientId,
                             statuses: FUNNEL_STATUS_FILTERS.ganho,
                           })}
-                          className="flex w-full items-center justify-between gap-3 rounded-md px-1 py-1 text-left text-sm transition-colors hover:bg-muted/60"
+                          className="flex w-full items-center justify-between rounded-md border border-border/60 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/40"
                         >
                           <div className="min-w-0">
-                            <p className="font-medium truncate">{index + 1}. {client.clientName}</p>
-                            <p className="text-xs text-muted-foreground">{client.proposalsCount} propostas com sucesso</p>
+                            <p className="truncate font-medium">{client.clientName}</p>
+                            <p className="text-xs text-muted-foreground">{client.proposalsCount} propostas</p>
                           </div>
-                          <p className="font-semibold whitespace-nowrap">{formatCurrency(client.approvedValue)}</p>
+                          <p className="font-semibold">{formatCurrency(client.approvedValue)}</p>
                         </button>
                       ))}
                     </div>
@@ -793,48 +1040,15 @@ export default function Dashboard() {
                   )}
                 </CardContent>
               </Card>
-            </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Prioridades</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Pipeline em aberto</span>
-                    <span className="font-semibold">{adminPipelineCount}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Projetos em risco</span>
-                    <span className="font-semibold">{adminProjectsAtRisk}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Aprovações pendentes</span>
-                    <span className="font-semibold">{metrics?.hours.pendingApprovals || 0}</span>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Saúde Operacional</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Conversão comercial</span>
-                    <span className="font-semibold">{formatPercent(adminSuccessRate)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Projetos ativos</span>
-                    <span className="font-semibold">{metrics?.projects.active || 0}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Horas aprovadas no mês</span>
-                    <span className="font-semibold">{`${metrics?.hours.monthlyTotal || 0}h`}</span>
-                  </div>
-                </CardContent>
-              </Card>
+              <SimpleStatusListCard
+                title="Últimas Atualizações de Status"
+                data={toCountChart(metrics?.proposals.byStatus)}
+                onItemClick={(item) => {
+                  if (!item.key) return;
+                  openProposalsWithFilters({ statuses: [item.key] });
+                }}
+              />
             </div>
           </>
         )}
@@ -850,8 +1064,9 @@ export default function Dashboard() {
               />
               <StatCard
                 title="Taxa de Sucesso"
-                value={formatPercent(commercialSuccessRate)}
-                description={`Propostas com sucesso: ${commercialSuccessCount}`}
+                value={formatPercent(commercialSuccessRatePeriod)}
+                description={`Período: ${formatPercent(commercialSuccessRatePeriod)} | Histórico: ${formatPercent(commercialSuccessRateOverall)}`}
+                tooltipText="Taxa de sucesso do período = propostas com sucesso no período dividido pelo total de propostas criadas no período. Taxa histórica = propostas com sucesso no histórico dividido pelo total histórico de propostas."
                 icon={FileText}
               />
               <StatCard
@@ -897,7 +1112,7 @@ export default function Dashboard() {
 
             <div className="grid gap-4 md:grid-cols-2">
               <TrendCard
-                title={`Evolução do Indicador Principal (${PERIOD_OPTIONS.find((p) => p.value === period)?.label})`}
+                title={`Evolução do Valor Aprovado (R$) (${PERIOD_OPTIONS.find((p) => p.value === period)?.label})`}
                 data={commercialTrendData}
                 formatter={formatCurrency}
               />
@@ -942,7 +1157,7 @@ export default function Dashboard() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Taxa de sucesso</span>
-                    <span className="font-semibold">{formatPercent(commercialSuccessRate)}</span>
+                    <span className="font-semibold">{formatPercent(commercialSuccessRatePeriod)}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Valor ganho</span>
@@ -1012,7 +1227,7 @@ export default function Dashboard() {
 
             <div className="grid gap-4 md:grid-cols-2">
               <TrendCard
-                title={`Evolução do Indicador Principal (${PERIOD_OPTIONS.find((p) => p.value === period)?.label})`}
+                title={`Evolução de Horas Aprovadas (${PERIOD_OPTIONS.find((p) => p.value === period)?.label})`}
                 data={projectsTrendData}
                 formatter={(value) => `${Number(value || 0).toFixed(0)}h`}
               />

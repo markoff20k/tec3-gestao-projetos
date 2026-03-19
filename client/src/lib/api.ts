@@ -444,7 +444,14 @@ export interface ProposalCategory {
 }
 
 export interface DashboardMetrics {
-  proposals: { total: number; byStatus: any[] };
+  proposals: {
+    total: number;
+    byStatus: any[];
+    success?: {
+      period: { count: number; total: number; rate: number };
+      overall: { count: number; total: number; rate: number };
+    };
+  };
   projects: { total: number; active: number; byStatus: any[] };
   clients: { total: number; active: number };
   hours: {
@@ -458,6 +465,7 @@ export interface DashboardMetrics {
   financial: { approvedProposalsValue: number };
   trends?: {
     approvedValue: Array<{ label: string; atual: number; meta: number }>;
+    proposalCount?: Array<{ label: string; atual: number; meta: number }>;
   };
   comparisons?: {
     currentApprovedValue: number;
@@ -479,7 +487,14 @@ export interface DashboardMetrics {
 }
 
 export interface CommercialDashboardMetrics {
-  proposals: { total: number; byStatus: any[] };
+  proposals: {
+    total: number;
+    byStatus: any[];
+    success?: {
+      period: { count: number; total: number; rate: number };
+      overall: { count: number; total: number; rate: number };
+    };
+  };
   clients: { total: number; active: number };
   financial: { approvedProposalsValue: number };
   hours?: {
@@ -490,6 +505,7 @@ export interface CommercialDashboardMetrics {
   };
   trends?: {
     approvedValue: Array<{ label: string; atual: number; meta: number }>;
+    proposalCount?: Array<{ label: string; atual: number; meta: number }>;
   };
   comparisons?: {
     currentApprovedValue: number;
@@ -549,7 +565,7 @@ export const projectsApi = {
 };
 
 export const reportsApi = {
-  getDashboard: (period?: '30d' | '90d' | '180d') =>
+  getDashboard: (period?: '7d' | '30d' | '90d' | '180d' | '365d') =>
     api.get<DashboardMetrics>(`/reports/dashboard${period ? `?period=${period}` : ''}`),
   getHours: (startDate: string, endDate: string) =>
     api.get<any>(`/reports/hours?startDate=${startDate}&endDate=${endDate}`),
@@ -559,9 +575,9 @@ export const reportsApi = {
 };
 
 export const dashboardApi = {
-  getCommercial: (period?: '30d' | '90d' | '180d') =>
+  getCommercial: (period?: '7d' | '30d' | '90d' | '180d' | '365d') =>
     api.get<CommercialDashboardMetrics>(`/dashboard/commercial${period ? `?period=${period}` : ''}`),
-  getProjects: (period?: '30d' | '90d' | '180d') =>
+  getProjects: (period?: '7d' | '30d' | '90d' | '180d' | '365d') =>
     api.get<ProjectsDashboardMetrics>(`/dashboard/projects${period ? `?period=${period}` : ''}`),
 };
 
