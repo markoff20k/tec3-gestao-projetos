@@ -54,13 +54,16 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { Calendar as DateCalendar } from '@/components/ui/calendar';
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
@@ -151,6 +154,76 @@ function normalizeFilterValue(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
 }
 
+function extractDateOnly(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+
+  const isoDateMatch = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoDateMatch) return isoDateMatch[1];
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return '';
+
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseFilterDate(value: string): Date | undefined {
+  const dateOnly = extractDateOnly(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return undefined;
+  const parsed = new Date(`${dateOnly}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function addDaysToDateOnly(value: string, days: number): string {
+  const parsed = parseFilterDate(value);
+  if (!parsed) return '';
+
+  const shifted = new Date(parsed);
+  shifted.setDate(shifted.getDate() + days);
+
+  const year = shifted.getFullYear();
+  const month = String(shifted.getMonth() + 1).padStart(2, '0');
+  const day = String(shifted.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getTodayDateOnly(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function createInitialProposalFormData() {
+  return {
+    umbrellaRef: '',
+    code: '',
+    title: '',
+    description: '',
+    clientId: '',
+    coordinatorName: '',
+    type: 'fixed_price',
+    createdAt: '',
+    sentDate: '',
+    dueDate: '',
+    updatedAt: getTodayDateOnly(),
+    status: 'em_elaboracao',
+    expectation: '',
+    mainType: '',
+    termMonths: '',
+    riskAssessment: '',
+    hourJustification: '',
+    subcontracted: '',
+    discount: '',
+    coordinatorId: '',
+    proposalOrigin: '',
+  };
+}
+
 const mainTypeOptions: string[] = [
   'ATO/Fiscalização de campo',
   'Acessos',
@@ -185,6 +258,102 @@ const proposalTypeOptions: Array<{ value: string; label: string }> = [
   { value: 'umbrella', label: typeLabels.umbrella },
   { value: 'service_order', label: typeLabels.service_order },
 ];
+
+type DateBasisFilter = 'updatedAt' | 'createdAt' | 'sentDate' | 'dueDate';
+
+const dateBasisOptions: Array<{ value: DateBasisFilter; label: string }> = [
+  { value: 'createdAt', label: 'Data de solicitação' },
+  { value: 'sentDate', label: 'Data de emissão' },
+  { value: 'dueDate', label: 'Data de validade' },
+  { value: 'updatedAt', label: 'Data de atualização' },
+];
+
+const dateBasisLabels: Record<DateBasisFilter, string> = {
+  createdAt: 'Data de solicitação',
+  sentDate: 'Data de emissão',
+  dueDate: 'Data de validade',
+  updatedAt: 'Data de atualização',
+};
+
+function FilterDateField({
+  value,
+  onChange,
+  placeholder,
+  inputTestId,
+  clearTestId,
+  clearLabel,
+  minDate,
+  maxDate,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  inputTestId: string;
+  clearTestId: string;
+  clearLabel: string;
+  minDate?: string;
+  maxDate?: string;
+  className?: string;
+}) {
+  const selectedDate = parseFilterDate(value);
+  const minSelectableDate = parseFilterDate(minDate ?? '');
+  const maxSelectableDate = parseFilterDate(maxDate ?? '');
+  const displayValue = selectedDate ? format(selectedDate, 'dd/MM/yyyy') : placeholder;
+
+  return (
+    <Popover>
+      <div className={cn("relative w-full sm:w-[188px]", className)}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid={inputTestId}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 pr-16 text-left text-sm transition-colors hover:bg-accent/30"
+            aria-label="Selecionar data"
+          >
+            <span className={`block min-w-0 truncate tabular-nums ${value ? 'text-foreground' : 'text-muted-foreground'}`}>
+              {displayValue}
+            </span>
+          </button>
+        </PopoverTrigger>
+        <span className="pointer-events-none absolute right-2 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center text-muted-foreground">
+          <Calendar className="h-3.5 w-3.5" />
+        </span>
+        {value && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onChange('');
+            }}
+            data-testid={clearTestId}
+            aria-label={clearLabel}
+            className="absolute right-8 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      <PopoverContent className="w-auto p-0" align="start">
+        <DateCalendar
+          mode="single"
+          selected={selectedDate}
+          classNames={{
+            day_today: 'border border-border bg-transparent text-foreground',
+          }}
+          disabled={(date) => {
+            if (minSelectableDate && date < minSelectableDate) return true;
+            if (maxSelectableDate && date > maxSelectableDate) return true;
+            return false;
+          }}
+          onSelect={(date) => onChange(date ? format(date, 'yyyy-MM-dd') : '')}
+          initialFocus
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface ColumnConfig {
   id: string;
@@ -713,29 +882,7 @@ export default function Proposals() {
     return null;
   }, [additiveForm.mobilizationValue, additiveForm.readjustValue, additiveForm.subcontractValue, additiveForm.termMonths, createAdditiveMutation.isPending, editingAdditiveId, isEditingAdditiveDirty, parseMoneyMaskOrZero, parseTermMonthsInput, updateAdditiveMutation.isPending]);
 
-  const [formData, setFormData] = useState({
-    umbrellaRef: '',
-    code: '',
-    title: '',
-    description: '',
-    clientId: '',
-    coordinatorName: '',
-    type: 'fixed_price',
-    createdAt: '',
-    sentDate: '',
-    dueDate: '',
-    updatedAt: '',
-    status: 'em_elaboracao',
-    expectation: '',
-    mainType: '',
-    termMonths: '',
-    riskAssessment: '',
-    hourJustification: '',
-    subcontracted: '',
-    discount: '',
-    coordinatorId: '',
-    proposalOrigin: '',
-  });
+  const [formData, setFormData] = useState(createInitialProposalFormData);
   type CreateFormData = typeof formData;
   type CreateFormField = keyof CreateFormData;
   const [createAttemptedSubmit, setCreateAttemptedSubmit] = useState(false);
@@ -764,6 +911,7 @@ export default function Proposals() {
     createdAt: '',
     sentDate: '',
     dueDate: '',
+    updatedAt: '',
     status: 'em_elaboracao',
     expectation: '',
     mainType: '',
@@ -797,12 +945,27 @@ export default function Proposals() {
   const [typeFilters, setTypeFilters] = useState<string[]>([]);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [dateBasisFilter, setDateBasisFilter] = useState<DateBasisFilter>('updatedAt');
   const [valueMin, setValueMin] = useState('');
   const [valueMax, setValueMax] = useState('');
   const [coordinatorFilter, setCoordinatorFilter] = useState('');
   const [clientFilter, setClientFilter] = useState('');
   const [conversionFilter, setConversionFilter] = useState<'all' | 'converted' | 'not_converted'>('all');
+  const [expectationFilter, setExpectationFilter] = useState('');
+  const [mainTypeFilter, setMainTypeFilter] = useState('');
   const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
+
+  const handleDateFromFilterChange = useCallback((value: string) => {
+    setDateFrom(value);
+    setDateTo((current) => (value && current && current < value ? '' : current));
+    setCurrentPage(1);
+  }, []);
+
+  const handleDateToFilterChange = useCallback((value: string) => {
+    if (value && dateFrom && value < dateFrom) return;
+    setDateTo(value);
+    setCurrentPage(1);
+  }, [dateFrom]);
 
   useEffect(() => {
     const queryStringFromLocation = location.includes('?') ? location.split('?')[1] ?? '' : '';
@@ -818,13 +981,57 @@ export default function Proposals() {
     const funnelStatuses = funnelKeys.flatMap((funnelKey) => funnelQueryStatusMap[funnelKey] ?? []);
 
     const nextStatusFilters = Array.from(new Set([...statusFromList, ...statusSingle, ...funnelStatuses]));
+    const nextTypeFilters = parseQueryList(params.get('types'));
     const nextClientFilter = (params.get('clientId') ?? params.get('client') ?? '').trim();
+    const nextDateFrom = (params.get('dateFrom') ?? '').trim();
+    let nextDateTo = (params.get('dateTo') ?? '').trim();
+    const nextDateBasisFilter = dateBasisOptions.some((option) => option.value === params.get('dateBasis'))
+      ? params.get('dateBasis') as DateBasisFilter
+      : 'updatedAt';
+    const nextValueMin = formatMoneyFromValue(params.get('valueMin'));
+    const nextValueMax = formatMoneyFromValue(params.get('valueMax'));
+    const nextCoordinatorFilter = (params.get('coordinator') ?? '').trim();
+    const nextConversionFilter = params.get('conversion') === 'converted' || params.get('conversion') === 'not_converted'
+      ? params.get('conversion') as 'converted' | 'not_converted'
+      : 'all';
+    const nextExpectationFilter = (params.get('expectation') ?? '').trim();
+    const nextMainTypeFilter = (params.get('mainType') ?? '').trim();
+    const nextFavoritesOnly = params.get('favorites') === '1';
+
+    if (nextDateFrom && nextDateTo && nextDateTo < nextDateFrom) {
+      nextDateTo = '';
+    }
 
     setSearch(params.get('search') ?? '');
     setStatusFilters(nextStatusFilters);
+    setTypeFilters(nextTypeFilters);
+    setDateFrom(nextDateFrom);
+    setDateTo(nextDateTo);
+    setDateBasisFilter(nextDateBasisFilter);
+    setValueMin(nextValueMin);
+    setValueMax(nextValueMax);
+    setCoordinatorFilter(nextCoordinatorFilter);
     setClientFilter(nextClientFilter);
+    setConversionFilter(nextConversionFilter);
+    setExpectationFilter(nextExpectationFilter);
+    setMainTypeFilter(nextMainTypeFilter);
+    setShowOnlyFavorites(nextFavoritesOnly);
 
-    if (nextStatusFilters.length > 0 || nextClientFilter) {
+    if (
+      nextStatusFilters.length > 0 ||
+      nextTypeFilters.length > 0 ||
+      nextDateFrom ||
+      nextDateTo ||
+      (nextDateBasisFilter !== 'updatedAt' && Boolean(nextDateFrom || nextDateTo)) ||
+      nextValueMin ||
+      nextValueMax ||
+      nextCoordinatorFilter ||
+      nextClientFilter ||
+      nextConversionFilter !== 'all' ||
+      nextExpectationFilter ||
+      nextMainTypeFilter ||
+      nextFavoritesOnly
+    ) {
       setFiltersOpen(true);
     }
 
@@ -838,16 +1045,33 @@ export default function Proposals() {
     const normalizedStatuses = Array.from(
       new Set(statusFilters.map(normalizeFilterValue).filter(Boolean))
     );
+    const normalizedTypes = Array.from(new Set(typeFilters.map((type) => type.trim()).filter(Boolean)));
     const nextSearch = search.trim();
     const nextClient = clientFilter.trim();
+    const nextCoordinator = coordinatorFilter.trim();
+    const nextExpectation = expectationFilter.trim();
+    const nextMainType = mainTypeFilter.trim();
+    const nextValueMin = parseMoneyMaskToNumber(valueMin) ?? 0;
+    const nextValueMax = parseMoneyMaskToNumber(valueMax) ?? 0;
 
-    ['search', 'statuses', 'status', 'clientId', 'client', 'funnel'].forEach((key) => {
+    ['search', 'statuses', 'status', 'types', 'clientId', 'client', 'dateFrom', 'dateTo', 'dateBasis', 'valueMin', 'valueMax', 'coordinator', 'conversion', 'expectation', 'mainType', 'favorites', 'funnel'].forEach((key) => {
       params.delete(key);
     });
 
     if (nextSearch) params.set('search', nextSearch);
     if (normalizedStatuses.length) params.set('statuses', normalizedStatuses.join(','));
+    if (normalizedTypes.length) params.set('types', normalizedTypes.join(','));
     if (nextClient) params.set('clientId', nextClient);
+    if (dateFrom) params.set('dateFrom', dateFrom);
+    if (dateTo) params.set('dateTo', dateTo);
+    if (dateBasisFilter !== 'updatedAt') params.set('dateBasis', dateBasisFilter);
+    if (valueMin && nextValueMin > 0) params.set('valueMin', String(nextValueMin));
+    if (valueMax && nextValueMax > 0) params.set('valueMax', String(nextValueMax));
+    if (nextCoordinator) params.set('coordinator', nextCoordinator);
+    if (conversionFilter !== 'all') params.set('conversion', conversionFilter);
+    if (nextExpectation) params.set('expectation', nextExpectation);
+    if (nextMainType) params.set('mainType', nextMainType);
+    if (showOnlyFavorites) params.set('favorites', '1');
 
     const nextQuery = params.toString();
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
@@ -856,7 +1080,7 @@ export default function Proposals() {
     if (nextUrl !== currentUrl) {
       window.history.replaceState(window.history.state, '', nextUrl);
     }
-  }, [search, statusFilters, clientFilter]);
+  }, [search, statusFilters, typeFilters, dateFrom, dateTo, dateBasisFilter, valueMin, valueMax, coordinatorFilter, clientFilter, conversionFilter, expectationFilter, mainTypeFilter, showOnlyFavorites, parseMoneyMaskToNumber]);
 
   // Sort states
   const [sortColumn, setSortColumn] = useState<string>('code');
@@ -901,11 +1125,14 @@ export default function Proposals() {
     setTypeFilters([]);
     setDateFrom('');
     setDateTo('');
+    setDateBasisFilter('updatedAt');
     setValueMin('');
     setValueMax('');
     setCoordinatorFilter('');
     setClientFilter('');
     setConversionFilter('all');
+    setExpectationFilter('');
+    setMainTypeFilter('');
     setShowOnlyFavorites(false);
     setCurrentPage(1);
   };
@@ -919,7 +1146,9 @@ export default function Proposals() {
     (valueMax ? 1 : 0) +
     (coordinatorFilter ? 1 : 0) +
     (clientFilter ? 1 : 0) +
-    (conversionFilter !== 'all' ? 1 : 0);
+    (conversionFilter !== 'all' ? 1 : 0) +
+    (expectationFilter ? 1 : 0) +
+    (mainTypeFilter ? 1 : 0);
 
   // Load column preferences from server on mount
   useEffect(() => {
@@ -1462,9 +1691,10 @@ export default function Proposals() {
       clientId: proposal.clientId || '',
       coordinatorName: proposal.coordinatorName || '',
       title: proposal.title || '',
-      createdAt: proposal.createdAt ? new Date(proposal.createdAt).toISOString().split('T')[0] : '',
-      sentDate: proposal.sentDate ? new Date(proposal.sentDate).toISOString().split('T')[0] : '',
-      dueDate: proposal.dueDate ? new Date(proposal.dueDate).toISOString().split('T')[0] : '',
+      createdAt: extractDateOnly(proposal.createdAt),
+      sentDate: extractDateOnly(proposal.sentDate),
+      dueDate: extractDateOnly(proposal.dueDate),
+      updatedAt: extractDateOnly(proposal.updatedAt),
       status: proposal.status || 'em_elaboracao',
       expectation: proposal.expectation || '',
       mainType: proposal.mainType || '',
@@ -1514,6 +1744,7 @@ export default function Proposals() {
         createdAt: toPrismaDateTime(editFormData.createdAt),
         sentDate: toPrismaDateTime(editFormData.sentDate),
         dueDate: toPrismaDateTime(editFormData.dueDate),
+        updatedAt: toPrismaDateTime(editFormData.updatedAt),
         status: editFormData.status,
         expectation: editFormData.expectation || null,
         mainType: editFormData.mainType || null,
@@ -1529,32 +1760,26 @@ export default function Proposals() {
     });
   };
 
+  const handleEditSentDateChange = (sentDate: string) => {
+    setEditFormData((current) => ({
+      ...current,
+      sentDate,
+      dueDate: sentDate ? addDaysToDateOnly(sentDate, 30) : '',
+    }));
+  };
+
+  const handleCreateSentDateChange = (sentDate: string) => {
+    setFormData((current) => ({
+      ...current,
+      sentDate,
+      dueDate: sentDate ? addDaysToDateOnly(sentDate, 30) : '',
+    }));
+  };
+
   const closeDialog = () => {
     setDialogOpen(false);
     setCreateAttemptedSubmit(false);
-    setFormData({
-      umbrellaRef: '',
-      code: '',
-      title: '',
-      description: '',
-      clientId: '',
-      coordinatorName: '',
-      type: 'fixed_price',
-      createdAt: '',
-      sentDate: '',
-      dueDate: '',
-      updatedAt: '',
-      status: 'em_elaboracao',
-      expectation: '',
-      mainType: '',
-      termMonths: '',
-      riskAssessment: '',
-      hourJustification: '',
-      subcontracted: '',
-      discount: '',
-      coordinatorId: '',
-      proposalOrigin: '',
-    });
+    setFormData(createInitialProposalFormData());
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1581,6 +1806,7 @@ export default function Proposals() {
       createdAt: toPrismaDateTime(formData.createdAt),
       sentDate: toPrismaDateTime(formData.sentDate),
       dueDate: toPrismaDateTime(formData.dueDate),
+      updatedAt: toPrismaDateTime(formData.updatedAt),
       status: formData.status,
       expectation: formData.expectation || null,
       mainType: formData.mainType || null,
@@ -1632,7 +1858,12 @@ export default function Proposals() {
 
   const formatDate = (dateStr?: string | null) => {
     if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleDateString('pt-BR');
+    const dateOnly = extractDateOnly(dateStr);
+    if (!dateOnly) return '-';
+
+    const [year, month, day] = dateOnly.split('-');
+    if (!year || !month || !day) return '-';
+    return `${day}/${month}/${year}`;
   };
 
   // Get unique coordinators for filter dropdown
@@ -1661,10 +1892,29 @@ export default function Proposals() {
       // Date filter
       const dateMatch = (() => {
         if (!dateFrom && !dateTo) return true;
-        const proposalDate = p.createdAt ? new Date(p.createdAt) : null;
+        const proposalDate = (() => {
+          switch (dateBasisFilter) {
+            case 'createdAt':
+              return p.createdAt ? new Date(p.createdAt) : null;
+            case 'sentDate':
+              return p.sentDate ? new Date(p.sentDate) : null;
+            case 'dueDate':
+              return p.dueDate ? new Date(p.dueDate) : null;
+            default:
+              return p.updatedAt ? new Date(p.updatedAt) : (p.createdAt ? new Date(p.createdAt) : null);
+          }
+        })();
         if (!proposalDate) return false;
-        if (dateFrom && proposalDate < new Date(dateFrom)) return false;
-        if (dateTo && proposalDate > new Date(dateTo + 'T23:59:59')) return false;
+
+        const startDate = parseFilterDate(dateFrom);
+        const endDate = parseFilterDate(dateTo);
+
+        if (startDate && proposalDate < startDate) return false;
+        if (endDate) {
+          const endOfDay = new Date(endDate);
+          endOfDay.setHours(23, 59, 59, 999);
+          if (proposalDate > endOfDay) return false;
+        }
         return true;
       })();
 
@@ -1672,8 +1922,10 @@ export default function Proposals() {
       const valueMatch = (() => {
         if (!valueMin && !valueMax) return true;
         const value = getProposalTotalValue(p);
-        if (valueMin && value < parseFloat(valueMin)) return false;
-        if (valueMax && value > parseFloat(valueMax)) return false;
+        const minValue = parseMoneyLike(valueMin);
+        const maxValue = parseMoneyLike(valueMax);
+        if (valueMin && value < minValue) return false;
+        if (valueMax && value > maxValue) return false;
         return true;
       })();
 
@@ -1690,10 +1942,16 @@ export default function Proposals() {
         return !p.projectId;
       })();
 
+      // Expectation filter
+      const expectationMatch = !expectationFilter || (p as any).expectation === expectationFilter;
+
+      // Main type filter
+      const mainTypeMatch = !mainTypeFilter || p.mainType === mainTypeFilter;
+
       // Favorites filter
       const favoriteMatch = !showOnlyFavorites || favoritesSet.has(p.id);
 
-      return searchMatch && statusMatch && typeMatch && dateMatch && valueMatch && coordMatch && clientMatch && conversionMatch && favoriteMatch;
+      return searchMatch && statusMatch && typeMatch && dateMatch && valueMatch && coordMatch && clientMatch && conversionMatch && expectationMatch && mainTypeMatch && favoriteMatch;
     });
 
     // Sort the filtered results
@@ -1783,7 +2041,7 @@ export default function Proposals() {
         return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
       }
     });
-  }, [proposals, search, statusFilters, typeFilters, dateFrom, dateTo, valueMin, valueMax, coordinatorFilter, clientFilter, conversionFilter, showOnlyFavorites, favoritesSet, sortColumn, sortDirection]);
+  }, [proposals, search, statusFilters, typeFilters, dateFrom, dateTo, dateBasisFilter, valueMin, valueMax, coordinatorFilter, clientFilter, conversionFilter, expectationFilter, mainTypeFilter, showOnlyFavorites, favoritesSet, sortColumn, sortDirection]);
 
   const totalPages = Math.ceil(filteredProposals.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -1984,6 +2242,8 @@ export default function Proposals() {
                 closeDialog();
                 return;
               }
+              setFormData(createInitialProposalFormData());
+              setCreateAttemptedSubmit(false);
               setDialogOpen(true);
             }}
           >
@@ -2138,7 +2398,7 @@ export default function Proposals() {
                       type="date"
                       data-testid="input-proposal-issue-date"
                       value={formData.sentDate}
-                      onChange={(e) => setFormData({ ...formData, sentDate: e.target.value })}
+                      onChange={(e) => handleCreateSentDateChange(e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
@@ -2156,7 +2416,12 @@ export default function Proposals() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Data de atualização</Label>
-                    <Input value="" disabled className="bg-muted" />
+                    <Input
+                      type="date"
+                      data-testid="input-proposal-updated-date"
+                      value={formData.updatedAt}
+                      onChange={(e) => setFormData({ ...formData, updatedAt: e.target.value })}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>Situação</Label>
@@ -2187,9 +2452,9 @@ export default function Proposals() {
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Positiva">Positiva</SelectItem>
-                        <SelectItem value="Negativa">Negativa</SelectItem>
-                        <SelectItem value="Não se sabe">Não se sabe</SelectItem>
+                        <SelectItem value="Alta">Alta</SelectItem>
+                        <SelectItem value="Média">Média</SelectItem>
+                        <SelectItem value="Baixa">Baixa</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -2541,14 +2806,14 @@ export default function Proposals() {
                     <Badge
                       variant="secondary"
                       className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => { setDateFrom(''); setDateTo(''); }}
+                      onClick={() => { setDateFrom(''); setDateTo(''); setDateBasisFilter('updatedAt'); }}
                     >
                       <Calendar className="h-3 w-3" />
                       {dateFrom && dateTo
-                        ? `${formatDate(dateFrom)} - ${formatDate(dateTo)}`
+                        ? `${dateBasisLabels[dateBasisFilter]}: ${formatDate(dateFrom)} - ${formatDate(dateTo)}`
                         : dateFrom
-                        ? `A partir de ${formatDate(dateFrom)}`
-                        : `Até ${formatDate(dateTo)}`}
+                        ? `${dateBasisLabels[dateBasisFilter]}: a partir de ${formatDate(dateFrom)}`
+                        : `${dateBasisLabels[dateBasisFilter]}: até ${formatDate(dateTo)}`}
                       <X className="h-3 w-3 ml-1" />
                     </Badge>
                   )}
@@ -2559,10 +2824,10 @@ export default function Proposals() {
                       onClick={() => { setValueMin(''); setValueMax(''); }}
                     >
                       {valueMin && valueMax
-                        ? `${formatCurrency(parseFloat(valueMin))} - ${formatCurrency(parseFloat(valueMax))}`
+                        ? `${formatCurrency(valueMin)} - ${formatCurrency(valueMax)}`
                         : valueMin
-                        ? `Mín: ${formatCurrency(parseFloat(valueMin))}`
-                        : `Máx: ${formatCurrency(parseFloat(valueMax))}`}
+                        ? `Mín: ${formatCurrency(valueMin)}`
+                        : `Máx: ${formatCurrency(valueMax)}`}
                       <X className="h-3 w-3 ml-1" />
                     </Badge>
                   )}
@@ -2583,6 +2848,26 @@ export default function Proposals() {
                       onClick={() => setClientFilter('')}
                     >
                       Cliente: {clients.find((c) => c.id === clientFilter)?.razaoSocial || clientFilter}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                  {expectationFilter && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => setExpectationFilter('')}
+                    >
+                      Expectativa: {expectationFilter}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  )}
+                  {mainTypeFilter && (
+                    <Badge
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => setMainTypeFilter('')}
+                    >
+                      Tipo principal: {mainTypeFilter}
                       <X className="h-3 w-3 ml-1" />
                     </Badge>
                   )}
@@ -2639,59 +2924,43 @@ export default function Proposals() {
                     </div>
                   </div>
 
-                  {/* Date and Value Range + Coordinator + Client */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-                    {/* Date Range */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-muted-foreground" />
-                        <Label className="font-medium">Período</Label>
-                      </div>
-                      <div className="flex gap-2">
-                        <Input
-                          type="date"
-                          value={dateFrom}
-                          onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }}
-                          data-testid="filter-date-from"
-                          className="flex-1"
-                        />
-                        <Input
-                          type="date"
-                          value={dateTo}
-                          onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }}
-                          data-testid="filter-date-to"
-                          className="flex-1"
-                        />
-                      </div>
-                    </div>
-
+                  {/* Value + Coordinator + Client + Other Filters */}
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
                     {/* Value Range */}
-                    <div className="space-y-2">
+                    <div className="space-y-2 xl:col-span-3">
                       <div className="flex items-center gap-2">
                         <Label className="font-medium">Valor Total (R$)</Label>
                       </div>
                       <div className="flex gap-2">
-                        <Input
-                          type="number"
-                          placeholder="Mín"
-                          value={valueMin}
-                          onChange={(e) => { setValueMin(e.target.value); setCurrentPage(1); }}
-                          data-testid="filter-value-min"
-                          className="flex-1"
-                        />
-                        <Input
-                          type="number"
-                          placeholder="Máx"
-                          value={valueMax}
-                          onChange={(e) => { setValueMax(e.target.value); setCurrentPage(1); }}
-                          data-testid="filter-value-max"
-                          className="flex-1"
-                        />
+                        <div className="relative flex-1">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
+                          <Input
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="0,00"
+                            value={valueMin}
+                            onChange={(e) => { setValueMin(formatMoneyMask(e.target.value)); setCurrentPage(1); }}
+                            data-testid="filter-value-min"
+                            className="pl-10"
+                          />
+                        </div>
+                        <div className="relative flex-1">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
+                          <Input
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="0,00"
+                            value={valueMax}
+                            onChange={(e) => { setValueMax(formatMoneyMask(e.target.value)); setCurrentPage(1); }}
+                            data-testid="filter-value-max"
+                            className="pl-10"
+                          />
+                        </div>
                       </div>
                     </div>
 
                     {/* Coordinator */}
-                    <div className="space-y-2">
+                    <div className="space-y-2 xl:col-span-3">
                       <Label className="font-medium">Coordenador</Label>
                       <Select
                         value={coordinatorFilter}
@@ -2715,7 +2984,7 @@ export default function Proposals() {
                     </div>
 
                     {/* Client */}
-                    <div className="space-y-2">
+                    <div className="space-y-2 xl:col-span-3">
                       <Label className="font-medium">Cliente</Label>
                       <Select
                         value={clientFilter}
@@ -2739,7 +3008,7 @@ export default function Proposals() {
                     </div>
 
                     {/* Conversion */}
-                    <div className="space-y-2">
+                    <div className="space-y-2 xl:col-span-3">
                       <Label className="font-medium">Conversão</Label>
                       <Select
                         value={conversionFilter}
@@ -2757,6 +3026,105 @@ export default function Proposals() {
                           <SelectItem value="not_converted">Somente não convertidas</SelectItem>
                         </SelectContent>
                       </Select>
+                    </div>
+
+                    {/* Expectation */}
+                    <div className="space-y-2 xl:col-span-3">
+                      <Label className="font-medium">Expectativa</Label>
+                      <Select
+                        value={expectationFilter}
+                        onValueChange={(v) => {
+                          setExpectationFilter(v === '_all' ? '' : v);
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger data-testid="filter-expectation">
+                          <SelectValue placeholder="Todas" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_all">Todas</SelectItem>
+                          <SelectItem value="Alta">Alta</SelectItem>
+                          <SelectItem value="Média">Média</SelectItem>
+                          <SelectItem value="Baixa">Baixa</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Main Type */}
+                    <div className="space-y-2 xl:col-span-6">
+                      <Label className="font-medium">Tipo principal</Label>
+                      <Select
+                        value={mainTypeFilter}
+                        onValueChange={(v) => {
+                          setMainTypeFilter(v === '_all' ? '' : v);
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger data-testid="filter-main-type">
+                          <SelectValue placeholder="Todos" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_all">Todos</SelectItem>
+                          {mainTypeOptions.map((opt) => (
+                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Period */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="h-4 w-4 text-muted-foreground" />
+                      <Label className="font-medium">Período</Label>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-12">
+                      <div className="space-y-1 xl:col-span-3">
+                        <Label className="text-xs text-muted-foreground">Data inicial</Label>
+                        <FilterDateField
+                          value={dateFrom}
+                          onChange={handleDateFromFilterChange}
+                          placeholder="dd/mm/aaaa"
+                          inputTestId="filter-date-from"
+                          clearTestId="filter-date-from-clear"
+                          clearLabel="Limpar data inicial"
+                          maxDate={dateTo}
+                          className="sm:w-full"
+                        />
+                      </div>
+                      <div className="space-y-1 xl:col-span-3">
+                        <Label className="text-xs text-muted-foreground">Data final</Label>
+                        <FilterDateField
+                          value={dateTo}
+                          onChange={handleDateToFilterChange}
+                          placeholder="dd/mm/aaaa"
+                          inputTestId="filter-date-to"
+                          clearTestId="filter-date-to-clear"
+                          clearLabel="Limpar data final"
+                          minDate={dateFrom}
+                          className="sm:w-full"
+                        />
+                      </div>
+                      <div className="space-y-1 xl:col-span-3">
+                        <Label className="text-xs text-muted-foreground">Base da data</Label>
+                        <Select
+                          value={dateBasisFilter}
+                          onValueChange={(value) => {
+                            setDateBasisFilter(value as DateBasisFilter);
+                            setCurrentPage(1);
+                          }}
+                        >
+                          <SelectTrigger className="h-9 w-full text-xs" data-testid="filter-date-basis">
+                            <SelectValue placeholder="Base da data" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {dateBasisOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
                   </div>
                 </CollapsibleContent>
@@ -4139,7 +4507,7 @@ export default function Proposals() {
               }}
               className="space-y-3"
             >
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label>Prazo (meses)</Label>
                   <Input
@@ -4151,52 +4519,6 @@ export default function Proposals() {
                     min={0}
                     data-testid="input-additive-term-months"
                   />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Vr. subcontratação</Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground select-none">
-                      R$
-                    </span>
-                    <Input
-                      type="text"
-                      inputMode="numeric"
-                      value={additiveForm.subcontractValue}
-                      onChange={(e) =>
-                        setAdditiveForm((prev) => ({
-                          ...prev,
-                          subcontractValue: formatMoneyMask(e.target.value),
-                        }))
-                      }
-                      placeholder="0,00"
-                      className="pl-10"
-                      data-testid="input-additive-subcontract"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Vr. mobilização</Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground select-none">
-                      R$
-                    </span>
-                    <Input
-                      type="text"
-                      inputMode="numeric"
-                      value={additiveForm.mobilizationValue}
-                      onChange={(e) =>
-                        setAdditiveForm((prev) => ({
-                          ...prev,
-                          mobilizationValue: formatMoneyMask(e.target.value),
-                        }))
-                      }
-                      placeholder="0,00"
-                      className="pl-10"
-                      data-testid="input-additive-mobilization"
-                    />
-                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -4281,8 +4603,6 @@ export default function Proposals() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-20">Prazo</TableHead>
-                      <TableHead className="w-32">Subcontratação</TableHead>
-                      <TableHead className="w-32">Mobilização</TableHead>
                       <TableHead className="w-28">Reajuste</TableHead>
                       <TableHead className="w-28 text-center leading-tight">Valores por categoria</TableHead>
                       <TableHead className="w-20 text-center leading-tight">Despesas</TableHead>
@@ -4292,13 +4612,13 @@ export default function Proposals() {
                   <TableBody>
                     {additivesLoading ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
+                        <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">
                           Carregando aditivos...
                         </TableCell>
                       </TableRow>
                     ) : additivesItems.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
+                        <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">
                           Nenhum aditivo cadastrado.
                         </TableCell>
                       </TableRow>
@@ -4306,8 +4626,6 @@ export default function Proposals() {
                       visibleAdditivesItems.map((item: ProposalAdditiveItem) => (
                         <TableRow key={item.id}>
                           <TableCell className="text-sm">{item.termMonths ?? '-'}</TableCell>
-                          <TableCell className="text-sm font-medium">{formatCurrency(item.subcontractValue)}</TableCell>
-                          <TableCell className="text-sm font-medium">{formatCurrency(item.mobilizationValue)}</TableCell>
                           <TableCell className="text-sm font-medium">{formatCurrency(item.readjustValue)}</TableCell>
                           <TableCell>
                             <Button
@@ -4645,7 +4963,7 @@ export default function Proposals() {
                     type="date"
                     data-testid="input-edit-proposal-issue-date"
                     value={editFormData.sentDate}
-                    onChange={(e) => setEditFormData({ ...editFormData, sentDate: e.target.value })}
+                    onChange={(e) => handleEditSentDateChange(e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -4663,10 +4981,11 @@ export default function Proposals() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Data de atualização</Label>
-                  <Input 
-                    value={selectedProposal?.updatedAt ? new Date(selectedProposal.updatedAt).toLocaleDateString('pt-BR') : ''} 
-                    disabled 
-                    className="bg-muted" 
+                  <Input
+                    type="date"
+                    data-testid="input-edit-proposal-updated-date"
+                    value={editFormData.updatedAt}
+                    onChange={(e) => setEditFormData({ ...editFormData, updatedAt: e.target.value })}
                   />
                 </div>
                 <div className="space-y-2">
@@ -4698,9 +5017,9 @@ export default function Proposals() {
                       <SelectValue placeholder="Selecione" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Positiva">Positiva</SelectItem>
-                      <SelectItem value="Negativa">Negativa</SelectItem>
-                      <SelectItem value="Não se sabe">Não se sabe</SelectItem>
+                      <SelectItem value="Alta">Alta</SelectItem>
+                      <SelectItem value="Média">Média</SelectItem>
+                      <SelectItem value="Baixa">Baixa</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

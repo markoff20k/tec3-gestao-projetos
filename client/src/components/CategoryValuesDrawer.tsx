@@ -57,6 +57,7 @@ interface CategoryValue {
   categoryName: string;
   value: number;
   hours: number;
+  hoursInput?: string;
 }
 
 interface CategoryValuesDrawerProps {
@@ -112,8 +113,9 @@ export function CategoryValuesDrawer({
           proposalId: v.proposalId,
           categoryId: v.categoryId,
           categoryName: v.category?.name || v.customName || '',
-          value: v.value || 0,
-          hours: v.hours || 0,
+          value: Number(v.value) || 0,
+          hours: Number(v.hours) || 0,
+          hoursInput: Number(v.hours) > 0 ? formatHoursInputFromNumber(Number(v.hours)) : '',
         }));
         setCategoryValues(mapped);
       } else {
@@ -172,6 +174,7 @@ export function CategoryValuesDrawer({
       categoryName: name.trim(),
       value: 0,
       hours: 0,
+      hoursInput: '',
     }]);
     setHasChanges(true);
     setNewCategoryName('');
@@ -183,11 +186,41 @@ export function CategoryValuesDrawer({
     setHasChanges(true);
   };
 
-  const updateValue = (index: number, field: 'value' | 'hours', val: string) => {
+  const updateValue = (index: number, field: 'value', val: string) => {
     const updated = [...categoryValues];
     updated[index] = {
       ...updated[index],
-      [field]: field === 'value' ? parseFloat(val) || 0 : parseInt(val) || 0,
+      [field]: parseFloat(val) || 0,
+    };
+    setCategoryValues(updated);
+    setHasChanges(true);
+  };
+
+  const formatHoursMask = (input: string) => {
+    const digits = String(input ?? '').replace(/\D/g, '');
+    if (!digits) return '';
+
+    const value = Number(digits) / 100;
+    return value.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
+
+  const parseHoursMaskToNumber = (masked: string) => {
+    const digits = masked.replace(/\D/g, '');
+    if (!digits) return 0;
+    const value = Number(digits) / 100;
+    return Number.isFinite(value) ? value : 0;
+  };
+
+  const updateHours = (index: number, input: string) => {
+    const masked = formatHoursMask(input);
+    const updated = [...categoryValues];
+    updated[index] = {
+      ...updated[index],
+      hours: parseHoursMaskToNumber(masked),
+      hoursInput: masked,
     };
     setCategoryValues(updated);
     setHasChanges(true);
@@ -233,9 +266,25 @@ export function CategoryValuesDrawer({
   );
 
   const totalHours = useMemo(() =>
-    categoryValues.reduce((sum, v) => sum + (v.hours || 0), 0),
+    categoryValues.reduce((sum, v) => sum + (Number(v.hours) || 0), 0),
     [categoryValues]
   );
+
+  const formatHoursInputFromNumber = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return '';
+    return value.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
+
+  const formatHoursDisplay = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return '';
+    return value.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
 
 
   const escapeCsvField = (value: unknown) => {
@@ -288,10 +337,10 @@ export function CategoryValuesDrawer({
       const newValues: CategoryValue[] = [];
 
       const parseNumber = (raw: string | undefined) => {
-        const normalized = String(raw ?? '')
-          .trim()
-          .replace(/\./g, '')
-          .replace(',', '.');
+        const rawValue = String(raw ?? '').trim();
+        const normalized = rawValue.includes(',')
+          ? rawValue.replace(/\./g, '').replace(',', '.')
+          : rawValue;
         const n = Number(normalized);
         return Number.isFinite(n) ? n : 0;
       };
@@ -307,7 +356,8 @@ export function CategoryValuesDrawer({
               proposalId,
               categoryName: name.trim(),
               value: parseNumber(value),
-              hours: Math.trunc(parseNumber(hours)),
+              hours: parseNumber(hours),
+              hoursInput: parseNumber(hours) > 0 ? formatHoursInputFromNumber(parseNumber(hours)) : '',
             });
           }
           return;
@@ -321,7 +371,8 @@ export function CategoryValuesDrawer({
             proposalId,
             categoryName: name.trim(),
             value: parseNumber(value),
-            hours: Math.trunc(parseNumber(hours)),
+            hours: parseNumber(hours),
+            hoursInput: parseNumber(hours) > 0 ? formatHoursInputFromNumber(parseNumber(hours)) : '',
           });
         }
       });
@@ -545,10 +596,11 @@ export function CategoryValuesDrawer({
                   </TableCell>
                   <TableCell>
                     <Input
-                      type="number"
-                      min="0"
-                      value={item.hours || ''}
-                      onChange={(e) => updateValue(index, 'hours', e.target.value)}
+                      type="text"
+                      inputMode="decimal"
+                      value={item.hoursInput ?? ''}
+                      onChange={(e) => updateHours(index, e.target.value)}
+                      placeholder="0,00"
                       className="h-8"
                       data-testid={`input-hours-${index}`}
                     />
@@ -619,7 +671,7 @@ export function CategoryValuesDrawer({
             <div>
               <Label className="text-xs text-muted-foreground">Total Horas</Label>
               <div className="text-lg font-semibold">
-                {totalHours}h
+                {formatHoursDisplay(totalHours) || '0'}h
               </div>
             </div>
           </div>

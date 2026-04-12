@@ -1937,7 +1937,7 @@ export async function registerRoutes(
       categoryId: v.categoryId || null,
       customName: v.categoryName || v.customName || null,
       value: parseFloat(v.value) || 0,
-      hours: parseInt(v.hours) || 0,
+      hours: parseFloat(v.hours) || 0,
     }));
 
     const result = await storage.saveProposalCategoryValues(proposalId, valuesWithProposalId);
