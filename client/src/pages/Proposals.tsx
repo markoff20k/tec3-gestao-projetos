@@ -2925,10 +2925,10 @@ export default function Proposals() {
                   </div>
 
                   {/* Value + Coordinator + Client + Other Filters */}
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
+                  <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-12">
                     {/* Value Range */}
-                    <div className="space-y-2 xl:col-span-3">
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0 space-y-2 xl:col-span-3">
+                      <div className="flex min-h-6 items-center gap-2">
                         <Label className="font-medium">Valor Total (R$)</Label>
                       </div>
                       <div className="flex gap-2">
@@ -2941,7 +2941,7 @@ export default function Proposals() {
                             value={valueMin}
                             onChange={(e) => { setValueMin(formatMoneyMask(e.target.value)); setCurrentPage(1); }}
                             data-testid="filter-value-min"
-                            className="pl-10"
+                            className="h-10 pl-10"
                           />
                         </div>
                         <div className="relative flex-1">
@@ -2953,15 +2953,15 @@ export default function Proposals() {
                             value={valueMax}
                             onChange={(e) => { setValueMax(formatMoneyMask(e.target.value)); setCurrentPage(1); }}
                             data-testid="filter-value-max"
-                            className="pl-10"
+                            className="h-10 pl-10"
                           />
                         </div>
                       </div>
                     </div>
 
                     {/* Coordinator */}
-                    <div className="space-y-2 xl:col-span-3">
-                      <Label className="font-medium">Coordenador</Label>
+                    <div className="min-w-0 space-y-2 xl:col-span-3">
+                      <Label className="min-h-6 font-medium">Coordenador</Label>
                       <Select
                         value={coordinatorFilter}
                         onValueChange={(v) => {
@@ -2969,7 +2969,7 @@ export default function Proposals() {
                           setCurrentPage(1);
                         }}
                       >
-                        <SelectTrigger data-testid="filter-coordinator">
+                        <SelectTrigger className="h-10 w-full" data-testid="filter-coordinator">
                           <SelectValue placeholder="Todos os coordenadores" />
                         </SelectTrigger>
                         <SelectContent>
@@ -2984,8 +2984,8 @@ export default function Proposals() {
                     </div>
 
                     {/* Client */}
-                    <div className="space-y-2 xl:col-span-3">
-                      <Label className="font-medium">Cliente</Label>
+                    <div className="min-w-0 space-y-2 xl:col-span-3">
+                      <Label className="min-h-6 font-medium">Cliente</Label>
                       <Select
                         value={clientFilter}
                         onValueChange={(v) => {
@@ -2993,7 +2993,7 @@ export default function Proposals() {
                           setCurrentPage(1);
                         }}
                       >
-                        <SelectTrigger data-testid="filter-client">
+                        <SelectTrigger className="h-10 w-full" data-testid="filter-client">
                           <SelectValue placeholder="Todos os clientes" />
                         </SelectTrigger>
                         <SelectContent>
@@ -3008,8 +3008,8 @@ export default function Proposals() {
                     </div>
 
                     {/* Conversion */}
-                    <div className="space-y-2 xl:col-span-3">
-                      <Label className="font-medium">Conversão</Label>
+                    <div className="min-w-0 space-y-2 xl:col-span-3">
+                      <Label className="min-h-6 font-medium">Conversão</Label>
                       <Select
                         value={conversionFilter}
                         onValueChange={(v) => {
@@ -3017,7 +3017,7 @@ export default function Proposals() {
                           setCurrentPage(1);
                         }}
                       >
-                        <SelectTrigger data-testid="filter-conversion">
+                        <SelectTrigger className="h-10 w-full" data-testid="filter-conversion">
                           <SelectValue placeholder="Todas" />
                         </SelectTrigger>
                         <SelectContent>
