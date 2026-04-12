@@ -3018,7 +3018,7 @@ export default function Proposals() {
                         }}
                       >
                         <SelectTrigger className="h-10 w-full" data-testid="filter-conversion">
-                          <SelectValue placeholder="Todas" />
+                          <SelectValue className="text-foreground" placeholder="Todas" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">Todas</SelectItem>
@@ -3115,8 +3115,8 @@ export default function Proposals() {
                             setCurrentPage(1);
                           }}
                         >
-                          <SelectTrigger className="h-9 w-full text-xs" data-testid="filter-date-basis">
-                            <SelectValue placeholder="Base da data" />
+                          <SelectTrigger className="h-10 w-full" data-testid="filter-date-basis">
+                            <SelectValue className="text-foreground" placeholder="Base da data" />
                           </SelectTrigger>
                           <SelectContent>
                             {dateBasisOptions.map((option) => (
