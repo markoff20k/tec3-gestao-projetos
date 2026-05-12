@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY package*.json ./
 COPY prisma ./prisma
+COPY prisma.config.ts ./
 RUN npm install
 
 COPY . .
@@ -25,6 +26,7 @@ COPY --from=builder --chown=expressjs:nodejs /app/dist ./dist
 COPY --from=builder --chown=expressjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=expressjs:nodejs /app/package*.json ./
 COPY --from=builder --chown=expressjs:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=expressjs:nodejs /app/prisma.config.ts ./prisma.config.ts
 
 RUN mkdir -p uploads && chown expressjs:nodejs uploads
 
