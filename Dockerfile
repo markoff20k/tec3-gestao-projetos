@@ -5,11 +5,10 @@ WORKDIR /app
 ENV DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tec3_gestao
 
 COPY package*.json ./
-COPY prisma ./prisma
-COPY prisma.config.ts ./
-RUN npm install
+RUN npm install --ignore-scripts
 
 COPY . .
+RUN npm run prisma:generate
 RUN npm run build
 
 FROM node:20-alpine AS runner
