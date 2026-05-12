@@ -2,6 +2,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+ENV DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tec3_gestao
+
 COPY package*.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
