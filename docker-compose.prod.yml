@@ -5,6 +5,8 @@ services:
     image: postgres:17-alpine
     container_name: tec3-db-prod
     restart: unless-stopped
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-tec3_gestao}
       POSTGRES_USER: ${POSTGRES_USER:-tec3}
