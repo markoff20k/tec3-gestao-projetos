@@ -365,7 +365,15 @@ async function tryAuthenticateProvider(params: {
 
     // Re-bind with service account to read groups (if configured).
     if (bindDn && bindPassword && serviceBindOk) {
-      await client.bind(bindDn, bindPassword);
+      const bindPrincipal =
+        provider === 'ad'
+          ? buildAdBindPrincipal({
+              identifier: bindDn,
+              bindFormat: adBindFormat,
+              domain: adDomain,
+            })
+          : bindDn;
+      await client.bind(bindPrincipal, bindPassword);
     }
 
     let groups = getUserAttrMulti(entry, 'memberOf');
