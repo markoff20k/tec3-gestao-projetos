@@ -259,7 +259,15 @@ async function tryAuthenticateProvider(params: {
   try {
     if (bindDn && bindPassword) {
       try {
-        await client.bind(bindDn, bindPassword);
+        const bindPrincipal =
+          provider === 'ad'
+            ? buildAdBindPrincipal({
+                identifier: bindDn,
+                bindFormat: adBindFormat,
+                domain: adDomain,
+              })
+            : bindDn;
+        await client.bind(bindPrincipal, bindPassword);
         serviceBindOk = true;
       } catch (err) {
         // Some directories allow anonymous search; if so, keep going.
