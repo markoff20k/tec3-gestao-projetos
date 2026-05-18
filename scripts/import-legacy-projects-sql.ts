@@ -120,6 +120,41 @@ function parseValuesSection(valuesSection: string): ParsedValue[][] {
   return rows;
 }
 
+function extractInsertBlocks(sqlContent: string, tableName: string): Array<{ columns: string; values: string }> {
+  const blocks: Array<{ columns: string; values: string }> = [];
+  const tablePattern = new RegExp(`\\bN?INSERT\\s+INTO\\s+` + '`?' + `${tableName}` + '`?' + `\\s*\\(([^)]*)\\)\\s*VALUES\\s*`, 'gi');
+
+  let match: RegExpExecArray | null;
+  while ((match = tablePattern.exec(sqlContent)) !== null) {
+    const rawColumns = match[1] ?? '';
+    let index = tablePattern.lastIndex;
+    let inString = false;
+    let prev = '';
+
+    while (index < sqlContent.length) {
+      const char = sqlContent[index];
+
+      if (char === "'" && prev !== '\\') {
+        inString = !inString;
+      }
+
+      if (!inString && char === ';') {
+        blocks.push({
+          columns: rawColumns,
+          values: sqlContent.slice(tablePattern.lastIndex, index),
+        });
+        tablePattern.lastIndex = index + 1;
+        break;
+      }
+
+      prev = char;
+      index++;
+    }
+  }
+
+  return blocks;
+}
+
 function mapProjectRow(columns: string[], values: ParsedValue[]): LegacyProjectRow {
   const row: Record<string, string | null> = {};
 
@@ -143,21 +178,15 @@ function mapProjectRow(columns: string[], values: ParsedValue[]): LegacyProjectR
 }
 
 function extractLegacyProjects(sqlContent: string): LegacyProjectRow[] {
-  const inserts = [
-    ...sqlContent.matchAll(/\bN?INSERT\s+INTO\s+`?Projeto`?\s*\(([^)]*)\)\s*VALUES\s*([\s\S]*?);/gi),
-  ];
   const rows: LegacyProjectRow[] = [];
 
-  for (const match of inserts) {
-    const rawColumns = match[1] ?? '';
-    const rawValues = match[2] ?? '';
-
-    const columns = rawColumns
+  for (const block of extractInsertBlocks(sqlContent, 'Projeto')) {
+    const columns = (block.columns ?? '')
       .split(',')
       .map((column) => column.replace(/`/g, '').trim())
       .filter(Boolean);
 
-    const parsedRows = parseValuesSection(rawValues);
+    const parsedRows = parseValuesSection(block.values ?? '');
     for (const parsed of parsedRows) {
       rows.push(mapProjectRow(columns, parsed));
     }

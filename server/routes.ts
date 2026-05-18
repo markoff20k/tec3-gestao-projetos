@@ -8,7 +8,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
-import { authenticateViaLdap } from "./ldap";
+import { authenticateViaLdap, listAdDirectoryUsers } from "./ldap";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -603,6 +603,28 @@ export async function registerRoutes(
     });
   });
 
+  const allowedHeaderShortcutPaths = new Set(['/', '/clients', '/proposals', '/projects', '/time-entries', '/reports', '/categories', '/users', '/settings']);
+
+  const normalizeHeaderShortcutPaths = (value: unknown): string[] => {
+    if (!Array.isArray(value)) return [];
+
+    return Array.from(
+      new Set(
+        value
+          .map((item) => (typeof item === 'string' ? item.trim() : ''))
+          .filter((item) => Boolean(item) && allowedHeaderShortcutPaths.has(item))
+      )
+    ).slice(0, 4);
+  };
+
+  const getUserHeaderShortcutPaths = (user: any): string[] => {
+    const fromJson = normalizeHeaderShortcutPaths(user?.headerShortcutPaths);
+    if (fromJson.length > 0) return fromJson;
+
+    const fallback = typeof user?.headerShortcutPath === 'string' ? user.headerShortcutPath.trim() : '';
+    return fallback && allowedHeaderShortcutPaths.has(fallback) ? [fallback] : [];
+  };
+
   app.get('/api/auth/me', authenticateToken, async (req, res) => {
     const userId = (req as any).user.sub;
     const [user, profileSummary] = await Promise.all([
@@ -637,6 +659,8 @@ export async function registerRoutes(
         language: user.language || 'pt-BR',
         notificationsEnabled: user.receivesEmails,
         toastPosition: user.toastPosition || 'bottom-right',
+        headerShortcutPath: user.headerShortcutPath || null,
+        headerShortcutPaths: getUserHeaderShortcutPaths(user),
       },
     });
   });
@@ -654,12 +678,14 @@ export async function registerRoutes(
       proposalColumns: user.proposalColumns || null,
       notificationsEnabled: user.receivesEmails,
       toastPosition: user.toastPosition || 'bottom-right',
+      headerShortcutPath: user.headerShortcutPath || null,
+      headerShortcutPaths: getUserHeaderShortcutPaths(user),
     });
   });
 
   app.put('/api/auth/preferences', authenticateToken, async (req, res) => {
     const userId = (req as any).user.sub;
-    const { theme, sidebarCollapsed, language, proposalColumns, toastPosition, notificationsEnabled } = req.body;
+    const { theme, sidebarCollapsed, language, proposalColumns, toastPosition, notificationsEnabled, headerShortcutPath, headerShortcutPaths } = req.body;
     
     const updateData: any = {};
     if (theme !== undefined) updateData.theme = theme;
@@ -679,6 +705,30 @@ export async function registerRoutes(
       }
       updateData.toastPosition = toastPosition;
     }
+    if (headerShortcutPath !== undefined) {
+      if (headerShortcutPath !== null && (typeof headerShortcutPath !== 'string' || !allowedHeaderShortcutPaths.has(headerShortcutPath))) {
+        return res.status(400).json({ message: 'Atalho do header inválido' });
+      }
+      updateData.headerShortcutPath = headerShortcutPath;
+    }
+    if (headerShortcutPaths !== undefined) {
+      if (!Array.isArray(headerShortcutPaths)) {
+        return res.status(400).json({ message: 'Lista de atalhos do header inválida' });
+      }
+
+      const normalizedPaths = normalizeHeaderShortcutPaths(headerShortcutPaths);
+      const rawPaths = headerShortcutPaths
+        .filter((item: unknown) => typeof item === 'string')
+        .map((item: string) => item.trim())
+        .filter(Boolean);
+
+      if (normalizedPaths.length !== rawPaths.length) {
+        return res.status(400).json({ message: 'Lista de atalhos do header inválida' });
+      }
+
+      updateData.headerShortcutPaths = normalizedPaths;
+      updateData.headerShortcutPath = normalizedPaths[0] ?? null;
+    }
     
     const user = await storage.updateUser(userId, updateData);
     if (!user) {
@@ -696,6 +746,7 @@ export async function registerRoutes(
         proposalColumnsChanged: proposalColumns !== undefined,
         notificationsChanged: notificationsEnabled !== undefined,
         toastPositionChanged: toastPosition !== undefined,
+        headerShortcutChanged: headerShortcutPath !== undefined || headerShortcutPaths !== undefined,
       },
       ip: getRequestIp(req),
       userAgent: getUserAgent(req),
@@ -708,6 +759,8 @@ export async function registerRoutes(
       proposalColumns: user.proposalColumns || null,
       notificationsEnabled: user.receivesEmails,
       toastPosition: user.toastPosition || 'bottom-right',
+      headerShortcutPath: user.headerShortcutPath || null,
+      headerShortcutPaths: getUserHeaderShortcutPaths(user),
     });
   });
 
@@ -795,8 +848,37 @@ export async function registerRoutes(
     // Only admin can list users
     const role = (req as any).user?.role;
     if (role !== 'admin') return res.status(403).json({ message: 'Acesso não autorizado' });
-    const users = await storage.getAllUsers();
-    res.json(users.map(u => ({
+    const hasAdDirectoryConfig = Boolean(process.env.LDAP_AD_URL && process.env.LDAP_AD_BASE_DN);
+    const [localUsers, directoryUsers] = await Promise.all([
+      storage.getAllUsers(),
+      listAdDirectoryUsers(),
+    ]);
+
+    if (directoryUsers && directoryUsers.length > 0) {
+      const localByEmail = new Map(localUsers.map((user) => [user.email.trim().toLowerCase(), user] as const));
+      return res.json(directoryUsers.map((user) => {
+        const local = localByEmail.get(user.email);
+        return {
+          id: local?.id ?? `ad:${encodeURIComponent(user.email)}`,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          isActive: local?.isActive ?? true,
+          professionalCategoryId: (local as any)?.professionalCategoryId ?? null,
+          emailGroup: (local as any)?.emailGroup ?? null,
+          receivesEmails: (local as any)?.receivesEmails ?? false,
+          photoUrl: local?.photoUrl,
+        };
+      }));
+    }
+
+    if (hasAdDirectoryConfig) {
+      return res.status(503).json({
+        message: 'Nao foi possivel carregar os usuarios do AD.',
+      });
+    }
+
+    res.json(localUsers.map(u => ({
       id: u.id,
       email: u.email,
       name: u.name,
@@ -824,7 +906,29 @@ export async function registerRoutes(
       updates.receivesEmails = receivesEmails;
     }
 
-    const updated = await storage.updateUser(userId, updates);
+    let targetUserId = userId;
+
+    if (userId.startsWith('ad:')) {
+      const email = decodeURIComponent(userId.slice(3)).trim().toLowerCase();
+      let localUser = await storage.getUserByEmail(email);
+
+      if (!localUser) {
+        const directoryUsers = await listAdDirectoryUsers();
+        const directoryUser = directoryUsers?.find((user) => user.email === email);
+
+        localUser = await storage.createUser({
+          email,
+          password: `ldap:${crypto.randomUUID()}`,
+          name: directoryUser?.name ?? email,
+          role: directoryUser?.role ?? 'projects',
+          isActive: true,
+        } as any);
+      }
+
+      targetUserId = localUser.id;
+    }
+
+    const updated = await storage.updateUser(targetUserId, updates);
     if (!updated) {
       return res.status(404).json({ message: 'Usuário não encontrado' });
     }
@@ -868,6 +972,69 @@ export async function registerRoutes(
     });
 
     res.json(result);
+  });
+
+  app.get('/api/auth/notifications', authenticateToken, async (req, res) => {
+    const requester = (req as any).user as JwtPayload;
+    const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined;
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const unreadOnly = typeof req.query.unreadOnly === 'string'
+      ? req.query.unreadOnly === 'true'
+      : undefined;
+
+    await storage.syncProposalDueNotifications();
+
+    const result = await storage.getUserNotifications(requester.sub, {
+      limit: Number.isFinite(limit) ? limit : undefined,
+      cursor,
+      unreadOnly,
+    });
+
+    res.json({
+      items: result.items.map((item) => ({
+        id: item.id,
+        type: item.type,
+        title: item.title,
+        message: item.message,
+        link: item.link,
+        metadata: item.metadata,
+        isRead: Boolean(item.readAt),
+        readAt: item.readAt,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      })),
+      nextCursor: result.nextCursor,
+      unreadCount: result.unreadCount,
+    });
+  });
+
+  app.put('/api/auth/notifications/read-all', authenticateToken, async (req, res) => {
+    const requester = (req as any).user as JwtPayload;
+    const result = await storage.markAllNotificationsRead(requester.sub);
+    res.json(result);
+  });
+
+  app.put('/api/auth/notifications/:notificationId/read', authenticateToken, async (req, res) => {
+    const requester = (req as any).user as JwtPayload;
+    const { notificationId } = req.params;
+
+    const notification = await storage.markNotificationRead(requester.sub, notificationId);
+    if (!notification) {
+      return res.status(404).json({ message: 'Notificacao nao encontrada' });
+    }
+
+    res.json({
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      link: notification.link,
+      metadata: notification.metadata,
+      isRead: Boolean(notification.readAt),
+      readAt: notification.readAt,
+      createdAt: notification.createdAt,
+      updatedAt: notification.updatedAt,
+    });
   });
 
   app.get('/api/clients', authenticateToken, requireRoles(['commercial', 'projects']), async (_req, res) => {
@@ -1374,7 +1541,19 @@ export async function registerRoutes(
   });
 
   app.post('/api/projects/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
-    const { projectId, collaboratorId, entryDate, hours, description } = req.body;
+    const { projectId, collaboratorId, entryDate, hours, description, attachments } = req.body;
+
+    const normalizedAttachments = Array.isArray(attachments)
+      ? attachments
+          .filter((item: unknown) => item && typeof item === 'object')
+          .map((item: any) => ({
+            name: typeof item.name === 'string' ? item.name.trim() : '',
+            objectPath: typeof item.objectPath === 'string' ? item.objectPath.trim() : '',
+            contentType: typeof item.contentType === 'string' ? item.contentType.trim() : 'application/octet-stream',
+            size: Number(item.size) || 0,
+          }))
+          .filter((item) => item.name && item.objectPath)
+      : [];
 
     const project = await storage.getProject(projectId);
     if (!project) {
@@ -1396,6 +1575,7 @@ export async function registerRoutes(
       entryDate,
       hours: String(hours),
       description,
+      attachments: normalizedAttachments,
     });
 
     res.status(201).json(entry);
@@ -1932,10 +2112,23 @@ export async function registerRoutes(
       return res.status(400).json({ message: 'Valores inválidos' });
     }
 
+    const categories = await storage.getAllProposalCategories({ includeInactive: true });
+    const validCategoryIds = new Set(categories.map((category) => category.id));
+    const hasInvalidCategory = values.some((value: any) => {
+      const categoryId = typeof value?.categoryId === 'string' ? value.categoryId.trim() : '';
+      return !categoryId || !validCategoryIds.has(categoryId);
+    });
+
+    if (hasInvalidCategory) {
+      return res.status(400).json({
+        message: 'Use apenas categorias cadastradas na tela de categorias.',
+      });
+    }
+
     const valuesWithProposalId = values.map((v: any) => ({
       proposalId,
-      categoryId: v.categoryId || null,
-      customName: v.categoryName || v.customName || null,
+      categoryId: v.categoryId,
+      customName: undefined,
       value: parseFloat(v.value) || 0,
       hours: parseFloat(v.hours) || 0,
     }));

@@ -1,13 +1,6 @@
 import { ReactNode, useState, useEffect } from 'react';
 import { Link, useLocation, useRoute } from 'wouter';
 import {
-  LayoutDashboard,
-  Users,
-  Building2,
-  FileText,
-  FolderKanban,
-  Clock,
-  BarChart3,
   LogOut,
   Menu,
   X,
@@ -16,11 +9,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Settings,
-  Bell,
   Search,
   User,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePreferences } from '@/contexts/PreferencesContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -38,24 +31,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { NotificationBell } from '@/components/NotificationBell';
+import { HeaderShortcutManager } from '@/components/HeaderShortcutManager';
+import { adminMenuItems, mainMenuItems, pageDescriptions, settingsNavigationItem, type NavigationItem } from '@/lib/navigation';
 
 interface LayoutProps {
   children: ReactNode;
 }
-
-const mainMenuItems = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard, roles: [] },
-  { path: '/clients', label: 'Clientes', icon: Building2, roles: ['commercial', 'admin'] },
-  { path: '/proposals', label: 'Propostas', icon: FileText, roles: ['commercial', 'admin'] },
-  { path: '/projects', label: 'Projetos', icon: FolderKanban, roles: ['projects', 'admin'] },
-  { path: '/time-entries', label: 'Lançar Horas', icon: Clock, roles: ['projects', 'admin'] },
-  { path: '/reports', label: 'Relatórios', icon: BarChart3, roles: ['admin'] },
-];
-
-const adminMenuItems = [
-  { path: '/categories', label: 'Categorias', icon: Settings, roles: ['admin'] },
-  { path: '/users', label: 'Profissionais da Tec3', icon: Users, roles: ['admin'] },
-];
 
 const roleLabels: Record<string, string> = {
   admin: 'Administrador',
@@ -63,20 +45,10 @@ const roleLabels: Record<string, string> = {
   projects: 'Projetos',
 };
 
-const pageDescriptions: Record<string, string> = {
-  '/': 'Visão geral do sistema',
-  '/clients': 'Gerenciar clientes',
-  '/proposals': 'Gerenciar propostas comerciais',
-  '/projects': 'Gerenciar projetos',
-  '/time-entries': 'Registrar horas trabalhadas',
-  '/reports': 'Visualizar relatórios',
-  '/categories': 'Gerenciar categorias de proposta',
-  '/users': 'Gerenciar profissionais da Tec3',
-};
-
 export function Layout({ children }: LayoutProps) {
   const [location, setLocation] = useLocation();
   const { user, logout, hasRole } = useAuth();
+  const { notificationsEnabled } = usePreferences();
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [headerSearch, setHeaderSearch] = useState('');
@@ -118,14 +90,14 @@ export function Layout({ children }: LayoutProps) {
     (item) => item.roles.length === 0 || hasRole(item.roles)
   );
 
-  const allItems = [...mainMenuItems, ...adminMenuItems];
+  const allItems = [...mainMenuItems, ...adminMenuItems, settingsNavigationItem];
   const currentPage = allItems.find(item => item.path === location)?.label || 'Dashboard';
   const currentDescription = pageDescriptions[location] || 'Bem-vindo ao sistema';
 
   const sidebarWidth = sidebarCollapsed ? 'w-20' : 'w-72';
   const mainPadding = sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-72';
 
-  const renderMenuItem = (item: typeof mainMenuItems[0]) => {
+  const renderMenuItem = (item: NavigationItem) => {
     const Icon = item.icon;
     const isActive = location === item.path;
 
@@ -351,6 +323,8 @@ export function Layout({ children }: LayoutProps) {
 
           {/* Right: Actions */}
           <div className="flex items-center gap-1">
+            <HeaderShortcutManager />
+
             {/* Theme Toggle */}
             <Tooltip>
               <TooltipTrigger asChild>
@@ -371,21 +345,7 @@ export function Layout({ children }: LayoutProps) {
               <TooltipContent>{theme === 'dark' ? 'Modo Claro' : 'Modo Escuro'}</TooltipContent>
             </Tooltip>
 
-            {/* Notifications */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  data-testid="button-notifications"
-                  className="relative text-white/70 hover:text-white hover:bg-white/10"
-                >
-                  <Bell className="h-5 w-5" />
-                  <span className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Notificações</TooltipContent>
-            </Tooltip>
+            {notificationsEnabled && <NotificationBell />}
 
             {/* Profile Avatar with Dropdown Menu */}
             <DropdownMenu>

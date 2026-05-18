@@ -42,6 +42,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { saveCsvFile } from '@/lib/utils';
 
 interface ProposalCategory {
   id: string;
@@ -77,7 +78,6 @@ export function CategoryValuesDrawer({
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryValues, setCategoryValues] = useState<CategoryValue[]>([]);
-  const [newCategoryName, setNewCategoryName] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(null);
@@ -177,7 +177,6 @@ export function CategoryValuesDrawer({
       hoursInput: '',
     }]);
     setHasChanges(true);
-    setNewCategoryName('');
     setSearchTerm('');
   };
 
@@ -228,7 +227,9 @@ export function CategoryValuesDrawer({
 
   const invalidRows = useMemo(() => {
     if (categoryValues.length === 0) return [] as CategoryValue[];
-    return categoryValues.filter((v) => !(Number(v.value) > 0) || !(Number(v.hours) > 0));
+    return categoryValues.filter(
+      (v) => !v.categoryId || !(Number(v.value) > 0) || !(Number(v.hours) > 0)
+    );
   }, [categoryValues]);
 
   const canSave = useMemo(() => {
@@ -247,11 +248,11 @@ export function CategoryValuesDrawer({
 
       const remaining = Math.max(0, invalidRows.length - names.length);
       toast({
-        title: 'Preencha Valor e Horas para salvar',
+        title: 'Use apenas categorias cadastradas e preencha Valor e Horas',
         description:
           names.length > 0
             ? `${names.join(', ')}${remaining > 0 ? ` e mais ${remaining}` : ''}.`
-            : 'Existem categorias com campos em branco.',
+            : 'Existem categorias inválidas ou com campos em branco.',
         variant: 'destructive',
       });
       return;
@@ -299,20 +300,15 @@ export function CategoryValuesDrawer({
     return raw;
   };
 
-  const downloadTemplateCSV = () => {
+  const downloadTemplateCSV = async () => {
+    const instructions = '# Nao adicione novas categorias neste arquivo. Se precisar de uma nova categoria, entre em contato com o administrador do sistema.';
     const header = 'Codigo_da_categoria;Categoria;Valor_da_hora;Quantidade_de_horas';
     const rows = [...categories]
       .filter((c) => c && typeof c.name === 'string')
       .map((c, idx) => `${idx + 1};${escapeCsvField(c.name)};;`);
 
-    const content = [`\ufeff${header}`, ...rows].join('\r\n');
-    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'template-cadastro-valor-hora-categoria-proposta.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    const content = [`\ufeff${instructions}`, header, ...rows].join('\r\n');
+    await saveCsvFile('template-cadastro-valor-hora-categoria-proposta.csv', content);
   };
 
   const importCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -325,7 +321,10 @@ export function CategoryValuesDrawer({
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
       if (lines.length === 0) return;
 
-      const headerLine = lines[0];
+      const dataLinesWithoutComments = lines.filter((line) => !line.trim().startsWith('#'));
+      if (dataLinesWithoutComments.length === 0) return;
+
+      const headerLine = dataLinesWithoutComments[0];
       const headerCells = headerLine.split(';').map((h) => h.trim().toLowerCase());
       const isTemplateWithCode =
         headerCells.includes('codigo_da_categoria') &&
@@ -333,8 +332,15 @@ export function CategoryValuesDrawer({
         headerCells.includes('valor_da_hora') &&
         headerCells.includes('quantidade_de_horas');
 
-      const dataLines = lines.slice(1);
+      const dataLines = dataLinesWithoutComments.slice(1);
       const newValues: CategoryValue[] = [];
+      const categoryByNormalizedName = new Map(
+        categories.map((category) => [category.name.trim().toLowerCase(), category] as const)
+      );
+      const categoryByCode = new Map(
+        categories.map((category) => [category.code.trim().toLowerCase(), category] as const)
+      );
+      let skippedUnknownCategories = 0;
 
       const parseNumber = (raw: string | undefined) => {
         const rawValue = String(raw ?? '').trim();
@@ -348,17 +354,25 @@ export function CategoryValuesDrawer({
       dataLines.forEach((line) => {
         const parts = line.split(';');
         if (isTemplateWithCode) {
+          const code = String(parts[0] ?? '').trim().toLowerCase();
           const name = parts[1];
           const value = parts[2];
           const hours = parts[3];
-          if (name?.trim()) {
+          const category =
+            (code ? categoryByCode.get(code) : undefined) ??
+            (name?.trim() ? categoryByNormalizedName.get(name.trim().toLowerCase()) : undefined);
+
+          if (category) {
             newValues.push({
               proposalId,
-              categoryName: name.trim(),
+              categoryId: category.id,
+              categoryName: category.name,
               value: parseNumber(value),
               hours: parseNumber(hours),
               hoursInput: parseNumber(hours) > 0 ? formatHoursInputFromNumber(parseNumber(hours)) : '',
             });
+          } else if (code || name?.trim()) {
+            skippedUnknownCategories++;
           }
           return;
         }
@@ -366,14 +380,21 @@ export function CategoryValuesDrawer({
         const name = parts[0];
         const value = parts[1];
         const hours = parts[2];
-        if (name?.trim()) {
+        const category = name?.trim()
+          ? categoryByNormalizedName.get(name.trim().toLowerCase())
+          : undefined;
+
+        if (category) {
           newValues.push({
             proposalId,
-            categoryName: name.trim(),
+            categoryId: category.id,
+            categoryName: category.name,
             value: parseNumber(value),
             hours: parseNumber(hours),
             hoursInput: parseNumber(hours) > 0 ? formatHoursInputFromNumber(parseNumber(hours)) : '',
           });
+        } else if (name?.trim()) {
+          skippedUnknownCategories++;
         }
       });
       
@@ -382,6 +403,10 @@ export function CategoryValuesDrawer({
       const importedCount = newValues.length;
       toast({
         title: `${importedCount} ${importedCount === 1 ? 'categoria importada' : 'categorias importadas'}`,
+        description:
+          skippedUnknownCategories > 0
+            ? `${skippedUnknownCategories} ${skippedUnknownCategories === 1 ? 'linha foi ignorada por categoria inexistente' : 'linhas foram ignoradas por categoria inexistente'}.`
+            : undefined,
       });
     };
     reader.readAsText(file);
@@ -527,25 +552,6 @@ export function CategoryValuesDrawer({
           </div>
         )}
 
-        <div className="flex items-center gap-2 mt-3">
-          <Input
-            placeholder="Nome da nova categoria..."
-            value={newCategoryName}
-            onChange={(e) => setNewCategoryName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addCategory(newCategoryName)}
-            className="flex-1"
-            data-testid="input-new-category"
-          />
-          <Button 
-            size="sm"
-            onClick={() => addCategory(newCategoryName)}
-            disabled={!newCategoryName.trim()}
-            data-testid="button-add-category"
-          >
-            <Plus className="h-4 w-4 mr-1" />
-            Adicionar
-          </Button>
-        </div>
       </div>
 
       <ScrollArea className="flex-1">
@@ -557,7 +563,7 @@ export function CategoryValuesDrawer({
           <div className="p-8 text-center text-muted-foreground">
             Nenhuma categoria adicionada.
             <br />
-            Busque uma categoria acima ou crie uma nova.
+            Busque uma categoria acima.
           </div>
         ) : (
           <Table>

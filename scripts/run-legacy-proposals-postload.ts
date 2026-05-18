@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 
 interface Step {
@@ -8,16 +9,28 @@ interface Step {
   args?: string[];
 }
 
-function runStep(step: Step): void {
-  const cmdArgs = ['tsx', step.scriptPath, ...(step.args ?? [])];
-  console.log(`\n▶ ${step.label}`);
-  console.log(`   npx ${cmdArgs.join(' ')}`);
+const require = createRequire(import.meta.url);
+const tsxCliPath = path.resolve(
+  path.dirname(require.resolve('tsx/package.json')),
+  'dist',
+  'cli.mjs',
+);
 
-  const result = spawnSync('npx', cmdArgs, {
+function runStep(step: Step): void {
+  const cmd = process.execPath;
+  const cmdArgs = [tsxCliPath, step.scriptPath, ...(step.args ?? [])];
+  console.log(`\n▶ ${step.label}`);
+  console.log(`   ${cmd} ${cmdArgs.join(' ')}`);
+
+  const result = spawnSync(cmd, cmdArgs, {
     stdio: 'inherit',
     cwd: process.cwd(),
     env: process.env,
   });
+
+  if (result.error) {
+    throw result.error;
+  }
 
   if (result.status !== 0) {
     throw new Error(`Falha no passo: ${step.label}`);

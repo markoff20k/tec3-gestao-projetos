@@ -1877,10 +1877,12 @@ export default function Proposals() {
 
   const filteredProposals = useMemo(() => {
     const filtered = proposals.filter((p) => {
+      const proposalDisplayCode = Number(p.revision || 0) > 0 ? `${p.code}-R${p.revision}` : p.code;
       const searchMatch =
         !search ||
         p.title.toLowerCase().includes(search.toLowerCase()) ||
         p.code.toLowerCase().includes(search.toLowerCase()) ||
+        proposalDisplayCode.toLowerCase().includes(search.toLowerCase()) ||
         p.client?.razaoSocial?.toLowerCase().includes(search.toLowerCase()) ||
         p.client?.cnpj?.toLowerCase().includes(search.toLowerCase());
 

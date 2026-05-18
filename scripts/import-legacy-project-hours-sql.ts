@@ -20,6 +20,8 @@ interface LegacyTimeEntryRow {
   horasAprovadas: string | null;
 }
 
+const MAX_TIME_ENTRY_HOURS = 99.99;
+
 function normalizeText(value: string | null): string | null {
   if (value === null) return null;
   const trimmed = value.trim();
@@ -181,6 +183,22 @@ function parseLegacyDate(value: string | null): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function splitHoursForInsert(totalHours: number): number[] {
+  const chunks: number[] = [];
+  let remaining = Math.round(totalHours * 100) / 100;
+
+  while (remaining > MAX_TIME_ENTRY_HOURS) {
+    chunks.push(MAX_TIME_ENTRY_HOURS);
+    remaining = Math.round((remaining - MAX_TIME_ENTRY_HOURS) * 100) / 100;
+  }
+
+  if (remaining > 0) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
@@ -252,7 +270,8 @@ async function main() {
 
   let skippedEntryMissingProject = 0;
   let skippedEntryMissingRequired = 0;
-  let skippedEntryOutOfRange = 0;
+  let entriesOver24Hours = 0;
+  let splitEntryRows = 0;
 
   for (const row of timeEntryRows) {
     const code = normalizeText(row.codigoProjeto);
@@ -266,8 +285,7 @@ async function main() {
     }
 
     if (hours > 24) {
-      skippedEntryOutOfRange++;
-      continue;
+      entriesOver24Hours++;
     }
 
     const projectId = projectMap.get(code);
@@ -279,16 +297,21 @@ async function main() {
     const approved = (normalizeText(row.horasAprovadas) ?? '').toLowerCase() === 's';
     const approvedById = normalizeText(row.userCoordenadorResponsavelAprovacao);
 
-    createRows.push({
-      projectId,
-      collaboratorId: collaborator,
-      entryDate,
-      hours,
-      description: `Importado do legado (atividade ${normalizeText(row.idAtividade) ?? '-'})`,
-      status: approved ? 'approved' : 'pending',
-      approvedById: approved ? approvedById : null,
-      approvedAt: approved ? entryDate : null,
-    });
+    const hourChunks = splitHoursForInsert(hours);
+    splitEntryRows += Math.max(0, hourChunks.length - 1);
+
+    for (const chunkHours of hourChunks) {
+      createRows.push({
+        projectId,
+        collaboratorId: collaborator,
+        entryDate,
+        hours: chunkHours,
+        description: `Importado do legado (atividade ${normalizeText(row.idAtividade) ?? '-'})`,
+        status: approved ? 'approved' : 'pending',
+        approvedById: approved ? approvedById : null,
+        approvedAt: approved ? entryDate : null,
+      });
+    }
   }
 
   let insertedEntries = 0;
@@ -313,7 +336,8 @@ async function main() {
   console.log(`- skippedBudgetMissingProject: ${skippedBudgetMissingProject}`);
   console.log(`- skippedEntryMissingProject: ${skippedEntryMissingProject}`);
   console.log(`- skippedEntryMissingRequired: ${skippedEntryMissingRequired}`);
-  console.log(`- skippedEntryOutOfRange: ${skippedEntryOutOfRange}`);
+  console.log(`- entriesOver24Hours: ${entriesOver24Hours}`);
+  console.log(`- splitEntryRows: ${splitEntryRows}`);
 }
 
 main()

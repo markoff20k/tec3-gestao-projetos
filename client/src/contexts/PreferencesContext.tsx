@@ -6,16 +6,30 @@ export type ToastPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-r
 interface PreferencesContextType {
   toastPosition: ToastPosition;
   notificationsEnabled: boolean;
+  headerShortcutPaths: string[];
   isLoading: boolean;
   isSaving: boolean;
   setToastPosition: (pos: ToastPosition) => Promise<void>;
   setNotificationsEnabled: (enabled: boolean) => Promise<void>;
+  setHeaderShortcutPaths: (paths: string[]) => Promise<void>;
 }
 
 const TOAST_POSITION_STORAGE_KEY = 'toastPosition';
 const NOTIFICATIONS_STORAGE_KEY = 'notificationsEnabled';
+const HEADER_SHORTCUTS_STORAGE_KEY = 'headerShortcutPaths';
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(undefined);
+
+function normalizeHeaderShortcutPaths(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+    )
+  );
+}
 
 function normalizeToastPosition(value: unknown): ToastPosition {
   switch (value) {
@@ -40,6 +54,16 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     if (raw === null) return true;
     return raw === 'true';
   });
+  const [headerShortcutPaths, setHeaderShortcutPathsState] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const raw = localStorage.getItem(HEADER_SHORTCUTS_STORAGE_KEY);
+    if (!raw) return [];
+    try {
+      return normalizeHeaderShortcutPaths(JSON.parse(raw));
+    } catch {
+      return [];
+    }
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -53,10 +77,19 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       .then((prefs) => {
         const nextToastPosition = normalizeToastPosition(prefs.toastPosition);
         const nextNotifications = typeof prefs.notificationsEnabled === 'boolean' ? prefs.notificationsEnabled : true;
+        const nextHeaderShortcutPaths = normalizeHeaderShortcutPaths(
+          Array.isArray(prefs.headerShortcutPaths)
+            ? prefs.headerShortcutPaths
+            : typeof prefs.headerShortcutPath === 'string' && prefs.headerShortcutPath.trim()
+              ? [prefs.headerShortcutPath.trim()]
+              : []
+        );
         setToastPositionState(nextToastPosition);
         setNotificationsEnabledState(nextNotifications);
+        setHeaderShortcutPathsState(nextHeaderShortcutPaths);
         localStorage.setItem(TOAST_POSITION_STORAGE_KEY, nextToastPosition);
         localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, String(nextNotifications));
+        localStorage.setItem(HEADER_SHORTCUTS_STORAGE_KEY, JSON.stringify(nextHeaderShortcutPaths));
       })
       .catch(() => {
         // Keep local fallback
@@ -100,16 +133,37 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const setHeaderShortcutPaths = useCallback(async (paths: string[]) => {
+    const next = normalizeHeaderShortcutPaths(paths);
+
+    setHeaderShortcutPathsState(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(HEADER_SHORTCUTS_STORAGE_KEY, JSON.stringify(next));
+    }
+
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    setIsSaving(true);
+    try {
+      await authApi.updatePreferences({ headerShortcutPaths: next, headerShortcutPath: next[0] ?? null });
+    } finally {
+      setIsSaving(false);
+    }
+  }, []);
+
   const value = useMemo(
     () => ({
       toastPosition,
       notificationsEnabled,
+      headerShortcutPaths,
       isLoading,
       isSaving,
       setToastPosition,
       setNotificationsEnabled,
+      setHeaderShortcutPaths,
     }),
-    [toastPosition, notificationsEnabled, isLoading, isSaving, setToastPosition, setNotificationsEnabled]
+    [toastPosition, notificationsEnabled, headerShortcutPaths, isLoading, isSaving, setToastPosition, setNotificationsEnabled, setHeaderShortcutPaths]
   );
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;

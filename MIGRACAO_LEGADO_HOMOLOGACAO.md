@@ -14,6 +14,17 @@ Este runbook parte de três premissas:
 
 Para consistência alta, não avance para a próxima etapa se a etapa atual produzir `skipped`, `fallback`, `customName`, `unresolved` ou vínculos ausentes sem justificativa explícita.
 
+## Limpeza inicial do banco
+
+Se o ambiente já contém dados e você quer recarregar do zero sem alterar a estrutura, limpe todas as tabelas antes da migração:
+
+```powershell
+npm run db:clear -- --dry-run
+npm run db:clear -- --confirm
+```
+
+Esse fluxo preserva o schema e mantém a tabela `_prisma_migrations` intacta.
+
 ## Pré-requisitos
 
 1. Ajuste o `.env` para o banco de homologação.
@@ -44,7 +55,7 @@ Quando a aplicação subir, interrompa o processo. Se estiver usando Docker em h
 ### 1. Carga de clientes
 
 ```powershell
-npm run import:legacy:clients -- .\bdtec3.sql
+npm run import:legacy:clients:strict -- .\bdtec3.sql
 ```
 
 Conferência imediata:
@@ -55,8 +66,8 @@ SELECT COUNT(*) AS total_clientes FROM clients;
 
 Critério para seguir:
 
-1. `Ignorados` deve ser analisado e aceito.
-2. Se houver clientes relevantes ausentes, parar aqui.
+1. `Ignorados` deve ser zero.
+2. Qualquer cliente ignorado interrompe a carga no modo estrito.
 
 ### 2. Carga base de propostas
 
@@ -65,13 +76,13 @@ Essa etapa importa diretamente a tabela `Proposta` do dump legado para o Postgre
 Primeiro em leitura:
 
 ```powershell
-npm run import:legacy:proposals -- --dry-run .\bdtec3.sql
+npm run import:legacy:proposals:strict -- --dry-run .\bdtec3.sql
 ```
 
 Depois aplicando:
 
 ```powershell
-npm run import:legacy:proposals -- .\bdtec3.sql
+npm run import:legacy:proposals:strict -- .\bdtec3.sql
 ```
 
 Conferências imediatas:
@@ -88,7 +99,7 @@ WHERE client_id = '00000000-0000-0000-0000-000000000001';
 
 Critério para seguir:
 
-1. `skippedMissingClientInPostgres` no resumo do script deve ser zero.
+1. Todos os contadores `skipped*` no resumo do script devem ser zero.
 2. `total_propostas` deve ficar compatível com o dump legado importado.
 3. `propostas_cliente_fallback` deve continuar zero, porque o fluxo direto não depende mais de cliente fallback.
 
@@ -207,7 +218,8 @@ Critério para seguir:
 
 1. `skippedEntryMissingProject` deve ser zero.
 2. `skippedEntryMissingRequired` deve ser zero ou muito baixo e auditado.
-3. `skippedEntryOutOfRange` deve ser zero para consistência estrita.
+3. `entriesOver24Hours` deve ser auditado, mas não implica descarte automático.
+4. `splitEntryRows` deve ser reconciliado com os lançamentos acima do limite físico do campo `hours` no sistema novo.
 
 ### 8. Carga de horas e orçamento
 
@@ -269,7 +281,7 @@ WHERE t.approved_by_id IS NOT NULL
 Critério para seguir:
 
 1. Os dois contadores devem ser zero.
-2. Para consistência total, não usar criação automática de usuário legado em homologação final.
+2. Se não houver mapeamento manual suficiente, a criação automática de usuários legados só é aceitável quando `unresolvedLegacyLogins = 0` e os nomes forem normalizados no backfill final.
 
 ### 10. Backfills finais
 
@@ -326,6 +338,57 @@ FROM proposal_category_values
 WHERE category_id IS NULL
   AND custom_name IS NOT NULL;
 ```
+
+## Resultado validado em homologação
+
+Execução validada em 2026-05-15 sobre o dump `C:\Users\jefer\Downloads\bdtec3 (1).sql`.
+
+Totais consolidados:
+
+```text
+clients: 260
+proposals: 2525
+proposal_additives: 139
+proposal_expenses: 412
+proposal_category_values: 9831
+proposal_categories: 41
+projects: 1089
+time_entries: 43848
+legacy_users_created: 67
+orphan_time_entry_users: 0
+orphan_time_entry_projects: 0
+projects_with_zero_budget_and_time_entries: 100
+```
+
+Resultado operacional do bloco de horas:
+
+```text
+projetosComBudgetAtualizado: 753
+timeRowsBrutas: 29658
+lancamentosInseridos: 29848
+skippedBudgetMissingProject: 0
+skippedEntryMissingProject: 0
+skippedEntryMissingRequired: 0
+entriesOver24Hours: 1640
+splitEntryRows: 190
+```
+
+Resultado operacional do vínculo de usuários dos lançamentos:
+
+```text
+totalDistinctLegacyLogins: 65
+matchedByEmailPrefix: 24
+createdUsers: 41
+unresolvedLegacyLogins: 0
+collaboratorRowsToUpdate: 43848
+approverRowsToUpdate: 0
+legacyUsersInDump: 77
+updatedFullNames: 67
+```
+
+Ponto de atenção remanescente:
+
+1. `projects_with_zero_budget_and_time_entries = 100` precisa de auditoria funcional do negócio antes de promover a mesma base para produção.
 
 ## Critério de aprovação da homologação
 

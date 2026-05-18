@@ -20,6 +20,42 @@ type LdapAttemptResult =
   | { status: 'invalid_password'; provider: 'ad' | 'openldap' }
   | { status: 'error'; provider: 'ad' | 'openldap'; error: unknown };
 
+export interface DirectoryUserProfile {
+  email: string;
+  name: string;
+  role: Role;
+  groups: string[];
+  provider: 'ad' | 'openldap';
+}
+
+const TECHNICAL_OR_SERVICE_ACCOUNT_KEYS = new Set([
+  'ad_query',
+  'adm.axter',
+  'adm.profits',
+  'adm_script',
+  'administrator',
+  'backup_cobian',
+  'check',
+  'dns-srv-ad',
+  'fw-ldap',
+  'fw-svc-ldap',
+  'fw-svc-sso',
+  'geotecnica_tec3',
+  'grafana',
+  'krbtgt',
+  'minascopy',
+  'proaero_app',
+  'proaero_service',
+  'prtg-ldap',
+  'saprod.doc',
+  'storage',
+  'suporte',
+  'tec3_campo',
+  'tec3usuario',
+  'tec_fw',
+  'vpn_reset',
+]);
+
 function getLdapHexCode(error: unknown): string | null {
   const message =
     error instanceof Error
@@ -137,6 +173,17 @@ function parseAdWhenCreated(value: string | undefined): string | null {
 
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function getDirectoryAccountKey(email: string): string {
+  const normalizedEmail = email.trim().toLowerCase();
+  const atIndex = normalizedEmail.indexOf('@');
+  return atIndex >= 0 ? normalizedEmail.slice(0, atIndex) : normalizedEmail;
+}
+
+function isTechnicalOrServiceAccount(profile: DirectoryUserProfile): boolean {
+  if (profile.provider !== 'ad') return false;
+  return TECHNICAL_OR_SERVICE_ACCOUNT_KEYS.has(getDirectoryAccountKey(profile.email));
 }
 
 function buildAdBindPrincipal(params: {
@@ -387,6 +434,132 @@ async function tryAuthenticateProvider(params: {
   }
 }
 
+async function listUsersFromProvider(params: {
+  provider: 'ad' | 'openldap';
+  url?: string;
+  baseDn?: string;
+  bindDn?: string;
+  bindPassword?: string;
+  adBindFormat?: string;
+  adDomain?: string;
+  userFilterTemplate?: string;
+  roleAdminDns: string[];
+  roleCommercialDns: string[];
+  roleProjectsDns: string[];
+}): Promise<DirectoryUserProfile[] | null> {
+  const {
+    provider,
+    url,
+    baseDn,
+    bindDn,
+    bindPassword,
+    adBindFormat,
+    adDomain,
+    userFilterTemplate,
+    roleAdminDns,
+    roleCommercialDns,
+    roleProjectsDns,
+  } = params;
+
+  if (!url || !baseDn) {
+    return null;
+  }
+
+  const client = new Client({
+    url,
+    timeout: 15000,
+    connectTimeout: 15000,
+  });
+
+  try {
+    if (bindDn && bindPassword) {
+      const bindPrincipal =
+        provider === 'ad'
+          ? buildAdBindPrincipal({
+              identifier: bindDn,
+              bindFormat: adBindFormat,
+              domain: adDomain,
+            })
+          : bindDn;
+      await client.bind(bindPrincipal, bindPassword);
+    } else {
+      await client.bind('', '');
+    }
+
+    const defaultFilter =
+      provider === 'ad'
+        ? '(&(objectCategory=person)(objectClass=user))'
+        : '(objectClass=person)';
+
+    const filter = userFilterTemplate?.includes('{{id}}')
+      ? defaultFilter
+      : userFilterTemplate ?? defaultFilter;
+
+    const { searchEntries } = await client.search(baseDn, {
+      scope: 'sub',
+      filter,
+      attributes: [
+        'dn',
+        'mail',
+        'email',
+        'cn',
+        'displayName',
+        'givenName',
+        'memberOf',
+        'sAMAccountName',
+        'userPrincipalName',
+        'uid',
+      ],
+      sizeLimit: 10000,
+    });
+
+    const users: DirectoryUserProfile[] = [];
+
+    for (const entry of searchEntries ?? []) {
+      const typedEntry: any = entry;
+      const sam = getUserAttr(typedEntry, 'sAMAccountName');
+      const upn = getUserAttr(typedEntry, 'userPrincipalName');
+      const email =
+        getUserAttr(typedEntry, 'mail') ??
+        getUserAttr(typedEntry, 'email') ??
+        upn ??
+        (sam && adDomain ? `${sam}@${adDomain}` : undefined);
+
+      if (!email?.trim()) continue;
+
+      const name =
+        getUserAttr(typedEntry, 'displayName') ??
+        getUserAttr(typedEntry, 'cn') ??
+        getUserAttr(typedEntry, 'givenName') ??
+        email;
+
+      const groups = getUserAttrMulti(typedEntry, 'memberOf');
+      const role = buildRoleFromGroups({
+        groups,
+        adminDns: roleAdminDns,
+        commercialDns: roleCommercialDns,
+        projectsDns: roleProjectsDns,
+      });
+
+      users.push({
+        email: email.trim().toLowerCase(),
+        name: name.trim(),
+        role,
+        groups,
+        provider,
+      });
+    }
+
+    return users;
+  } finally {
+    try {
+      await client.unbind();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export async function authenticateViaLdap(params: {
   identifier: string;
   password: string;
@@ -461,4 +634,49 @@ export async function authenticateViaLdap(params: {
   if (adAttempt.status === 'error') return adAttempt;
   if (openAttempt.status === 'error') return openAttempt;
   return { status: 'not_found', provider: 'openldap' };
+}
+
+export async function listAdDirectoryUsers(): Promise<DirectoryUserProfile[] | null> {
+  const adUrl = env('LDAP_AD_URL');
+  const adBaseDn = env('LDAP_AD_BASE_DN');
+  const adBindDn = env('LDAP_AD_BIND_DN');
+  const adBindPassword = env('LDAP_AD_BIND_PASSWORD');
+  const adBindFormat = env('LDAP_AD_BIND_FORMAT');
+  const adDomain = env('LDAP_AD_DOMAIN');
+  const adUserFilter = env('LDAP_AD_LIST_FILTER') ?? env('LDAP_AD_USER_FILTER');
+
+  const globalAdmin = parseCsvEnv('LDAP_ROLE_ADMIN_DNS');
+  const globalCommercial = parseCsvEnv('LDAP_ROLE_COMMERCIAL_DNS');
+  const globalProjects = parseCsvEnv('LDAP_ROLE_PROJECTS_DNS');
+
+  const adAdmin = parseCsvEnv('LDAP_AD_ROLE_ADMIN_DNS');
+  const adCommercial = parseCsvEnv('LDAP_AD_ROLE_COMMERCIAL_DNS');
+  const adProjects = parseCsvEnv('LDAP_AD_ROLE_PROJECTS_DNS');
+
+  const adUsers = await listUsersFromProvider({
+    provider: 'ad',
+    url: adUrl,
+    baseDn: adBaseDn,
+    bindDn: adBindDn,
+    bindPassword: adBindPassword,
+    adBindFormat,
+    adDomain,
+    userFilterTemplate: adUserFilter,
+    roleAdminDns: adAdmin.length ? adAdmin : globalAdmin,
+    roleCommercialDns: adCommercial.length ? adCommercial : globalCommercial,
+    roleProjectsDns: adProjects.length ? adProjects : globalProjects,
+  });
+
+  if (adUsers && adUsers.length > 0) {
+    const unique = new Map(
+      adUsers
+        .filter((user) => !isTechnicalOrServiceAccount(user))
+        .map((user) => [user.email, user] as const)
+    );
+    return Array.from(unique.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
+    );
+  }
+
+  return null;
 }

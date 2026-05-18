@@ -116,6 +116,8 @@ export interface UserPreferences {
   proposalColumns?: ColumnConfig[] | null;
   notificationsEnabled?: boolean;
   toastPosition?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  headerShortcutPath?: string | null;
+  headerShortcutPaths?: string[] | null;
 }
 
 export interface User {
@@ -154,6 +156,7 @@ export interface UserOption {
 }
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
+export type NotificationType = 'proposal_due_soon';
 
 export interface UserActivity {
   id: string;
@@ -170,6 +173,25 @@ export interface UserActivity {
 export interface UserActivitiesResponse {
   items: UserActivity[];
   nextCursor: string | null;
+}
+
+export interface UserNotification {
+  id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  link?: string | null;
+  metadata?: any;
+  isRead: boolean;
+  readAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserNotificationsResponse {
+  items: UserNotification[];
+  nextCursor: string | null;
+  unreadCount: number;
 }
 
 export interface AuthResponse {
@@ -200,6 +222,18 @@ export const authApi = {
     const qs = search.toString();
     return api.get<UserActivitiesResponse>(`/auth/activities${qs ? `?${qs}` : ''}`);
   },
+  getNotifications: (params?: { limit?: number; cursor?: string; unreadOnly?: boolean }) => {
+    const search = new URLSearchParams();
+    if (params?.limit) search.set('limit', String(params.limit));
+    if (params?.cursor) search.set('cursor', params.cursor);
+    if (typeof params?.unreadOnly === 'boolean') search.set('unreadOnly', String(params.unreadOnly));
+    const qs = search.toString();
+    return api.get<UserNotificationsResponse>(`/auth/notifications${qs ? `?${qs}` : ''}`);
+  },
+  markNotificationRead: (notificationId: string) =>
+    api.put<UserNotification>(`/auth/notifications/${notificationId}/read`),
+  markAllNotificationsRead: () =>
+    api.put<{ updatedCount: number }>('/auth/notifications/read-all'),
   uploadPhoto: async (file: File): Promise<User> => {
     const token = localStorage.getItem('token');
     const formData = new FormData();
@@ -432,7 +466,15 @@ export interface TimeEntry {
   entryDate: string;
   hours: number;
   description?: string;
+  attachments?: TimeEntryAttachment[] | null;
   status: string;
+}
+
+export interface TimeEntryAttachment {
+  name: string;
+  objectPath: string;
+  contentType: string;
+  size: number;
 }
 
 export interface ProposalCategory {

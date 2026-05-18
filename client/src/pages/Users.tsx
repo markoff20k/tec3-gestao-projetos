@@ -43,7 +43,10 @@ export default function Users() {
 
   const { data: professionals = [], isLoading } = useQuery<User[]>({
     queryKey: ['/api/auth/users'],
+    queryFn: () => api.get<User[]>('/auth/users'),
     enabled: hasRole(['admin']),
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   const { data: categories = [] } = useQuery<ProposalCategory[]>({

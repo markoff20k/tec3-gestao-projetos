@@ -2,6 +2,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { prisma } from '../server/db.ts';
+import { storage } from '../server/storage.ts';
 
 type ParsedValue = string | null;
 
@@ -233,6 +234,64 @@ async function resolveProposalId(code: string, revision: number): Promise<string
   return byCodeOnly?.id ?? null;
 }
 
+async function buildCategoryMap() {
+  const existingCategories = await prisma.proposalCategory.findMany({
+    select: { id: true, name: true },
+  });
+
+  const categoryIdByNormalizedName = new Map<string, string>();
+  for (const cat of existingCategories) {
+    const norm = normalizeName(cat.name);
+    if (!norm) continue;
+    categoryIdByNormalizedName.set(norm, cat.id);
+  }
+
+  return {
+    existingCategories,
+    categoryIdByNormalizedName,
+  };
+}
+
+async function ensureProposalCategories(categoryNameByLegacyId: Map<number, string>, dryRun: boolean) {
+  let { existingCategories, categoryIdByNormalizedName } = await buildCategoryMap();
+  const hadCategoriesBefore = existingCategories.length > 0;
+
+  if (!dryRun && !hadCategoriesBefore) {
+    await storage.seedProposalCategories();
+    ({ existingCategories, categoryIdByNormalizedName } = await buildCategoryMap());
+  }
+
+  const missingLegacyCategories: Array<{ legacyId: number; name: string }> = [];
+  for (const [legacyId, name] of categoryNameByLegacyId.entries()) {
+    const normalized = normalizeName(name);
+    if (!normalized) continue;
+    if (categoryIdByNormalizedName.has(normalized)) continue;
+    missingLegacyCategories.push({ legacyId, name });
+  }
+
+  if (!dryRun) {
+    for (const category of missingLegacyCategories) {
+      await prisma.proposalCategory.create({
+        data: {
+          code: `LEGACY_${category.legacyId}`,
+          name: category.name,
+          isActive: true,
+        },
+      });
+    }
+
+    ({ existingCategories, categoryIdByNormalizedName } = await buildCategoryMap());
+  }
+
+  return {
+    categoryIdByNormalizedName,
+    seededOfficialCategories: !dryRun && !hadCategoriesBefore,
+    createdLegacyCategories: dryRun ? missingLegacyCategories.length : missingLegacyCategories.length,
+    totalCategoriesAvailable: existingCategories.length,
+    missingLegacyCategories,
+  };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const fileArg = args.find((arg) => !arg.startsWith('--'));
@@ -267,15 +326,8 @@ async function main() {
     categoryNameByLegacyId.set(id, name);
   }
 
-  const existingCategories = await prisma.proposalCategory.findMany({
-    select: { id: true, name: true },
-  });
-  const categoryIdByNormalizedName = new Map<string, string>();
-  for (const cat of existingCategories) {
-    const norm = normalizeName(cat.name);
-    if (!norm) continue;
-    categoryIdByNormalizedName.set(norm, cat.id);
-  }
+  const ensuredCategories = await ensureProposalCategories(categoryNameByLegacyId, dryRun);
+  const categoryIdByNormalizedName = ensuredCategories.categoryIdByNormalizedName;
 
   const valuesToImport: Array<{
     proposalId: string;
@@ -345,6 +397,8 @@ async function main() {
     console.log(`Registros ignorados (idAditivo != NULL): ${skippedFromAdditive}`);
     console.log(`Registros ignorados (sem código): ${skippedNoCode}`);
     console.log(`Registros ignorados (proposta não encontrada): ${skippedNoProposal}`);
+    console.log(`Seed oficial executado: false`);
+    console.log(`Categorias legadas sem correspondencia atual: ${ensuredCategories.createdLegacyCategories}`);
     console.log(`Com categoryId mapeado: ${linkedWithCategoryId}`);
     console.log(`Com customName (sem categoryId): ${linkedWithCustomName}`);
     return;
@@ -387,6 +441,9 @@ async function main() {
   console.log(`Registros ignorados (idAditivo != NULL): ${skippedFromAdditive}`);
   console.log(`Registros ignorados (sem código): ${skippedNoCode}`);
   console.log(`Registros ignorados (proposta não encontrada): ${skippedNoProposal}`);
+  console.log(`Seed oficial executado: ${ensuredCategories.seededOfficialCategories}`);
+  console.log(`Categorias legadas criadas: ${ensuredCategories.createdLegacyCategories}`);
+  console.log(`Total de categorias disponiveis: ${ensuredCategories.totalCategoriesAvailable}`);
   console.log(`Com categoryId mapeado: ${linkedWithCategoryId}`);
   console.log(`Com customName (sem categoryId): ${linkedWithCustomName}`);
   console.log(`Total de registros em proposal_category_values: ${totalImported}`);

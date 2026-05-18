@@ -46,6 +46,20 @@ function parseInteger(value: string | null): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseRevision(code: string, revisionRaw: string | null): number {
+  const parsed = parseInteger(revisionRaw);
+  if (parsed > 0) return parsed;
+
+  const match = code.match(/-R(\d+)$/i);
+  if (!match) return 0;
+  const fromCode = Number.parseInt(match[1], 10);
+  return Number.isFinite(fromCode) ? fromCode : 0;
+}
+
+function normalizeProposalCode(code: string): string {
+  return code.trim().replace(/-R\d+$/i, '');
+}
+
 function parseSqlStringToken(token: string): ParsedValue {
   const trimmed = token.trim();
 
@@ -210,22 +224,24 @@ function extractLegacyExpenses(sqlContent: string): LegacyExpenseRow[] {
 }
 
 async function resolveProposalId(code: string, revision: number): Promise<string | null> {
+  const baseCode = normalizeProposalCode(code);
+
   const byExactCodeAndRevision = await prisma.proposal.findFirst({
-    where: { code, revision },
+    where: { code: baseCode, revision },
     select: { id: true },
   });
   if (byExactCodeAndRevision?.id) return byExactCodeAndRevision.id;
 
   if (revision > 0) {
     const bySuffixedCode = await prisma.proposal.findFirst({
-      where: { code: `${code}-R${revision}`, revision },
+      where: { code: `${baseCode}-R${revision}`, revision },
       select: { id: true },
     });
     if (bySuffixedCode?.id) return bySuffixedCode.id;
   }
 
   const byCodeOnly = await prisma.proposal.findFirst({
-    where: { code },
+    where: { code: baseCode },
     orderBy: [{ revision: 'desc' }, { createdAt: 'desc' }],
     select: { id: true },
   });
@@ -273,6 +289,7 @@ async function recomputeProposalTotals() {
 async function main() {
   const args = process.argv.slice(2);
   const replaceAll = args.includes('--replace-all');
+  const diagnoseSkips = args.includes('--diagnose-skips');
   const fileArg = args.find((arg) => !arg.startsWith('--'));
 
   const resolvedPath = fileArg
@@ -298,18 +315,29 @@ async function main() {
 
   let additivesCreated = 0;
   let additivesSkipped = 0;
+  let additivesSkippedNoCode = 0;
+  let additivesSkippedNoProposal = 0;
+  const additiveSkipSamples: string[] = [];
 
   for (const additive of legacyAdditives) {
     const code = normalizeText(additive.codigoProposta);
     if (!code) {
       additivesSkipped++;
+      additivesSkippedNoCode++;
+      if (diagnoseSkips && additiveSkipSamples.length < 20) {
+        additiveSkipSamples.push(`sem-codigo idAditivo=${normalizeText(additive.idAditivo) ?? 'null'} revisao=${normalizeText(additive.revisao) ?? 'null'}`);
+      }
       continue;
     }
 
-    const revision = parseInteger(additive.revisao);
+    const revision = parseRevision(code, additive.revisao);
     const proposalId = await resolveProposalId(code, revision);
     if (!proposalId) {
       additivesSkipped++;
+      additivesSkippedNoProposal++;
+      if (diagnoseSkips && additiveSkipSamples.length < 20) {
+        additiveSkipSamples.push(`sem-proposta codigo=${code} revisao=${revision} idAditivo=${normalizeText(additive.idAditivo) ?? 'null'}`);
+      }
       continue;
     }
 
@@ -328,18 +356,29 @@ async function main() {
 
   let expensesCreated = 0;
   let expensesSkipped = 0;
+  let expensesSkippedNoCode = 0;
+  let expensesSkippedNoProposal = 0;
+  const expenseSkipSamples: string[] = [];
 
   for (const expense of legacyExpenses) {
     const code = normalizeText(expense.codigoProposta);
     if (!code) {
       expensesSkipped++;
+      expensesSkippedNoCode++;
+      if (diagnoseSkips && expenseSkipSamples.length < 20) {
+        expenseSkipSamples.push(`sem-codigo idDespesa=${normalizeText(expense.idDespesa) ?? 'null'} revisao=${normalizeText(expense.revisao) ?? 'null'} idAditivo=${normalizeText(expense.idAditivo) ?? 'null'}`);
+      }
       continue;
     }
 
-    const revision = parseInteger(expense.revisao);
+    const revision = parseRevision(code, expense.revisao);
     const proposalId = await resolveProposalId(code, revision);
     if (!proposalId) {
       expensesSkipped++;
+      expensesSkippedNoProposal++;
+      if (diagnoseSkips && expenseSkipSamples.length < 20) {
+        expenseSkipSamples.push(`sem-proposta codigo=${code} revisao=${revision} idDespesa=${normalizeText(expense.idDespesa) ?? 'null'} idAditivo=${normalizeText(expense.idAditivo) ?? 'null'}`);
+      }
       continue;
     }
 
@@ -365,10 +404,26 @@ async function main() {
   console.log('Importação de extras concluída com sucesso.');
   console.log(`Aditivos criados: ${additivesCreated}`);
   console.log(`Aditivos ignorados: ${additivesSkipped}`);
+  console.log(`Aditivos ignorados sem codigo: ${additivesSkippedNoCode}`);
+  console.log(`Aditivos ignorados sem proposta: ${additivesSkippedNoProposal}`);
   console.log(`Despesas criadas: ${expensesCreated}`);
   console.log(`Despesas ignoradas: ${expensesSkipped}`);
+  console.log(`Despesas ignoradas sem codigo: ${expensesSkippedNoCode}`);
+  console.log(`Despesas ignoradas sem proposta: ${expensesSkippedNoProposal}`);
   console.log(`Total proposal_additives: ${additivesRows}`);
   console.log(`Total proposal_expenses: ${expensesRows}`);
+
+  if (diagnoseSkips) {
+    console.log('Amostras de aditivos ignorados:');
+    for (const sample of additiveSkipSamples) {
+      console.log(`- ${sample}`);
+    }
+
+    console.log('Amostras de despesas ignoradas:');
+    for (const sample of expenseSkipSamples) {
+      console.log(`- ${sample}`);
+    }
+  }
 }
 
 main()

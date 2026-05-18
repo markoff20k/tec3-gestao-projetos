@@ -140,6 +140,7 @@ export default function Settings() {
     }
   };
 
+
   const handlePhotoClick = () => {
     fileInputRef.current?.click();
   };

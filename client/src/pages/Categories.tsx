@@ -31,6 +31,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { proposalCategoriesApi, ProposalCategory } from '@/lib/api';
+import { saveCsvFile } from '@/lib/utils';
 
 type CategoryFormState = {
   id?: string;
@@ -101,15 +102,9 @@ export default function Categories() {
     });
   }, [categories, search, activeFilter]);
 
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
     const content = ['categoria;ativo', 'Administrativo;Sim'].join('\n');
-    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'template_categorias.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    await saveCsvFile('template_categorias.csv', content);
   };
 
   const handleImportFile = (file: File) => {

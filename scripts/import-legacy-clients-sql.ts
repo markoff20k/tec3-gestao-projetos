@@ -234,6 +234,7 @@ async function upsertLegacyClients(clients: LegacyClientRow[]) {
 async function main() {
   const args = process.argv.slice(2);
   const replaceAll = args.includes('--replace-all');
+  const strict = args.includes('--strict');
   const fileArg = args.find((arg) => !arg.startsWith('--'));
 
   const resolvedPath = fileArg
@@ -261,7 +262,12 @@ async function main() {
 
   const result = await upsertLegacyClients(legacyClients);
 
+  if (strict && result.skipped > 0) {
+    throw new Error(`Modo estrito violado: ${result.skipped} cliente(s) legado(s) foram ignorados.`);
+  }
+
   console.log('Importação concluída com sucesso.');
+  console.log(`Strict: ${strict}`);
   console.log(`Criados: ${result.created}`);
   console.log(`Atualizados: ${result.updated}`);
   console.log(`Ignorados: ${result.skipped}`);

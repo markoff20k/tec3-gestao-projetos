@@ -23,11 +23,12 @@ model User {
   professionalCategoryId String? @map("professional_category_id")
   professionalCategory   ProposalCategory? @relation(fields: [professionalCategoryId], references: [id])
   emailGroup        String?  @map("email_group")
-  receivesEmails    Boolean  @default(false) @map("receives_emails")
+  receivesEmails    Boolean  @default(true) @map("receives_emails")
   photoUrl         String?  @map("photo_url")
   photoData        Bytes?   @map("photo_data")
   photoMimeType    String?  @map("photo_mime_type")
   activities       UserActivity[]
+  notifications    Notification[]
   
   // Preferências do usuário
   theme            String   @default("light")
@@ -35,8 +36,31 @@ model User {
   language         String   @default("pt-BR")
   proposalColumns  Json?    @map("proposal_columns")
   toastPosition    String   @default("bottom-right") @map("toast_position")
+  headerShortcutPath String? @map("header_shortcut_path")
+  headerShortcutPaths Json?   @map("header_shortcut_paths")
 
   @@map("users")
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  type       String
+  title      String
+  message    String
+  link       String?
+  sourceKey  String   @unique @map("source_key")
+  metadata   Json?
+  isActive   Boolean  @default(true) @map("is_active")
+  readAt     DateTime? @map("read_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive, readAt])
+  @@index([type, isActive, updatedAt])
+  @@map("notifications")
 }
 
 model UserActivity {
@@ -218,6 +242,7 @@ model TimeEntry {
   entryDate       DateTime  @map("entry_date") @db.Date
   hours           Decimal   @db.Decimal(4, 2)
   description     String?
+  attachments     Json?     @map("attachments")
   status          String    @default("pending")
   approvedById    String?   @map("approved_by_id")
   approvedAt      DateTime? @map("approved_at")

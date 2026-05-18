@@ -1,8 +1,9 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
-import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Prisma } from "../generated/prisma/client.ts";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification } from "../generated/prisma/client.ts";import { Prisma } from "../generated/prisma/client.ts";
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
+export type NotificationType = 'proposal_due_soon';
 
 export interface CreateUserActivityInput {
   category: UserActivityCategory;
@@ -11,6 +12,12 @@ export interface CreateUserActivityInput {
   metadata?: Prisma.InputJsonValue | null;
   ip?: string | null;
   userAgent?: string | null;
+}
+
+export interface UserNotificationListResult {
+  items: Notification[];
+  nextCursor: string | null;
+  unreadCount: number;
 }
 
 export const ProposalStatus = {
@@ -60,6 +67,13 @@ export interface IStorage {
     userId: string,
     options?: { category?: UserActivityCategory; limit?: number; cursor?: string }
   ): Promise<{ items: UserActivity[]; nextCursor: string | null }>;
+  syncProposalDueNotifications(): Promise<void>;
+  getUserNotifications(
+    userId: string,
+    options?: { limit?: number; cursor?: string; unreadOnly?: boolean }
+  ): Promise<UserNotificationListResult>;
+  markNotificationRead(userId: string, notificationId: string): Promise<Notification | null>;
+  markAllNotificationsRead(userId: string): Promise<{ updatedCount: number }>;
   
   getAllClients(): Promise<Client[]>;
   getClient(id: string): Promise<Client | null>;
@@ -135,6 +149,54 @@ export class PrismaStorage implements IStorage {
     const normalized = String(code || '').trim();
     if (!normalized) return '';
     return normalized.replace(/-R\d+$/i, '');
+  }
+
+  private startOfUtcDay(date: Date): Date {
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  }
+
+  private getDaysUntilDue(dueDate: Date, today = new Date()): number {
+    const due = this.startOfUtcDay(dueDate).getTime();
+    const current = this.startOfUtcDay(today).getTime();
+    return Math.round((due - current) / (24 * 60 * 60 * 1000));
+  }
+
+  private buildProposalDueNotificationContent(proposal: Proposal, daysUntilDue: number): {
+    title: string;
+    message: string;
+    link: string;
+  } {
+    const displayCode = proposal.revision > 0 ? `${proposal.code}-R${proposal.revision}` : proposal.code;
+    const proposalTitle = proposal.title?.trim() || 'Sem titulo';
+    const dueDateText = proposal.dueDate ? this.startOfUtcDay(proposal.dueDate).toISOString().slice(0, 10) : null;
+
+    if (daysUntilDue < 0) {
+      const overdueDays = Math.abs(daysUntilDue);
+      return {
+        title: `Proposta ${displayCode} vencida`,
+        message: `${proposalTitle} venceu ha ${overdueDays} ${overdueDays === 1 ? 'dia' : 'dias'}${dueDateText ? ` (${dueDateText})` : ''}.`,
+        link: `/proposals?search=${encodeURIComponent(displayCode)}`,
+      };
+    }
+
+    if (daysUntilDue === 0) {
+      return {
+        title: `Proposta ${displayCode} vence hoje`,
+        message: `${proposalTitle} vence hoje${dueDateText ? ` (${dueDateText})` : ''}.`,
+        link: `/proposals?search=${encodeURIComponent(displayCode)}`,
+      };
+    }
+
+    return {
+      title: `Proposta ${displayCode} vence em ${daysUntilDue} dias`,
+      message: `${proposalTitle} vence em ${daysUntilDue} dias${dueDateText ? ` (${dueDateText})` : ''}.`,
+      link: `/proposals?search=${encodeURIComponent(displayCode)}`,
+    };
+  }
+
+  private getNotificationSourceKey(proposal: Proposal, userId: string): string {
+    const dueDateKey = proposal.dueDate ? this.startOfUtcDay(proposal.dueDate).toISOString().slice(0, 10) : 'sem-data';
+    return `proposal_due_soon:${proposal.id}:${userId}:${dueDateKey}`;
   }
   
   async seedAdminUser(): Promise<void> {
@@ -370,6 +432,214 @@ export class PrismaStorage implements IStorage {
     return { items: sliced, nextCursor };
   }
 
+  async syncProposalDueNotifications(): Promise<void> {
+    const today = this.startOfUtcDay(new Date());
+    const threshold = new Date(today);
+    threshold.setUTCDate(threshold.getUTCDate() + 30);
+
+    const activeStatuses = new Set([
+      ProposalStatus.EM_ELABORACAO,
+      ProposalStatus.EM_ANALISE,
+      'draft',
+      'in_review',
+      'sent',
+      'negotiating',
+    ]);
+
+    const [proposals, users, admins] = await Promise.all([
+      prisma.proposal.findMany({
+        where: {
+          dueDate: { not: null, lte: threshold },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      }),
+      prisma.user.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true, role: true },
+      }),
+      prisma.user.findMany({
+        where: { role: 'admin', isActive: true },
+        select: { id: true },
+      }),
+    ]);
+
+    const latestProposalByBaseCode = new Map<string, Proposal>();
+    for (const proposal of proposals) {
+      const baseCode = this.normalizeProposalCode(proposal.code) || proposal.code;
+      const existing = latestProposalByBaseCode.get(baseCode);
+      if (!existing) {
+        latestProposalByBaseCode.set(baseCode, proposal);
+        continue;
+      }
+
+      const existingRevision = existing.revision ?? 0;
+      const nextRevision = proposal.revision ?? 0;
+      const shouldReplace =
+        nextRevision > existingRevision ||
+        (nextRevision === existingRevision && (proposal.createdAt?.getTime?.() ?? 0) > (existing.createdAt?.getTime?.() ?? 0));
+
+      if (shouldReplace) {
+        latestProposalByBaseCode.set(baseCode, proposal);
+      }
+    }
+
+    const userIdByNormalizedName = new Map<string, string>();
+    for (const user of users) {
+      const normalizedName = user.name.trim().toLowerCase();
+      if (!normalizedName || userIdByNormalizedName.has(normalizedName)) continue;
+      userIdByNormalizedName.set(normalizedName, user.id);
+    }
+
+    const adminIds = admins.map((admin) => admin.id);
+    const expectedSourceKeys = new Set<string>();
+
+    for (const proposal of Array.from(latestProposalByBaseCode.values())) {
+      if (!proposal.dueDate) continue;
+      const normalizedStatus = String(proposal.status ?? '').trim().toLowerCase();
+      if (!activeStatuses.has(normalizedStatus)) continue;
+
+      const daysUntilDue = this.getDaysUntilDue(proposal.dueDate, today);
+      if (daysUntilDue < 0 || daysUntilDue > 30) continue;
+
+      const recipientIds = new Set<string>(adminIds);
+      if (proposal.coordinatorId) {
+        recipientIds.add(proposal.coordinatorId);
+      } else if (proposal.coordinatorName?.trim()) {
+        const matchedByName = userIdByNormalizedName.get(proposal.coordinatorName.trim().toLowerCase());
+        if (matchedByName) {
+          recipientIds.add(matchedByName);
+        }
+      }
+
+      if (recipientIds.size === 0) continue;
+
+      const content = this.buildProposalDueNotificationContent(proposal, daysUntilDue);
+      const dueDateText = this.startOfUtcDay(proposal.dueDate).toISOString().slice(0, 10);
+
+      for (const recipientId of Array.from(recipientIds)) {
+        const sourceKey = this.getNotificationSourceKey(proposal, recipientId);
+        expectedSourceKeys.add(sourceKey);
+
+        await prisma.notification.upsert({
+          where: { sourceKey },
+          create: {
+            userId: recipientId,
+            type: 'proposal_due_soon',
+            title: content.title,
+            message: content.message,
+            link: content.link,
+            sourceKey,
+            metadata: {
+              proposalId: proposal.id,
+              code: proposal.code,
+              revision: proposal.revision,
+              dueDate: dueDateText,
+              daysUntilDue,
+              coordinatorId: proposal.coordinatorId,
+              coordinatorName: proposal.coordinatorName,
+            },
+            isActive: true,
+          },
+          update: {
+            title: content.title,
+            message: content.message,
+            link: content.link,
+            metadata: {
+              proposalId: proposal.id,
+              code: proposal.code,
+              revision: proposal.revision,
+              dueDate: dueDateText,
+              daysUntilDue,
+              coordinatorId: proposal.coordinatorId,
+              coordinatorName: proposal.coordinatorName,
+            },
+            isActive: true,
+          },
+        });
+      }
+    }
+
+    const activeDueNotifications = await prisma.notification.findMany({
+      where: { type: 'proposal_due_soon', isActive: true },
+      select: { id: true, sourceKey: true },
+    });
+
+    const staleNotificationIds = activeDueNotifications
+      .filter((notification) => !expectedSourceKeys.has(notification.sourceKey))
+      .map((notification) => notification.id);
+
+    if (staleNotificationIds.length > 0) {
+      await prisma.notification.updateMany({
+        where: { id: { in: staleNotificationIds } },
+        data: { isActive: false },
+      });
+    }
+  }
+
+  async getUserNotifications(
+    userId: string,
+    options?: { limit?: number; cursor?: string; unreadOnly?: boolean }
+  ): Promise<UserNotificationListResult> {
+    const limit = Math.min(Math.max(options?.limit ?? 12, 1), 50);
+    const where: Prisma.NotificationWhereInput = {
+      userId,
+      isActive: true,
+      ...(options?.unreadOnly ? { readAt: null } : {}),
+    };
+
+    const [items, unreadCount] = await Promise.all([
+      prisma.notification.findMany({
+        where,
+        orderBy: [{ readAt: 'asc' }, { updatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
+        ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+      }),
+      prisma.notification.count({
+        where: {
+          userId,
+          isActive: true,
+          readAt: null,
+        },
+      }),
+    ]);
+
+    const hasMore = items.length > limit;
+    const sliced = hasMore ? items.slice(0, limit) : items;
+    const nextCursor = hasMore ? sliced[sliced.length - 1]?.id ?? null : null;
+
+    return {
+      items: sliced,
+      nextCursor,
+      unreadCount,
+    };
+  }
+
+  async markNotificationRead(userId: string, notificationId: string): Promise<Notification | null> {
+    const existing = await prisma.notification.findFirst({
+      where: { id: notificationId, userId, isActive: true },
+    });
+    if (!existing) return null;
+    if (existing.readAt) return existing;
+
+    return prisma.notification.update({
+      where: { id: notificationId },
+      data: { readAt: new Date() },
+    });
+  }
+
+  async markAllNotificationsRead(userId: string): Promise<{ updatedCount: number }> {
+    const result = await prisma.notification.updateMany({
+      where: {
+        userId,
+        isActive: true,
+        readAt: null,
+      },
+      data: { readAt: new Date() },
+    });
+
+    return { updatedCount: result.count };
+  }
+
   async getAllClients(): Promise<Client[]> {
     return prisma.client.findMany();
   }
@@ -438,8 +708,25 @@ export class PrismaStorage implements IStorage {
         categoryValues: true,
       },
     });
+
+    const coordinatorIds = Array.from(new Set(
+      proposals
+        .map((proposal) => proposal.coordinatorId)
+        .filter((coordinatorId): coordinatorId is string => Boolean(coordinatorId))
+    ));
+
+    const users = coordinatorIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: coordinatorIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+
+    const userNameById = new Map(users.map((user) => [user.id, user.name] as const));
+
     return proposals.map(p => ({
       ...p,
+      coordinatorName: p.coordinatorId ? userNameById.get(p.coordinatorId) ?? p.coordinatorName : p.coordinatorName,
       categoryValuesTotal: p.categoryValues?.reduce((sum, cv) => {
         const value = Number((cv as any).value) || 0;
         const hours = Number((cv as any).hours) || 0;
@@ -449,7 +736,22 @@ export class PrismaStorage implements IStorage {
   }
 
   async getProposal(id: string): Promise<Proposal | null> {
-    return prisma.proposal.findUnique({ where: { id } });
+    const proposal = await prisma.proposal.findUnique({ where: { id } });
+    if (!proposal) return null;
+
+    if (!proposal.coordinatorId) {
+      return proposal;
+    }
+
+    const coordinator = await prisma.user.findUnique({
+      where: { id: proposal.coordinatorId },
+      select: { name: true },
+    });
+
+    return {
+      ...proposal,
+      coordinatorName: coordinator?.name ?? proposal.coordinatorName,
+    };
   }
 
   async getLatestProposalByCode(code: string): Promise<Proposal | null> {
@@ -933,13 +1235,26 @@ export class PrismaStorage implements IStorage {
         entryDate: new Date(insertEntry.entryDate as any),
         hours: insertEntry.hours,
         description: insertEntry.description,
+        ...(insertEntry.attachments !== undefined
+          ? { attachments: insertEntry.attachments as Prisma.InputJsonValue }
+          : {}),
         status: TimeEntryStatus.PENDING,
       }
     });
   }
 
   async updateTimeEntry(id: string, updates: Partial<TimeEntry>): Promise<TimeEntry | null> {
-    return prisma.timeEntry.update({ where: { id }, data: updates });
+    const { id: _ignoredId, attachments, ...rest } = updates as Partial<TimeEntry> & { attachments?: Prisma.JsonValue | null };
+
+    return prisma.timeEntry.update({
+      where: { id },
+      data: {
+        ...rest,
+        ...(attachments !== undefined
+          ? { attachments: attachments === null ? Prisma.JsonNull : (attachments as Prisma.InputJsonValue) }
+          : {}),
+      },
+    });
   }
 
   async deleteTimeEntry(id: string): Promise<boolean> {

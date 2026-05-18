@@ -144,6 +144,41 @@ function parseValuesSection(valuesSection: string): ParsedValue[][] {
   return rows;
 }
 
+function extractInsertBlocks(sqlContent: string, tableName: string): Array<{ columns: string; values: string }> {
+  const blocks: Array<{ columns: string; values: string }> = [];
+  const tablePattern = new RegExp(`\\bN?INSERT\\s+INTO\\s+` + '`?' + `${tableName}` + '`?' + `\\s*\\(([^)]*)\\)\\s*VALUES\\s*`, 'gi');
+
+  let match: RegExpExecArray | null;
+  while ((match = tablePattern.exec(sqlContent)) !== null) {
+    const rawColumns = match[1] ?? '';
+    let index = tablePattern.lastIndex;
+    let inString = false;
+    let prev = '';
+
+    while (index < sqlContent.length) {
+      const char = sqlContent[index];
+
+      if (char === "'" && prev !== '\\') {
+        inString = !inString;
+      }
+
+      if (!inString && char === ';') {
+        blocks.push({
+          columns: rawColumns,
+          values: sqlContent.slice(tablePattern.lastIndex, index),
+        });
+        tablePattern.lastIndex = index + 1;
+        break;
+      }
+
+      prev = char;
+      index++;
+    }
+  }
+
+  return blocks;
+}
+
 function mapRow(columns: string[], values: ParsedValue[]): Record<string, string | null> {
   const row: Record<string, string | null> = {};
   for (let index = 0; index < columns.length; index++) {
@@ -153,16 +188,15 @@ function mapRow(columns: string[], values: ParsedValue[]): Record<string, string
 }
 
 function extractLegacyClients(sqlContent: string): LegacyClientRow[] {
-  const inserts = [...sqlContent.matchAll(/\bN?INSERT\s+INTO\s+`?Cliente`?\s*\(([^)]*)\)\s*VALUES\s*([\s\S]*?);/gi)];
   const clients: LegacyClientRow[] = [];
 
-  for (const match of inserts) {
-    const columns = (match[1] ?? '')
+  for (const block of extractInsertBlocks(sqlContent, 'Cliente')) {
+    const columns = (block.columns ?? '')
       .split(',')
       .map((column) => column.replace(/`/g, '').trim())
       .filter(Boolean);
 
-    const parsedRows = parseValuesSection(match[2] ?? '');
+    const parsedRows = parseValuesSection(block.values ?? '');
     for (const parsed of parsedRows) {
       const row = mapRow(columns, parsed);
       clients.push({
@@ -177,16 +211,15 @@ function extractLegacyClients(sqlContent: string): LegacyClientRow[] {
 }
 
 function extractLegacyProposals(sqlContent: string): LegacyProposalRow[] {
-  const inserts = [...sqlContent.matchAll(/\bN?INSERT\s+INTO\s+`?Proposta`?\s*\(([^)]*)\)\s*VALUES\s*([\s\S]*?);/gi)];
   const proposals: LegacyProposalRow[] = [];
 
-  for (const match of inserts) {
-    const columns = (match[1] ?? '')
+  for (const block of extractInsertBlocks(sqlContent, 'Proposta')) {
+    const columns = (block.columns ?? '')
       .split(',')
       .map((column) => column.replace(/`/g, '').trim())
       .filter(Boolean);
 
-    const parsedRows = parseValuesSection(match[2] ?? '');
+    const parsedRows = parseValuesSection(block.values ?? '');
     for (const parsed of parsedRows) {
       const row = mapRow(columns, parsed);
       proposals.push({
@@ -255,6 +288,7 @@ async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
   const replaceAll = args.includes('--replace-all');
+  const strict = args.includes('--strict');
   const fileArg = args.find((arg) => !arg.startsWith('--'));
 
   const resolvedPath = fileArg
@@ -389,8 +423,25 @@ async function main() {
     return acc;
   }, {});
 
+  const totalSkipped =
+    skippedMissingCodeOrTitle +
+    skippedMissingLegacyClient +
+    skippedMissingClientInPostgres;
+
+  if (strict && totalSkipped > 0) {
+    throw new Error(
+      [
+        'Modo estrito violado na importacao de propostas.',
+        `skippedMissingCodeOrTitle=${skippedMissingCodeOrTitle}`,
+        `skippedMissingLegacyClient=${skippedMissingLegacyClient}`,
+        `skippedMissingClientInPostgres=${skippedMissingClientInPostgres}`,
+      ].join(' '),
+    );
+  }
+
   console.log('Resumo da importação direta de propostas legadas:');
   console.log(`- dryRun: ${dryRun}`);
+  console.log(`- strict: ${strict}`);
   console.log(`- created: ${created}`);
   console.log(`- updated: ${updated}`);
   console.log(`- skippedMissingCodeOrTitle: ${skippedMissingCodeOrTitle}`);
