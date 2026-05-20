@@ -900,6 +900,8 @@ export default function Proposals() {
 
   const isCreateValid = Object.keys(createValidationErrors).length === 0;
 
+  const isCreateFieldInvalid = (field: CreateFormField) =>
+    Boolean(createValidationErrors[field]);
   const shouldShowCreateError = (field: CreateFormField) =>
     createAttemptedSubmit && Boolean(createValidationErrors[field]);
   const [editFormData, setEditFormData] = useState({
@@ -1592,11 +1594,11 @@ export default function Proposals() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<Proposal> }) => proposalsApi.update(id, data),
-    onSuccess: () => {
+    onSuccess: (updatedProposal) => {
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
       toast({ title: 'Proposta atualizada com sucesso', variant: 'success' });
       setEditDialogOpen(false);
-      setSelectedProposal(null);
+      setSelectedProposal(updatedProposal);
     },
     onError: (error) => {
       toast({ title: 'Erro ao atualizar proposta', description: error.message, variant: 'destructive' });
@@ -2271,7 +2273,10 @@ export default function Proposals() {
                       value={formData.type}
                       onValueChange={(value) => setFormData({ ...formData, type: value, umbrellaRef: value === 'service_order' ? formData.umbrellaRef : '' })}
                     >
-                      <SelectTrigger data-testid="select-proposal-type">
+                      <SelectTrigger
+                        data-testid="select-proposal-type"
+                        className={isCreateFieldInvalid('type') ? 'border-destructive' : ''}
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -2293,7 +2298,7 @@ export default function Proposals() {
                     >
                       <SelectTrigger
                         data-testid="select-proposal-umbrella"
-                        className={shouldShowCreateError('umbrellaRef') ? 'border-destructive' : ''}
+                        className={isCreateFieldInvalid('umbrellaRef') ? 'border-destructive' : ''}
                       >
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
@@ -2323,7 +2328,7 @@ export default function Proposals() {
                     >
                       <SelectTrigger
                         data-testid="select-proposal-client"
-                        className={shouldShowCreateError('clientId') ? 'border-destructive' : ''}
+                        className={isCreateFieldInvalid('clientId') ? 'border-destructive' : ''}
                       >
                         <SelectValue placeholder="Selecione um cliente" />
                       </SelectTrigger>
@@ -2347,7 +2352,7 @@ export default function Proposals() {
                     >
                       <SelectTrigger
                         data-testid="select-proposal-responsible"
-                        className={shouldShowCreateError('coordinatorName') ? 'border-destructive' : ''}
+                        className={isCreateFieldInvalid('coordinatorName') ? 'border-destructive' : ''}
                       >
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
@@ -2374,7 +2379,7 @@ export default function Proposals() {
                       value={formData.title}
                       onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                       required
-                      className={shouldShowCreateError('title') ? 'border-destructive' : ''}
+                      className={isCreateFieldInvalid('title') ? 'border-destructive' : ''}
                     />
                     {shouldShowCreateError('title') && (
                       <p className="text-xs text-destructive">{createValidationErrors.title}</p>
@@ -2499,7 +2504,7 @@ export default function Proposals() {
                     >
                       <SelectTrigger
                         data-testid="select-proposal-risk"
-                        className={shouldShowCreateError('riskAssessment') ? 'border-destructive' : ''}
+                        className={isCreateFieldInvalid('riskAssessment') ? 'border-destructive' : ''}
                       >
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
@@ -3386,10 +3391,9 @@ export default function Proposals() {
 
                               {isLatestRevision(proposal) && (
                                 (() => {
-                                  const isSuccessStatus = ['com_sucesso', 'sucesso_aditivo', 'approved', 'converted'].includes(proposal.status);
-                                  const deleteDisabled = isSuccessStatus;
+                                  const deleteDisabled = Boolean(proposal.projectId);
                                   const deleteTooltip = deleteDisabled
-                                    ? 'Exclusão não permitida. Existe um ou mais valor por categoria vinculado a este item.'
+                                    ? 'Exclusão não permitida. A proposta já foi convertida em projeto.'
                                     : null;
 
                                   if (deleteDisabled) {
@@ -3682,7 +3686,16 @@ export default function Proposals() {
                       Editar
                     </Button>
                   )}
-                  {['com_sucesso', 'sucesso_aditivo', 'approved'].includes(selectedProposal.status) && (
+                  {selectedProposal.projectId ? (
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      disabled
+                      data-testid="button-converted-from-sheet"
+                    >
+                      Projeto gerado
+                    </Button>
+                  ) : ['com_sucesso', 'sucesso_aditivo', 'approved'].includes(selectedProposal.status) ? (
                     <Button
                       className="flex-1"
                       onClick={() => convertMutation.mutate(selectedProposal.id)}
@@ -3692,7 +3705,7 @@ export default function Proposals() {
                       <ArrowRight className="h-4 w-4 mr-2" />
                       Converter em Projeto
                     </Button>
-                  )}
+                  ) : null}
                 </div>
 
                 <Separator />
@@ -3915,7 +3928,15 @@ export default function Proposals() {
                       Editar
                     </Button>
                   )}
-                  {['com_sucesso', 'sucesso_aditivo', 'approved'].includes(selectedProposal.status) && (
+                  {selectedProposal.projectId ? (
+                    <Button
+                      variant="outline"
+                      disabled
+                      data-testid="button-converted-from-fullscreen"
+                    >
+                      Projeto gerado
+                    </Button>
+                  ) : ['com_sucesso', 'sucesso_aditivo', 'approved'].includes(selectedProposal.status) ? (
                     <Button
                       onClick={() => convertMutation.mutate(selectedProposal.id)}
                       disabled={convertMutation.isPending}
@@ -3924,7 +3945,7 @@ export default function Proposals() {
                       <ArrowRight className="h-4 w-4 mr-2" />
                       Converter em Projeto
                     </Button>
-                  )}
+                  ) : null}
                 </div>
 
                 <Separator />

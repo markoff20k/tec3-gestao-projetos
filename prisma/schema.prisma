@@ -227,12 +227,55 @@ model Project {
   budgetValue      Decimal     @default(0) @map("budget_value") @db.Decimal(12, 2)
   dailyLimitHours  Int         @default(8) @map("daily_limit_hours")
   requiresApproval Boolean     @default(true) @map("requires_approval")
+  setupStatus      String      @default("pending") @map("setup_status")
+  setupCompletedAt DateTime?   @map("setup_completed_at")
+  setupCompletedById String?   @map("setup_completed_by_id")
+  tapStatus        String      @default("not_generated") @map("tap_status")
+  tapGeneratedAt   DateTime?   @map("tap_generated_at")
+  tapSentAt        DateTime?   @map("tap_sent_at")
+  tapLastEmailError String?    @map("tap_last_email_error")
   createdAt        DateTime    @default(now()) @map("created_at")
 
   client           Client      @relation(fields: [clientId], references: [id])
   timeEntries      TimeEntry[]
+  taps             ProjectTap[]
 
   @@map("projects")
+}
+
+model ProjectTap {
+  id            String   @id @default(uuid())
+  projectId     String   @map("project_id")
+  version       Int
+  title         String
+  payload       Json
+  htmlContent   String?  @map("html_content")
+  generatedById String?  @map("generated_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, version])
+  @@index([projectId, createdAt])
+  @@map("project_taps")
+}
+
+model EmailOutbox {
+  id            String   @id @default(uuid())
+  type          String
+  referenceType String?  @map("reference_type")
+  referenceId   String?  @map("reference_id")
+  payload       Json
+  status        String   @default("pending")
+  attemptCount  Int      @default(0) @map("attempt_count")
+  lastError     String?  @map("last_error")
+  sentAt        DateTime? @map("sent_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@index([referenceType, referenceId])
+  @@map("email_outbox")
 }
 
 model TimeEntry {

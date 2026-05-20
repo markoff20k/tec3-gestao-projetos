@@ -155,8 +155,13 @@ export interface UserOption {
   isActive: boolean;
 }
 
+export const usersApi = {
+  list: () => api.get<UserOption[]>('/users'),
+  getAllOptions: () => api.get<UserOption[]>('/users'),
+};
+
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed';
 
 export interface UserActivity {
   id: string;
@@ -255,10 +260,6 @@ export const authApi = {
   getPreferences: () => api.get<UserPreferences>('/auth/preferences'),
   updatePreferences: (data: Partial<UserPreferences>) =>
     api.put<UserPreferences>('/auth/preferences', data),
-};
-
-export const usersApi = {
-  list: () => api.get<UserOption[]>('/users'),
 };
 
 export interface Client {
@@ -419,6 +420,7 @@ export interface Project {
   name: string;
   description?: string;
   clientId: string;
+  coordinatorId?: string | null;
   client?: Client;
   coordinator?: {
     id: string;
@@ -432,6 +434,13 @@ export interface Project {
   budgetValue: number;
   dailyLimitHours?: number;
   requiresApproval?: boolean;
+  setupStatus?: 'pending' | 'in_progress' | 'completed';
+  setupCompletedAt?: string | null;
+  setupCompletedById?: string | null;
+  tapStatus?: 'not_generated' | 'generated' | 'sent' | 'failed';
+  tapGeneratedAt?: string | null;
+  tapSentAt?: string | null;
+  tapLastEmailError?: string | null;
   consumedHours?: number;
   pendingHours?: number;
   timeSummary?: {
@@ -456,6 +465,17 @@ export interface Project {
     rejectedHours: number;
     entriesCount: number;
   }>;
+  createdAt: string;
+}
+
+export interface ProjectTap {
+  id: string;
+  projectId: string;
+  version: number;
+  title: string;
+  payload: any;
+  htmlContent?: string | null;
+  generatedById?: string | null;
   createdAt: string;
 }
 
@@ -601,6 +621,12 @@ export const projectsApi = {
   create: (data: Partial<Project>) => api.post<Project>('/projects', data),
   update: (id: string, data: Partial<Project>) => api.put<Project>(`/projects/${id}`, data),
   delete: (id: string) => api.delete(`/projects/${id}`),
+  getTap: (id: string) => api.get<ProjectTap | null>(`/projects/${id}/tap`),
+  resendTapEmail: (id: string) => api.post<Project>(`/projects/${id}/tap/resend-email`, {}),
+  updateSetup: (id: string, data: { coordinatorId?: string | null; dailyLimitHours?: number; requiresApproval?: boolean }) =>
+    api.put<Project>(`/projects/${id}/setup`, data),
+  completeSetup: (id: string) => api.post<Project>(`/projects/${id}/setup/complete`),
+  activate: (id: string) => api.post<Project>(`/projects/${id}/activate`),
   getStats: (id: string) => api.get<any>(`/projects/${id}/stats`),
   getTimeEntries: (id: string) => api.get<TimeEntry[]>(`/projects/${id}/time-entries`),
   createTimeEntry: (data: Partial<TimeEntry>) => api.post<TimeEntry>('/projects/time-entries', data),

@@ -4,11 +4,12 @@ import { useLocation } from 'wouter';
 import { format, formatDistanceToNowStrict } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Bell, BellRing, CheckCheck, ChevronRight, Loader2 } from 'lucide-react';
-import { authApi, type UserNotification, type UserNotificationsResponse } from '@/lib/api';
+import { authApi, projectsApi, type UserNotification, type UserNotificationsResponse } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent } from '@/components/ui/card';
+import { useToast } from '@/hooks/use-toast';
 import {
   Sheet,
   SheetContent,
@@ -57,6 +58,7 @@ export function NotificationBell() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const { toast } = useToast();
 
   const notificationsQuery = useQuery<UserNotificationsResponse>({
     queryKey: ['/api/auth/notifications'],
@@ -76,6 +78,19 @@ export function NotificationBell() {
     mutationFn: () => authApi.markAllNotificationsRead(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/auth/notifications'] });
+    },
+  });
+
+  const resendTapEmailMutation = useMutation({
+    mutationFn: (projectId: string) => projectsApi.resendTapEmail(projectId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/auth/notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      toast({ title: 'E-mail reenviado', description: 'O TAP foi reenviado com sucesso pelo Postmark.' });
+    },
+    onError: (error: any) => {
+      const message = error?.message || 'Não foi possível reenviar o e-mail do TAP.';
+      toast({ title: 'Falha ao reenviar', description: message, variant: 'destructive' });
     },
   });
 
@@ -99,6 +114,21 @@ export function NotificationBell() {
     setOpen(false);
     if (notification.link) {
       setLocation(notification.link);
+    }
+  };
+
+  const isTapEmailFailureNotification = (notification: UserNotification) =>
+    notification.type === 'project_tap_email_failed' &&
+    notification.metadata?.action === 'resend_project_tap_email' &&
+    typeof notification.metadata?.projectId === 'string';
+
+  const handleResendTapEmail = async (notification: UserNotification) => {
+    const projectId = String(notification.metadata?.projectId || '');
+    if (!projectId) return;
+
+    await resendTapEmailMutation.mutateAsync(projectId);
+    if (!notification.isRead) {
+      await markOneMutation.mutateAsync(notification.id);
     }
   };
 
@@ -240,6 +270,21 @@ export function NotificationBell() {
                                   <ChevronRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-slate-400" />
                                 </div>
                                 <div className="mt-4 flex flex-wrap items-center gap-2">
+                                  {isTapEmailFailureNotification(notification) && (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      className="h-8 rounded-full"
+                                      disabled={resendTapEmailMutation.isPending}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleResendTapEmail(notification);
+                                      }}
+                                    >
+                                      {resendTapEmailMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                                      Reenviar e-mail
+                                    </Button>
+                                  )}
                                   {dueBadge && (
                                     <Badge variant="outline" className={dueBadge.className}>
                                       {dueBadge.label}
@@ -286,6 +331,22 @@ export function NotificationBell() {
                                   <ChevronRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-slate-400" />
                                 </div>
                                 <div className="mt-4 flex flex-wrap items-center gap-2">
+                                  {isTapEmailFailureNotification(notification) && (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8 rounded-full bg-white"
+                                      disabled={resendTapEmailMutation.isPending}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleResendTapEmail(notification);
+                                      }}
+                                    >
+                                      {resendTapEmailMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                                      Reenviar e-mail
+                                    </Button>
+                                  )}
                                   {dueBadge && (
                                     <Badge variant="outline" className={dueBadge.className}>
                                       {dueBadge.label}

@@ -1,5 +1,6 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { type Server } from "http";
+import { prisma } from "./db";
 import { storage } from "./storage";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -9,6 +10,31 @@ import path from "path";
 import fs from "fs";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 import { authenticateViaLdap, listAdDirectoryUsers } from "./ldap";
+
+const PROJECT_SETUP_STATUS = {
+  PENDING: 'pending',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
+} as const;
+
+const PROJECT_TAP_STATUS = {
+  NOT_GENERATED: 'not_generated',
+  GENERATED: 'generated',
+  SENT: 'sent',
+  FAILED: 'failed',
+} as const;
+
+const EMAIL_OUTBOX_STATUS = {
+  PENDING: 'pending',
+  SENT: 'sent',
+  FAILED: 'failed',
+} as const;
+
+const PROJECT_READY_TAP_STATUSES = new Set<string>([
+  PROJECT_TAP_STATUS.GENERATED,
+  PROJECT_TAP_STATUS.SENT,
+  PROJECT_TAP_STATUS.FAILED,
+]);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -33,7 +59,7 @@ const JWT_EXPIRES_SECONDS = JWT_EXPIRES_MINUTES * 60;
 
 const ALLOWED_STATUS_TRANSITIONS: Record<string, string[]> = {
   // New (legacy) statuses - aligned with the screenshot
-  em_elaboracao: ['em_analise', 'cancelada'],
+  em_elaboracao: ['em_analise', 'com_sucesso', 'cancelada'],
   em_analise: ['em_elaboracao', 'com_sucesso', 'sucesso_aditivo', 'nao_sucesso', 'cancelada', 'declinio'],
   com_sucesso: [],
   sucesso_aditivo: [],
@@ -42,7 +68,7 @@ const ALLOWED_STATUS_TRANSITIONS: Record<string, string[]> = {
   declinio: ['em_elaboracao'],
 
   // Backward-compatibility for old statuses while deployments/migrations roll out
-  draft: ['em_analise', 'cancelada'],
+  draft: ['em_analise', 'com_sucesso', 'cancelada'],
   in_review: ['em_elaboracao', 'em_analise', 'cancelada'],
   sent: ['em_analise', 'com_sucesso', 'nao_sucesso', 'cancelada'],
   negotiating: ['em_analise', 'com_sucesso', 'nao_sucesso', 'cancelada'],
@@ -313,6 +339,574 @@ async function safeCreateUserActivity(
   }
 }
 
+async function notifyAdminsAboutTapEmailFailure(params: {
+  projectId: string;
+  projectCode: string;
+  projectName: string;
+  tapId: string;
+  errorMessage: string;
+}) {
+  const users = await storage.getAllUsers();
+  const admins = users.filter((user) => user.isActive && String(user.role || '').trim().toLowerCase() === 'admin');
+
+  await Promise.all(
+    admins.map((admin) =>
+      storage.createNotification({
+        userId: admin.id,
+        type: 'project_tap_email_failed',
+        title: `Falha no envio do TAP — ${params.projectCode}`,
+        message: `O e-mail do TAP do projeto ${params.projectCode} não foi enviado pelo Postmark. Clique para reenviar.`,
+        link: `/projects/${params.projectId}`,
+        sourceKey: `project_tap_email_failed:${params.projectId}:${admin.id}`,
+        metadata: {
+          projectId: params.projectId,
+          projectCode: params.projectCode,
+          projectName: params.projectName,
+          tapId: params.tapId,
+          errorMessage: params.errorMessage,
+          action: 'resend_project_tap_email',
+        },
+        isActive: true,
+      })
+    )
+  );
+}
+
+async function clearTapEmailFailureNotifications(projectId: string) {
+  const notifications = await prisma.notification.findMany({
+    where: {
+      type: 'project_tap_email_failed',
+      isActive: true,
+      sourceKey: { startsWith: `project_tap_email_failed:${projectId}:` },
+    },
+    select: { id: true },
+  });
+
+  if (notifications.length === 0) return;
+
+  await prisma.notification.updateMany({
+    where: { id: { in: notifications.map((item) => item.id) } },
+    data: { isActive: false },
+  });
+}
+
+function parseRecipients(raw: string | undefined): string[] {
+  return String(raw || '')
+    .split(/[;,\n]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function buildProjectTapPayload(params: {
+  proposal: any;
+  project: any;
+  client: any;
+}) {
+  const { proposal, project, client } = params;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    proposal: {
+      id: proposal.id,
+      code: proposal.code,
+      revision: proposal.revision ?? 0,
+      title: proposal.title,
+      description: proposal.description ?? null,
+      status: proposal.status,
+      totalValue: Number(proposal.totalValue || 0),
+      estimatedHours: Number(proposal.estimatedHours || 0),
+      expectedStartDate: proposal.expectedStartDate ?? null,
+      expectedEndDate: proposal.expectedEndDate ?? null,
+    },
+    project: {
+      id: project.id,
+      code: project.code,
+      name: project.name,
+      description: project.description ?? null,
+      status: project.status,
+      budgetHours: Number(project.budgetHours || 0),
+      budgetValue: Number(project.budgetValue || 0),
+      dailyLimitHours: Number(project.dailyLimitHours || 0),
+      requiresApproval: Boolean(project.requiresApproval),
+    },
+    client: client
+      ? {
+          id: client.id,
+          razaoSocial: client.razaoSocial,
+          nomeFantasia: client.nomeFantasia ?? null,
+          emailComercial: client.emailComercial ?? null,
+          emailTecnico: client.emailTecnico ?? null,
+        }
+      : null,
+  };
+}
+
+function formatProjectTapEmailCurrency(value: number) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+}
+
+function formatProjectTapEmailDate(value: string | null) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleDateString('pt-BR');
+}
+
+function buildProjectTapTemplateModel(params: {
+  payload: ReturnType<typeof buildProjectTapPayload>;
+  projectUrl: string | null;
+}) {
+  const { payload, projectUrl } = params;
+
+  return {
+    project_code: payload.project.code,
+    project_name: payload.project.name,
+    project_status: payload.project.status,
+    project_budget_hours: `${payload.project.budgetHours} h`,
+    project_budget_value: formatProjectTapEmailCurrency(payload.project.budgetValue),
+    proposal_code: payload.proposal.code,
+    proposal_title: payload.proposal.title,
+    proposal_description: payload.proposal.description || '-',
+    proposal_estimated_hours: `${payload.proposal.estimatedHours} h`,
+    proposal_total_value: formatProjectTapEmailCurrency(payload.proposal.totalValue),
+    proposal_expected_start_date: formatProjectTapEmailDate(payload.proposal.expectedStartDate),
+    proposal_expected_end_date: formatProjectTapEmailDate(payload.proposal.expectedEndDate),
+    client_name: payload.client?.razaoSocial || payload.client?.nomeFantasia || '-',
+    project_url: projectUrl,
+  };
+}
+
+function escapeProjectTapEmailHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatProjectTapEmailRichText(value: string | null | undefined) {
+  return escapeProjectTapEmailHtml(String(value || '-')).replace(/\r?\n/g, '<br />');
+}
+
+function formatProjectTapStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    planning: 'Planejamento',
+    active: 'Em andamento',
+    in_progress: 'Em andamento',
+    on_hold: 'Pausado',
+    completed: 'Concluído',
+    cancelled: 'Cancelado',
+  };
+
+  return labels[value] || value;
+}
+
+const PROJECT_TAP_PUBLIC_LOGO_URL = 'https://www.tec3engenharia.com.br/wp-content/uploads/2025/09/tec3-LogoTagline-Cor.svg';
+
+const PROJECT_TAP_EMBEDDED_LOGO_URL = (() => {
+  try {
+    const logoPath = path.resolve(process.cwd(), 'attached_assets', 'tec3-LogoTagline-Cor-320.png');
+    const logoBuffer = fs.readFileSync(logoPath);
+    return `data:image/png;base64,${logoBuffer.toString('base64')}`;
+  } catch {
+    return PROJECT_TAP_PUBLIC_LOGO_URL;
+  }
+})();
+
+function buildProjectTapEmailLinks(projectId: string) {
+  const baseUrl = String(process.env.APP_BASE_URL || '').trim().replace(/\/$/, '');
+  return {
+    projectUrl: baseUrl ? `${baseUrl}/projects/${projectId}` : null,
+    logoUrl: PROJECT_TAP_EMBEDDED_LOGO_URL,
+  };
+}
+
+function renderProjectTapHtml(
+  payload: ReturnType<typeof buildProjectTapPayload>,
+  options?: { projectUrl?: string | null; logoUrl?: string | null; tapId?: string | null }
+) {
+  const projectCode = escapeProjectTapEmailHtml(payload.project.code);
+  const projectName = escapeProjectTapEmailHtml(payload.project.name);
+  const projectStatus = escapeProjectTapEmailHtml(formatProjectTapStatusLabel(payload.project.status));
+  const projectDescription = formatProjectTapEmailRichText(
+    payload.project.description || payload.proposal.description ||
+      'Projeto estruturado a partir de proposta aprovada, pronto para setup operacional e início da execução.'
+  );
+  const proposalCode = escapeProjectTapEmailHtml(payload.proposal.code);
+  const proposalTitle = escapeProjectTapEmailHtml(payload.proposal.title);
+  const proposalDescription = formatProjectTapEmailRichText(payload.proposal.description || '-');
+  const clientName = escapeProjectTapEmailHtml(payload.client?.razaoSocial || payload.client?.nomeFantasia || '-');
+  const generatedAt = escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.generatedAt));
+  const projectUrl = options?.projectUrl || null;
+  const logoUrl = options?.logoUrl || null;
+  const tapId = escapeProjectTapEmailHtml(options?.tapId || '-');
+
+  const infoCard = (label: string, value: string) => `
+    <td style="padding:0 6px 12px 6px;" valign="top">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#f8fbff;border:1px solid #d7e5f3;border-radius:18px;">
+        <tr>
+          <td style="padding:16px 18px;">
+            <div style="font-size:11px;line-height:1.4;letter-spacing:0.12em;text-transform:uppercase;color:#5b6f82;font-weight:700;">${escapeProjectTapEmailHtml(label)}</div>
+            <div style="padding-top:8px;font-size:17px;line-height:1.45;color:#0f172a;font-weight:700;">${value}</div>
+          </td>
+        </tr>
+      </table>
+    </td>`;
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TAP do Projeto ${projectCode}</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#edf3f8;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:linear-gradient(180deg,#edf3f8 0%,#f8fbfe 100%);">
+      <tr>
+        <td align="center" style="padding:32px 14px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;max-width:760px;">
+            <tr>
+              <td style="padding-bottom:18px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#0d4f89;border-radius:28px 28px 0 0;overflow:hidden;">
+                  <tr>
+                    <td style="padding:28px 30px 18px 30px;background:linear-gradient(135deg,#0b4b82 0%,#1566aa 55%,#2f88cd 100%);">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                        <tr>
+                          <td valign="top" style="padding-right:16px;">
+                            ${logoUrl ? `<img src="${escapeProjectTapEmailHtml(logoUrl)}" alt="Tec3 Engenharia" style="display:block;height:52px;width:auto;border:0;" />` : `<div style="display:inline-block;padding:10px 16px;border-radius:999px;background:rgba(255,255,255,0.14);font-size:15px;font-weight:800;letter-spacing:0.08em;color:#ffffff;">TEC3 ENGENHARIA</div>`}
+                          </td>
+                          <td align="right" valign="top">
+                            <div style="display:inline-block;padding:10px 14px;border-radius:999px;background:rgba(255,255,255,0.14);font-size:11px;line-height:1.2;letter-spacing:0.14em;text-transform:uppercase;color:#d9ebfb;font-weight:700;">Termo de Abertura do Projeto</div>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <div style="padding-top:28px;font-size:13px;line-height:1.4;letter-spacing:0.18em;text-transform:uppercase;color:#cde4f9;font-weight:700;">Projeto aprovado e pronto para onboarding</div>
+                      <div style="padding-top:12px;font-size:34px;line-height:1.16;color:#ffffff;font-weight:800;">${projectCode} · ${projectName}</div>
+                      <div style="padding-top:14px;font-size:16px;line-height:1.7;color:#ecf5fd;max-width:620px;">
+                        A Tec3 Engenharia confirma a geração do TAP deste projeto, consolidando as bases comerciais, operacionais e de planejamento para um início seguro, organizado e com excelente percepção junto ao cliente.
+                      </div>
+
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;padding-top:26px;">
+                        <tr>
+                          ${infoCard('Cliente', clientName)}
+                          ${infoCard('Horas previstas', escapeProjectTapEmailHtml(`${payload.project.budgetHours} h`))}
+                        </tr>
+                        <tr>
+                          ${infoCard('Valor aprovado', escapeProjectTapEmailHtml(formatProjectTapEmailCurrency(payload.project.budgetValue)))}
+                          ${infoCard('Status inicial', projectStatus)}
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#ffffff;border:1px solid #d7e5f3;border-top:0;border-radius:0 0 28px 28px;overflow:hidden;box-shadow:0 24px 60px rgba(15,23,42,0.08);">
+                  <tr>
+                    <td style="padding:28px 30px 12px 30px;">
+                      <div style="font-size:22px;line-height:1.3;color:#0f172a;font-weight:800;">Resumo executivo</div>
+                      <div style="padding-top:12px;font-size:15px;line-height:1.75;color:#475569;">
+                        ${projectDescription}
+                      </div>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="padding:0 24px;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                        <tr>
+                          <td style="padding:6px;" width="50%" valign="top">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#f8fbff;border:1px solid #d7e5f3;border-radius:20px;">
+                              <tr>
+                                <td style="padding:20px;">
+                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.12em;text-transform:uppercase;color:#0d4f89;font-weight:800;">Base comercial</div>
+                                  <div style="padding-top:14px;font-size:13px;line-height:1.5;color:#5b6f82;font-weight:700;">Proposta de origem</div>
+                                  <div style="padding-top:4px;font-size:18px;line-height:1.45;color:#0f172a;font-weight:800;">${proposalCode}</div>
+                                  <div style="padding-top:14px;font-size:13px;line-height:1.5;color:#5b6f82;font-weight:700;">Título</div>
+                                  <div style="padding-top:4px;font-size:15px;line-height:1.6;color:#0f172a;font-weight:700;">${proposalTitle}</div>
+                                  <div style="padding-top:14px;font-size:13px;line-height:1.5;color:#5b6f82;font-weight:700;">Descrição</div>
+                                  <div style="padding-top:4px;font-size:14px;line-height:1.7;color:#475569;">${proposalDescription}</div>
+                                </td>
+                              </tr>
+                            </table>
+                          </td>
+                          <td style="padding:6px;" width="50%" valign="top">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#0f172a;border-radius:20px;">
+                              <tr>
+                                <td style="padding:20px;">
+                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.12em;text-transform:uppercase;color:#7dd3fc;font-weight:800;">Próximos passos</div>
+                                  <div style="padding-top:14px;font-size:14px;line-height:1.8;color:#dbeafe;">
+                                    1. Validar o setup operacional do projeto.<br />
+                                    2. Confirmar responsáveis, limites de horas e regras de aprovação.<br />
+                                    3. Iniciar a execução com rastreabilidade e governança desde o primeiro dia.
+                                  </div>
+                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-top:20px;">
+                                    <tr>
+                                      <td style="padding:12px 0;border-top:1px solid rgba(255,255,255,0.12);font-size:12px;line-height:1.5;color:#93c5fd;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">TAP ID</td>
+                                    </tr>
+                                    <tr>
+                                      <td style="padding:0 0 10px 0;font-size:15px;line-height:1.6;color:#ffffff;font-weight:700;">${tapId}</td>
+                                    </tr>
+                                    <tr>
+                                      <td style="padding:12px 0 0 0;border-top:1px solid rgba(255,255,255,0.12);font-size:12px;line-height:1.5;color:#93c5fd;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">Gerado em</td>
+                                    </tr>
+                                    <tr>
+                                      <td style="padding-top:4px;font-size:15px;line-height:1.6;color:#ffffff;font-weight:700;">${generatedAt}</td>
+                                    </tr>
+                                  </table>
+                                </td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="padding:18px 30px 8px 30px;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#f5f9fd;border:1px solid #d7e5f3;border-radius:22px;">
+                        <tr>
+                          <td style="padding:22px 24px;">
+                            <div style="font-size:20px;line-height:1.3;color:#0f172a;font-weight:800;">Linha de base do projeto</div>
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-top:16px;">
+                              <tr>
+                                <td style="padding:0 12px 14px 0;" width="50%" valign="top">
+                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Início previsto</div>
+                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.proposal.expectedStartDate))}</div>
+                                </td>
+                                <td style="padding:0 0 14px 12px;" width="50%" valign="top">
+                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Término previsto</div>
+                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.proposal.expectedEndDate))}</div>
+                                </td>
+                              </tr>
+                              <tr>
+                                <td style="padding:0 12px 0 0;" width="50%" valign="top">
+                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Horas estimadas na proposta</div>
+                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(`${payload.proposal.estimatedHours} h`)}</div>
+                                </td>
+                                <td style="padding:0 0 0 12px;" width="50%" valign="top">
+                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Valor total da proposta</div>
+                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(formatProjectTapEmailCurrency(payload.proposal.totalValue))}</div>
+                                </td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  ${projectUrl ? `<tr>
+                    <td style="padding:16px 30px 8px 30px;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                        <tr>
+                          <td align="center" style="padding:10px 0 0 0;">
+                            <a href="${escapeProjectTapEmailHtml(projectUrl)}" style="display:inline-block;padding:15px 26px;border-radius:999px;background:#0d4f89;color:#ffffff;font-size:14px;font-weight:800;line-height:1.2;text-decoration:none;letter-spacing:0.04em;">Abrir projeto no sistema</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>` : ''}
+
+                  <tr>
+                    <td style="padding:26px 30px 30px 30px;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border-top:1px solid #d7e5f3;">
+                        <tr>
+                          <td style="padding-top:18px;font-size:12px;line-height:1.7;color:#64748b;">
+                            Este e-mail foi gerado automaticamente pela Tec3 Engenharia para formalizar a abertura do projeto e apoiar um onboarding organizado, profissional e transparente.
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+async function sendProjectTapEmail(params: {
+  payload: ReturnType<typeof buildProjectTapPayload>;
+  tapId: string;
+}) {
+  const serverToken = String(process.env.POSTMARK_SERVER_TOKEN || '').trim();
+  const fromEmail = String(process.env.POSTMARK_FROM_EMAIL || '').trim();
+  const recipients = parseRecipients(process.env.PROJECT_TAP_NOTIFICATION_TO);
+  const ccRecipients = parseRecipients(process.env.PROJECT_TAP_NOTIFICATION_CC);
+  const templateAlias = String(process.env.POSTMARK_PROJECT_TAP_TEMPLATE_ALIAS || 'project-tap-generated').trim();
+
+  if (!serverToken || !fromEmail || recipients.length === 0) {
+    return { ok: false, reason: 'postmark_not_configured' as const };
+  }
+
+  const { projectUrl, logoUrl } = buildProjectTapEmailLinks(params.payload.project.id);
+  const subject = `TAP do Projeto ${params.payload.project.code} · ${params.payload.project.name}`;
+  const textBody = [
+    `O Termo de Abertura do Projeto ${params.payload.project.code} foi gerado com sucesso.`,
+    '',
+    `Projeto: ${params.payload.project.name}`,
+    `Cliente: ${params.payload.client?.razaoSocial || params.payload.client?.nomeFantasia || '-'}`,
+    `Proposta de origem: ${params.payload.proposal.code}`,
+    `Horas previstas: ${params.payload.project.budgetHours} h`,
+    `Valor aprovado: ${formatProjectTapEmailCurrency(params.payload.project.budgetValue)}`,
+    `Status inicial: ${formatProjectTapStatusLabel(params.payload.project.status)}`,
+    `Identificador do TAP: ${params.tapId}`,
+    projectUrl ? `Acesse o projeto: ${projectUrl}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const htmlBody = renderProjectTapHtml(params.payload, {
+    projectUrl,
+    logoUrl,
+    tapId: params.tapId,
+  });
+  const templateModel = {
+    ...buildProjectTapTemplateModel({
+      payload: params.payload,
+      projectUrl,
+    }),
+    tap_id: params.tapId,
+  };
+
+  const postmarkHeaders = {
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+    'X-Postmark-Server-Token': serverToken,
+  };
+
+  const response = await fetch('https://api.postmarkapp.com/email/withTemplate', {
+    method: 'POST',
+    headers: postmarkHeaders,
+    body: JSON.stringify({
+      From: fromEmail,
+      To: recipients.join(','),
+      Cc: ccRecipients.length ? ccRecipients.join(',') : undefined,
+      TemplateAlias: templateAlias,
+      TemplateModel: templateModel,
+      MessageStream: 'outbound',
+    }),
+  });
+
+  if (response.ok) {
+    return { ok: true as const };
+  }
+
+  const templateErrorBody = await response.text();
+  const shouldFallbackToHtml = response.status === 422 && templateErrorBody.includes('"ErrorCode":1101');
+  if (!shouldFallbackToHtml) {
+    throw new Error(templateErrorBody || `Postmark returned ${response.status}`);
+  }
+
+  const standardResponse = await fetch('https://api.postmarkapp.com/email', {
+    method: 'POST',
+    headers: postmarkHeaders,
+    body: JSON.stringify({
+      From: fromEmail,
+      To: recipients.join(','),
+      Cc: ccRecipients.length ? ccRecipients.join(',') : undefined,
+      Subject: subject,
+      TextBody: textBody,
+      HtmlBody: htmlBody,
+      MessageStream: 'outbound',
+    }),
+  });
+
+  if (!standardResponse.ok) {
+    const body = await standardResponse.text();
+    throw new Error(body || `Postmark returned ${standardResponse.status}`);
+  }
+
+  return { ok: true as const };
+}
+
+async function resendProjectTapEmail(params: {
+  projectId: string;
+  actorUserId: string;
+  req: Request;
+}) {
+  const project = await storage.getProject(params.projectId);
+  if (!project) {
+    throw new Error('Projeto nao encontrado');
+  }
+
+  const latestTap = await storage.getLatestProjectTap(project.id);
+  if (!latestTap) {
+    throw new Error('TAP nao encontrada para o projeto');
+  }
+
+  const payload = latestTap.payload as ReturnType<typeof buildProjectTapPayload>;
+  const outbox = await storage.queueEmailOutbox({
+    type: 'project_tap_email',
+    referenceType: 'project',
+    referenceId: project.id,
+    payload: {
+      projectId: project.id,
+      projectCode: project.code,
+      tapId: latestTap.id,
+      retry: true,
+    } as any,
+  });
+
+  try {
+    const emailResult = await sendProjectTapEmail({
+      payload,
+      tapId: latestTap.id,
+    });
+
+    if (emailResult.ok) {
+      await storage.updateProject(project.id, {
+        tapStatus: PROJECT_TAP_STATUS.SENT,
+        tapSentAt: new Date(),
+        tapLastEmailError: null,
+      } as any);
+      await storage.updateEmailOutbox(outbox.id, {
+        status: EMAIL_OUTBOX_STATUS.SENT,
+        attemptCount: 1,
+        sentAt: new Date(),
+        lastError: null,
+      } as any);
+      await clearTapEmailFailureNotifications(project.id);
+      await safeCreateUserActivity(params.req, params.actorUserId, {
+        category: 'system',
+        action: 'PROJECT_TAP_EMAIL_RESENT',
+        title: `TAP reenviado — ${project.code}`,
+        metadata: { projectId: project.id, tapId: latestTap.id },
+      });
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    await storage.updateProject(project.id, {
+      tapStatus: PROJECT_TAP_STATUS.FAILED,
+      tapLastEmailError: errorMessage,
+    } as any);
+    await storage.updateEmailOutbox(outbox.id, {
+      status: EMAIL_OUTBOX_STATUS.FAILED,
+      attemptCount: 1,
+      lastError: errorMessage,
+    } as any);
+    await notifyAdminsAboutTapEmailFailure({
+      projectId: project.id,
+      projectCode: project.code,
+      projectName: project.name,
+      tapId: latestTap.id,
+      errorMessage,
+    });
+    throw error;
+  }
+
+  return storage.getProject(project.id);
+}
+
 async function authenticateToken(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -354,6 +948,152 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  const conversionAllowedStatuses = new Set<string>([
+    'com_sucesso',
+    'sucesso_aditivo',
+    'approved',
+  ]);
+
+  const autoConvertStatuses = new Set<string>([
+    'com_sucesso',
+    'approved',
+  ]);
+
+  const convertProposalToProject = async (params: {
+    proposal: any;
+    projectName?: string | null;
+    startDate?: string | null;
+    actorUserId?: string | null;
+    req: Request;
+  }) => {
+    const { proposal, projectName, startDate, actorUserId, req } = params;
+
+    if (proposal.projectId) {
+      throw new Error('Proposta ja convertida em projeto');
+    }
+
+    if (!conversionAllowedStatuses.has(proposal.status)) {
+      throw new Error('Apenas propostas com sucesso podem ser convertidas');
+    }
+
+    const project = await storage.createProject({
+      name: projectName || proposal.title,
+      description: proposal.description,
+      clientId: proposal.clientId,
+      coordinatorId: proposal.coordinatorId,
+      startDate: startDate || proposal.expectedStartDate,
+      endDate: proposal.expectedEndDate,
+      budgetHours: proposal.estimatedHours,
+      budgetValue: proposal.totalValue,
+    });
+
+    const client = await storage.getClient(proposal.clientId);
+    const tapPayload = buildProjectTapPayload({ proposal, project, client });
+    const tapLinks = buildProjectTapEmailLinks(project.id);
+    const tap = await storage.createProjectTap({
+      projectId: project.id,
+      title: `TAP ${project.code}`,
+      payload: tapPayload as any,
+      htmlContent: renderProjectTapHtml(tapPayload, {
+        projectUrl: tapLinks.projectUrl,
+        logoUrl: tapLinks.logoUrl,
+      }),
+      generatedById: actorUserId ?? null,
+    });
+
+    await storage.updateProject(project.id, {
+      tapStatus: PROJECT_TAP_STATUS.GENERATED,
+      tapGeneratedAt: new Date(),
+      tapLastEmailError: null,
+      setupStatus: PROJECT_SETUP_STATUS.PENDING,
+    } as any);
+
+    const outbox = await storage.queueEmailOutbox({
+      type: 'project_tap_generated',
+      referenceType: 'project',
+      referenceId: project.id,
+      payload: {
+        projectId: project.id,
+        projectCode: project.code,
+        proposalId: proposal.id,
+        proposalCode: proposal.code,
+        tapId: tap.id,
+      } as any,
+    });
+
+    try {
+      const emailResult = await sendProjectTapEmail({
+        payload: tapPayload,
+        tapId: tap.id,
+      });
+
+      if (emailResult.ok) {
+        await storage.updateProject(project.id, {
+          tapStatus: PROJECT_TAP_STATUS.SENT,
+          tapSentAt: new Date(),
+          tapLastEmailError: null,
+        } as any);
+        await storage.updateEmailOutbox(outbox.id, {
+          status: EMAIL_OUTBOX_STATUS.SENT,
+          attemptCount: 1,
+          sentAt: new Date(),
+          lastError: null,
+        } as any);
+        await clearTapEmailFailureNotifications(project.id);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await storage.updateProject(project.id, {
+        tapStatus: PROJECT_TAP_STATUS.FAILED,
+        tapLastEmailError: errorMessage,
+      } as any);
+      await storage.updateEmailOutbox(outbox.id, {
+        status: EMAIL_OUTBOX_STATUS.FAILED,
+        attemptCount: 1,
+        lastError: errorMessage,
+      } as any);
+      await notifyAdminsAboutTapEmailFailure({
+        projectId: project.id,
+        projectCode: project.code,
+        projectName: project.name,
+        tapId: tap.id,
+        errorMessage,
+      });
+    }
+
+    await storage.updateProposal(proposal.id, {
+      ...(proposal.status === 'approved' ? { status: 'com_sucesso' } : {}),
+      projectId: project.id,
+    });
+
+    if (typeof actorUserId === 'string') {
+      await safeCreateUserActivity(req, actorUserId, {
+        category: 'system',
+        action: 'PROPOSAL_CONVERTED',
+        title: `Proposta convertida em projeto — ${proposal.code}`,
+        metadata: {
+          proposalId: proposal.id,
+          code: proposal.code,
+          revision: (proposal as any).revision ?? null,
+          projectId: project.id,
+          projectCode: (project as any).code ?? null,
+        },
+      });
+
+      await safeCreateUserActivity(req, actorUserId, {
+        category: 'system',
+        action: 'PROJECT_TAP_GENERATED',
+        title: `TAP gerado — ${project.code}`,
+        metadata: {
+          projectId: project.id,
+          proposalId: proposal.id,
+          tapId: tap.id,
+        },
+      });
+    }
+
+    return project;
+  };
 
   app.post('/api/auth/login', async (req, res) => {
     try {
@@ -1162,6 +1902,17 @@ export async function registerRoutes(
       }
 
       const proposal = await storage.updateProposal(req.params.id, req.body);
+      const proposalStatus = typeof (proposal as any)?.status === 'string' ? (proposal as any).status : existing.status;
+
+      if (proposal && !proposal.projectId && autoConvertStatuses.has(proposalStatus)) {
+        await convertProposalToProject({
+          proposal,
+          actorUserId: typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null,
+          req,
+        });
+      }
+
+      const responseProposal = await storage.getProposal(req.params.id);
 
       const userId = (req as any).user?.sub;
       if (typeof userId === 'string') {
@@ -1187,7 +1938,7 @@ export async function registerRoutes(
         });
       }
 
-      res.json(proposal);
+      res.json(responseProposal || proposal);
     } catch (error: any) {
       console.error('Error updating proposal:', error);
       const message = typeof error?.message === 'string' ? error.message : 'Erro ao atualizar proposta';
@@ -1249,9 +2000,9 @@ export async function registerRoutes(
         return res.status(400).json({ message: 'Somente a ultima revisao de uma proposta pode ser excluida' });
       }
 
-      if (['com_sucesso', 'sucesso_aditivo', 'approved', 'converted'].includes(existing.status)) {
+      if (existing.projectId) {
         return res.status(400).json({
-          message: 'Exclusão não permitida. Existe um ou mais valor por categoria vinculado a este item.',
+          message: 'Exclusão não permitida. A proposta já foi convertida em projeto.',
         });
       }
 
@@ -1294,49 +2045,17 @@ export async function registerRoutes(
       return res.status(400).json({ message: 'Proposta ja convertida em projeto' });
     }
 
-    const allowedStatuses = new Set<string>([
-      'com_sucesso',
-      'sucesso_aditivo',
-
-      // Backward compatibility
-      'approved',
-    ]);
-
-    if (!allowedStatuses.has(proposal.status)) {
+    if (!conversionAllowedStatuses.has(proposal.status)) {
       return res.status(400).json({ message: 'Apenas propostas com sucesso podem ser convertidas' });
     }
 
-    const project = await storage.createProject({
-      name: projectName || proposal.title,
-      description: proposal.description,
-      clientId: proposal.clientId,
-      coordinatorId: proposal.coordinatorId,
-      startDate: startDate || proposal.expectedStartDate,
-      endDate: proposal.expectedEndDate,
-      budgetHours: proposal.estimatedHours,
-      budgetValue: proposal.totalValue,
+    const project = await convertProposalToProject({
+      proposal,
+      projectName,
+      startDate,
+      actorUserId: typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null,
+      req,
     });
-
-    await storage.updateProposal(proposalId, {
-      ...(proposal.status === 'approved' ? { status: 'com_sucesso' } : {}),
-      projectId: project.id,
-    });
-
-    const userId = (req as any).user?.sub;
-    if (typeof userId === 'string') {
-      await safeCreateUserActivity(req, userId, {
-        category: 'system',
-        action: 'PROPOSAL_CONVERTED',
-        title: `Proposta convertida em projeto — ${proposal.code}`,
-        metadata: {
-          proposalId: proposal.id,
-          code: proposal.code,
-          revision: (proposal as any).revision ?? null,
-          projectId: project.id,
-          projectCode: (project as any).code ?? null,
-        },
-      });
-    }
 
     res.status(201).json(project);
   });
@@ -1491,9 +2210,103 @@ export async function registerRoutes(
     });
   });
 
+  app.get('/api/projects/:id/tap', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const tap = await storage.getLatestProjectTap(project.id);
+    res.json(tap);
+  });
+
+  app.post('/api/projects/:id/tap/resend-email', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const requester = (req as any).user as TokenPayload | undefined;
+    if (!requester?.sub) {
+      return res.status(401).json({ message: 'Usuário não autenticado' });
+    }
+
+    try {
+      const project = await resendProjectTapEmail({
+        projectId: req.params.id,
+        actorUserId: requester.sub,
+        req,
+      });
+
+      if (!project) {
+        return res.status(404).json({ message: 'Projeto nao encontrado' });
+      }
+
+      res.json(project);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao reenviar TAP';
+      res.status(500).json({ message });
+    }
+  });
+
   app.post('/api/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const project = await storage.createProject(req.body);
     res.status(201).json(project);
+  });
+
+  app.put('/api/projects/:id/setup', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const existingProject = await storage.getProject(req.params.id);
+    if (!existingProject) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const updates: Record<string, unknown> = {};
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'coordinatorId')) {
+      const coordinatorId = typeof req.body.coordinatorId === 'string' ? req.body.coordinatorId.trim() : '';
+      if (coordinatorId) {
+        const coordinator = await storage.getUser(coordinatorId);
+        if (!coordinator || !coordinator.isActive) {
+          return res.status(400).json({ message: 'Coordenador inválido' });
+        }
+        updates.coordinatorId = coordinator.id;
+      } else {
+        updates.coordinatorId = null;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'dailyLimitHours')) {
+      const dailyLimitHours = Number.parseInt(String(req.body.dailyLimitHours), 10);
+      if (!Number.isFinite(dailyLimitHours) || dailyLimitHours <= 0) {
+        return res.status(400).json({ message: 'Limite diário inválido' });
+      }
+      updates.dailyLimitHours = dailyLimitHours;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'requiresApproval')) {
+      updates.requiresApproval = Boolean(req.body.requiresApproval);
+    }
+
+    if (existingProject.setupStatus === PROJECT_SETUP_STATUS.PENDING) {
+      updates.setupStatus = PROJECT_SETUP_STATUS.IN_PROGRESS;
+    }
+
+    const project = await storage.updateProject(req.params.id, updates as any);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const userId = (req as any).user?.sub;
+    if (typeof userId === 'string') {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROJECT_SETUP_UPDATED',
+        title: `Setup atualizado — ${project.code}`,
+        metadata: {
+          projectId: project.id,
+          coordinatorId: project.coordinatorId ?? null,
+          dailyLimitHours: project.dailyLimitHours,
+          requiresApproval: project.requiresApproval,
+        },
+      });
+    }
+
+    res.json(project);
   });
 
   app.put('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
@@ -1502,6 +2315,74 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
     res.json(project);
+  });
+
+  app.post('/api/projects/:id/setup/complete', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    if (!project.coordinatorId) {
+      return res.status(400).json({ message: 'Defina o coordenador antes de concluir o setup' });
+    }
+
+    if (!project.dailyLimitHours || project.dailyLimitHours <= 0) {
+      return res.status(400).json({ message: 'Defina um limite diário válido antes de concluir o setup' });
+    }
+
+    if (!PROJECT_READY_TAP_STATUSES.has(String(project.tapStatus || ''))) {
+      return res.status(400).json({ message: 'Gere o TAP antes de concluir o setup' });
+    }
+
+    const userId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    const updatedProject = await storage.updateProject(req.params.id, {
+      setupStatus: PROJECT_SETUP_STATUS.COMPLETED,
+      setupCompletedAt: new Date(),
+      setupCompletedById: userId,
+    } as any);
+
+    if (userId) {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROJECT_SETUP_COMPLETED',
+        title: `Setup concluído — ${project.code}`,
+        metadata: { projectId: project.id },
+      });
+    }
+
+    res.json(updatedProject);
+  });
+
+  app.post('/api/projects/:id/activate', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    if (String(project.setupStatus) !== PROJECT_SETUP_STATUS.COMPLETED) {
+      return res.status(400).json({ message: 'Conclua o setup antes de iniciar o projeto' });
+    }
+
+    if (!PROJECT_READY_TAP_STATUSES.has(String(project.tapStatus || ''))) {
+      return res.status(400).json({ message: 'Projeto sem TAP gerado' });
+    }
+
+    const updatedProject = await storage.updateProject(req.params.id, {
+      status: 'active',
+    } as any);
+
+    const userId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    if (userId) {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROJECT_ACTIVATED',
+        title: `Projeto iniciado — ${project.code}`,
+        metadata: { projectId: project.id },
+      });
+    }
+
+    res.json(updatedProject);
   });
 
   app.delete('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {

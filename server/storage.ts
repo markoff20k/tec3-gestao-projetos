@@ -1,9 +1,10 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
-import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification } from "../generated/prisma/client.ts";import { Prisma } from "../generated/prisma/client.ts";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification, ProjectTap, EmailOutbox } from "../generated/prisma/client.ts";
+import { Prisma } from "../generated/prisma/client.ts";
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed';
 
 export interface CreateUserActivityInput {
   category: UserActivityCategory;
@@ -38,6 +39,26 @@ export const ProjectStatus = {
   CANCELLED: 'cancelled',
 } as const;
 
+export const ProjectSetupStatus = {
+  PENDING: 'pending',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
+} as const;
+
+export const ProjectTapStatus = {
+  NOT_GENERATED: 'not_generated',
+  GENERATED: 'generated',
+  SENT: 'sent',
+  FAILED: 'failed',
+} as const;
+
+export const EmailOutboxStatus = {
+  PENDING: 'pending',
+  PROCESSING: 'processing',
+  SENT: 'sent',
+  FAILED: 'failed',
+} as const;
+
 export const TimeEntryStatus = {
   PENDING: 'pending',
   APPROVED: 'approved',
@@ -51,6 +72,25 @@ export type InsertProject = Omit<Prisma.ProjectCreateInput, 'id' | 'code' | 'cre
 export type InsertTimeEntry = Omit<Prisma.TimeEntryCreateInput, 'id' | 'status' | 'approvedById' | 'approvedAt' | 'rejectionReason' | 'createdAt' | 'project'> & { projectId: string };
 export type InsertProposalCategory = { code?: string; name: string; isActive?: boolean };
 export type InsertProposalCategoryValue = { proposalId: string; categoryId?: string; customName?: string; value: number; hours: number };
+
+export interface CreateProjectTapInput {
+  projectId: string;
+  title: string;
+  payload: Prisma.InputJsonValue;
+  htmlContent?: string | null;
+  generatedById?: string | null;
+}
+
+export interface QueueEmailOutboxInput {
+  type: string;
+  referenceType?: string | null;
+  referenceId?: string | null;
+  payload: Prisma.InputJsonValue;
+  status?: string;
+  attemptCount?: number;
+  lastError?: string | null;
+  sentAt?: Date | null;
+}
 
 export interface IStorage {
   getUser(id: string): Promise<User | null>;
@@ -74,6 +114,16 @@ export interface IStorage {
   ): Promise<UserNotificationListResult>;
   markNotificationRead(userId: string, notificationId: string): Promise<Notification | null>;
   markAllNotificationsRead(userId: string): Promise<{ updatedCount: number }>;
+  createNotification(input: {
+    userId: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+    link?: string | null;
+    sourceKey: string;
+    metadata?: Prisma.InputJsonValue | null;
+    isActive?: boolean;
+  }): Promise<Notification>;
   
   getAllClients(): Promise<Client[]>;
   getClient(id: string): Promise<Client | null>;
@@ -118,6 +168,10 @@ export interface IStorage {
   createProject(project: InsertProject): Promise<Project>;
   updateProject(id: string, project: Partial<Project>): Promise<Project | null>;
   deleteProject(id: string): Promise<boolean>;
+  getLatestProjectTap(projectId: string): Promise<ProjectTap | null>;
+  createProjectTap(input: CreateProjectTapInput): Promise<ProjectTap>;
+  queueEmailOutbox(input: QueueEmailOutboxInput): Promise<EmailOutbox>;
+  updateEmailOutbox(id: string, updates: Partial<EmailOutbox>): Promise<EmailOutbox | null>;
   
   getTimeEntriesByProject(projectId: string): Promise<TimeEntry[]>;
   getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string): Promise<TimeEntry[]>;
@@ -640,6 +694,39 @@ export class PrismaStorage implements IStorage {
     return { updatedCount: result.count };
   }
 
+  async createNotification(input: {
+    userId: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+    link?: string | null;
+    sourceKey: string;
+    metadata?: Prisma.InputJsonValue | null;
+    isActive?: boolean;
+  }): Promise<Notification> {
+    return prisma.notification.upsert({
+      where: { sourceKey: input.sourceKey },
+      create: {
+        userId: input.userId,
+        type: input.type,
+        title: input.title,
+        message: input.message,
+        link: input.link ?? null,
+        sourceKey: input.sourceKey,
+        metadata: input.metadata ?? Prisma.JsonNull,
+        isActive: input.isActive ?? true,
+      },
+      update: {
+        title: input.title,
+        message: input.message,
+        link: input.link ?? null,
+        metadata: input.metadata ?? Prisma.JsonNull,
+        isActive: input.isActive ?? true,
+        readAt: null,
+      },
+    });
+  }
+
   async getAllClients(): Promise<Client[]> {
     return prisma.client.findMany();
   }
@@ -697,9 +784,22 @@ export class PrismaStorage implements IStorage {
 
   private async generateProjectCode(): Promise<string> {
     const year = new Date().getFullYear();
-    const count = await prisma.project.count();
-    const num = String(count + 1).padStart(4, '0');
-    return `PROJ-${year}-${num}`;
+    const yearTwoDigits = String(year).slice(-2);
+    const sameYearCodes = await prisma.project.findMany({
+      where: { code: { startsWith: `T${yearTwoDigits}` } },
+      select: { code: true },
+    });
+
+    const maxSequence = sameYearCodes.reduce((max, row) => {
+      const match = String(row.code).match(new RegExp(`^T${yearTwoDigits}(\\d{3})$`));
+      if (!match) return max;
+      const seq = Number.parseInt(match[1], 10);
+      if (!Number.isFinite(seq)) return max;
+      return Math.max(max, seq);
+    }, 0);
+
+    const nextSequence = String(maxSequence + 1).padStart(3, '0');
+    return `T${yearTwoDigits}${nextSequence}`;
   }
 
   async getAllProposals(): Promise<(Proposal & { categoryValuesTotal?: number })[]> {
@@ -1193,6 +1293,8 @@ export class PrismaStorage implements IStorage {
         budgetValue: insertProject.budgetValue ?? 0,
         dailyLimitHours: insertProject.dailyLimitHours ?? 8,
         requiresApproval: insertProject.requiresApproval ?? true,
+        setupStatus: ProjectSetupStatus.PENDING,
+        tapStatus: ProjectTapStatus.NOT_GENERATED,
       }
     });
   }
@@ -1208,6 +1310,63 @@ export class PrismaStorage implements IStorage {
     } catch {
       return false;
     }
+  }
+
+  async getLatestProjectTap(projectId: string): Promise<ProjectTap | null> {
+    return prisma.projectTap.findFirst({
+      where: { projectId },
+      orderBy: [{ version: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  async createProjectTap(input: CreateProjectTapInput): Promise<ProjectTap> {
+    const latestTap = await prisma.projectTap.findFirst({
+      where: { projectId: input.projectId },
+      orderBy: [{ version: 'desc' }],
+      select: { version: true },
+    });
+
+    return prisma.projectTap.create({
+      data: {
+        projectId: input.projectId,
+        version: (latestTap?.version ?? 0) + 1,
+        title: input.title,
+        payload: input.payload,
+        htmlContent: input.htmlContent ?? null,
+        generatedById: input.generatedById ?? null,
+      },
+    });
+  }
+
+  async queueEmailOutbox(input: QueueEmailOutboxInput): Promise<EmailOutbox> {
+    return prisma.emailOutbox.create({
+      data: {
+        type: input.type,
+        referenceType: input.referenceType ?? null,
+        referenceId: input.referenceId ?? null,
+        payload: input.payload,
+        status: input.status ?? EmailOutboxStatus.PENDING,
+        attemptCount: input.attemptCount ?? 0,
+        lastError: input.lastError ?? null,
+        sentAt: input.sentAt ?? null,
+      },
+    });
+  }
+
+  async updateEmailOutbox(id: string, updates: Partial<EmailOutbox>): Promise<EmailOutbox | null> {
+    const { id: _ignoredId, payload, ...rest } = updates as Partial<EmailOutbox> & {
+      payload?: Prisma.JsonValue | null;
+    };
+
+    return prisma.emailOutbox.update({
+      where: { id },
+      data: {
+        ...rest,
+        ...(payload !== undefined
+          ? { payload: payload === null ? Prisma.JsonNull : (payload as Prisma.InputJsonValue) }
+          : {}),
+      },
+    });
   }
 
   async getTimeEntriesByProject(projectId: string): Promise<TimeEntry[]> {
