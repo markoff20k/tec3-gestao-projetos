@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
-import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification, ProjectTap, EmailOutbox } from "../generated/prisma/client.ts";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification, ProjectTap, EmailOutbox, CostCenter } from "../generated/prisma/client.ts";
 import { Prisma } from "../generated/prisma/client.ts";
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
@@ -69,7 +69,9 @@ export type InsertUser = Omit<Prisma.UserCreateInput, 'id'>;
 export type InsertClient = Omit<Prisma.ClientCreateInput, 'id' | 'proposals' | 'projects'>;
 export type InsertProposal = Omit<Prisma.ProposalCreateInput, 'id' | 'code' | 'client'> & { clientId: string };
 export type InsertProject = Omit<Prisma.ProjectCreateInput, 'id' | 'code' | 'createdAt' | 'client' | 'timeEntries'> & { clientId: string };
-export type InsertTimeEntry = Omit<Prisma.TimeEntryCreateInput, 'id' | 'status' | 'approvedById' | 'approvedAt' | 'rejectionReason' | 'createdAt' | 'project'> & { projectId: string };
+export type InsertTimeEntry = Omit<Prisma.TimeEntryCreateInput, 'id' | 'status' | 'approvedById' | 'approvedAt' | 'rejectionReason' | 'createdAt' | 'project' | 'costCenter'> & { projectId: string; costCenterId?: string | null };
+export type TimeEntryWithCostCenter = TimeEntry & { costCenter: CostCenter | null };
+export type InsertCostCenter = { code: string; name: string; isActive?: boolean };
 export type InsertProposalCategory = { code?: string; name: string; isActive?: boolean };
 export type InsertProposalCategoryValue = { proposalId: string; categoryId?: string; customName?: string; value: number; hours: number };
 
@@ -172,11 +174,17 @@ export interface IStorage {
   createProjectTap(input: CreateProjectTapInput): Promise<ProjectTap>;
   queueEmailOutbox(input: QueueEmailOutboxInput): Promise<EmailOutbox>;
   updateEmailOutbox(id: string, updates: Partial<EmailOutbox>): Promise<EmailOutbox | null>;
+
+  getAllCostCenters(options?: { includeInactive?: boolean }): Promise<CostCenter[]>;
+  getCostCenter(id: string): Promise<CostCenter | null>;
+  createCostCenter(input: InsertCostCenter): Promise<CostCenter>;
+  updateCostCenter(id: string, input: Partial<CostCenter>): Promise<CostCenter | null>;
+  deleteCostCenter(id: string): Promise<boolean>;
   
-  getTimeEntriesByProject(projectId: string): Promise<TimeEntry[]>;
+  getTimeEntriesByProject(projectId: string): Promise<TimeEntryWithCostCenter[]>;
   getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string): Promise<TimeEntry[]>;
   getAllTimeEntries(): Promise<TimeEntry[]>;
-  createTimeEntry(entry: InsertTimeEntry): Promise<TimeEntry>;
+  createTimeEntry(entry: InsertTimeEntry): Promise<TimeEntryWithCostCenter>;
   updateTimeEntry(id: string, entry: Partial<TimeEntry>): Promise<TimeEntry | null>;
   deleteTimeEntry(id: string): Promise<boolean>;
 
@@ -207,6 +215,32 @@ export class PrismaStorage implements IStorage {
 
   private startOfUtcDay(date: Date): Date {
     return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  }
+
+  private normalizeDateTimeInput(value: unknown): Date | null {
+    if (value === null || value === undefined || value === '') return null;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+
+    const normalized = String(value).trim();
+    if (!normalized) return null;
+
+    const candidate = /^\d{4}-\d{2}-\d{2}$/.test(normalized)
+      ? new Date(`${normalized}T00:00:00.000Z`)
+      : new Date(normalized);
+
+    return Number.isNaN(candidate.getTime()) ? null : candidate;
+  }
+
+  private normalizeReferenceCode(value: string, fallback: string): string {
+    const base = value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .replace(/_+/g, '_')
+      .slice(0, 24);
+    return base.length > 0 ? base : fallback;
   }
 
   private getDaysUntilDue(dueDate: Date, today = new Date()): number {
@@ -1257,7 +1291,7 @@ export class PrismaStorage implements IStorage {
   }
 
   async updateProposal(id: string, updates: Partial<Proposal>): Promise<Proposal | null> {
-    return prisma.proposal.update({ where: { id }, data: updates });
+    return prisma.proposal.update({ where: { id }, data: updates as Prisma.ProposalUpdateInput });
   }
 
   async deleteProposal(id: string): Promise<boolean> {
@@ -1287,8 +1321,8 @@ export class PrismaStorage implements IStorage {
         clientId: insertProject.clientId,
         coordinatorId: insertProject.coordinatorId,
         status: ProjectStatus.PLANNING,
-        startDate: insertProject.startDate,
-        endDate: insertProject.endDate,
+        startDate: this.normalizeDateTimeInput(insertProject.startDate),
+        endDate: this.normalizeDateTimeInput(insertProject.endDate),
         budgetHours: insertProject.budgetHours ?? 0,
         budgetValue: insertProject.budgetValue ?? 0,
         dailyLimitHours: insertProject.dailyLimitHours ?? 8,
@@ -1369,8 +1403,64 @@ export class PrismaStorage implements IStorage {
     });
   }
 
-  async getTimeEntriesByProject(projectId: string): Promise<TimeEntry[]> {
-    return prisma.timeEntry.findMany({ where: { projectId } });
+  async getAllCostCenters(options?: { includeInactive?: boolean }): Promise<CostCenter[]> {
+    const includeInactive = options?.includeInactive ?? false;
+
+    return prisma.costCenter.findMany({
+      ...(includeInactive ? {} : { where: { isActive: true } }),
+      orderBy: [{ code: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async getCostCenter(id: string): Promise<CostCenter | null> {
+    return prisma.costCenter.findUnique({ where: { id } });
+  }
+
+  async createCostCenter(input: InsertCostCenter): Promise<CostCenter> {
+    const code = this.normalizeReferenceCode(input.code, 'CC');
+
+    return prisma.costCenter.create({
+      data: {
+        code,
+        name: input.name.trim(),
+        isActive: input.isActive ?? true,
+      },
+    });
+  }
+
+  async updateCostCenter(id: string, input: Partial<CostCenter>): Promise<CostCenter | null> {
+    const data: Prisma.CostCenterUpdateInput = {};
+
+    if (input.code !== undefined) {
+      data.code = this.normalizeReferenceCode(String(input.code), 'CC');
+    }
+
+    if (input.name !== undefined) {
+      data.name = String(input.name).trim();
+    }
+
+    if (input.isActive !== undefined) {
+      data.isActive = Boolean(input.isActive);
+    }
+
+    return prisma.costCenter.update({ where: { id }, data });
+  }
+
+  async deleteCostCenter(id: string): Promise<boolean> {
+    try {
+      await prisma.costCenter.update({ where: { id }, data: { isActive: false } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getTimeEntriesByProject(projectId: string): Promise<TimeEntryWithCostCenter[]> {
+    return prisma.timeEntry.findMany({
+      where: { projectId },
+      include: { costCenter: true },
+      orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
+    });
   }
 
   async getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string): Promise<TimeEntry[]> {
@@ -1386,11 +1476,12 @@ export class PrismaStorage implements IStorage {
     return prisma.timeEntry.findMany();
   }
 
-  async createTimeEntry(insertEntry: InsertTimeEntry): Promise<TimeEntry> {
+  async createTimeEntry(insertEntry: InsertTimeEntry): Promise<TimeEntryWithCostCenter> {
     return prisma.timeEntry.create({
       data: {
         projectId: insertEntry.projectId,
         collaboratorId: insertEntry.collaboratorId,
+        costCenterId: insertEntry.costCenterId ?? null,
         entryDate: new Date(insertEntry.entryDate as any),
         hours: insertEntry.hours,
         description: insertEntry.description,
@@ -1398,7 +1489,8 @@ export class PrismaStorage implements IStorage {
           ? { attachments: insertEntry.attachments as Prisma.InputJsonValue }
           : {}),
         status: TimeEntryStatus.PENDING,
-      }
+      },
+      include: { costCenter: true },
     });
   }
 
@@ -1435,21 +1527,9 @@ export class PrismaStorage implements IStorage {
   }
 
   async createProposalCategory(category: InsertProposalCategory): Promise<ProposalCategory> {
-    const normalizeCode = (value: string) => {
-      const base = value
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toUpperCase()
-        .replace(/[^A-Z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .replace(/_+/g, '_')
-        .slice(0, 24);
-      return base.length > 0 ? base : 'CAT';
-    };
-
     let code = (category.code || '').trim();
     if (!code) {
-      const base = normalizeCode(category.name);
+      const base = this.normalizeReferenceCode(category.name, 'CAT');
       code = base;
       for (let i = 2; i < 50; i++) {
         const existing = await prisma.proposalCategory.findUnique({ where: { code } });
@@ -1597,4 +1677,4 @@ export class PrismaStorage implements IStorage {
 
 export const storage = new PrismaStorage();
 
-export type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite };
+export type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, CostCenter };

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star, StarOff, Maximize2, Minimize2, PanelRightClose, Trash2, Edit, Eye, Download, Upload, LayoutGrid, List, GripVertical } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star, StarOff, Maximize2, Minimize2, PanelRightClose, Trash2, Edit, Eye, Download, Upload, LayoutGrid, List, GripVertical, FileText, Loader2, Mail, Paperclip, Bold, Italic, Underline, ListOrdered } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -62,7 +62,7 @@ import {
 } from '@/components/ui/tooltip';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
-import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse } from '@/lib/api';
+import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse, ProposalTapDraft, ProposalTapAttachment } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -82,6 +82,7 @@ import {
 import { CategoryValuesDrawer } from '@/components/CategoryValuesDrawer';
 import { DangerZoneConfirm } from '@/components/DangerZoneConfirm';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
+import { useUpload } from '@/hooks/use-upload';
 
 const statusColors: Record<string, string> = {
   // New (legacy) statuses (aligned with the screenshot)
@@ -405,6 +406,159 @@ const categoryLabels: Record<string, string> = {
   people: 'Responsáveis',
 };
 
+const proposalTapStatusLabels: Record<string, string> = {
+  not_started: 'Não iniciado',
+  draft: 'Em preparação',
+  generated: 'Gerado',
+  sent: 'Enviado',
+  failed: 'Falha no envio',
+};
+
+function escapeTapHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function createEmptyTapDraft(): ProposalTapDraft {
+  return {
+    projectName: '',
+    executiveSummary: '',
+    scopeHtml: '',
+    objectives: '',
+    deliverables: '',
+    premises: '',
+    exclusions: '',
+    stakeholders: '',
+    notes: '',
+    startDate: null,
+    endDate: null,
+    budgetHours: 0,
+    budgetValue: 0,
+    attachments: [],
+  };
+}
+
+function createTapDraftFromProposal(proposal: Proposal | null): ProposalTapDraft {
+  if (!proposal) return createEmptyTapDraft();
+
+  const existing = proposal.tapPayload;
+  const description = String(proposal.description || '').trim();
+  const defaultScope = description ? `<p>${escapeTapHtml(description)}</p>` : '';
+
+  return {
+    projectName: existing?.projectName || proposal.title || '',
+    executiveSummary: existing?.executiveSummary || description,
+    scopeHtml: existing?.scopeHtml || defaultScope,
+    objectives: existing?.objectives || '',
+    deliverables: existing?.deliverables || '',
+    premises: existing?.premises || '',
+    exclusions: existing?.exclusions || '',
+    stakeholders: existing?.stakeholders || '',
+    notes: existing?.notes || '',
+    startDate: existing?.startDate || extractDateOnly(proposal.expectedStartDate),
+    endDate: existing?.endDate || extractDateOnly(proposal.expectedEndDate),
+    budgetHours: Number(existing?.budgetHours ?? proposal.estimatedHours ?? 0),
+    budgetValue: Number(existing?.budgetValue ?? proposal.totalValue ?? 0),
+    attachments: Array.isArray(existing?.attachments) ? existing.attachments : [],
+  };
+}
+
+function stripTapHtml(value: string | null | undefined): string {
+  return String(value || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function canOpenProposalTap(proposal: Proposal | null): boolean {
+  if (!proposal) return false;
+  if (!['com_sucesso', 'sucesso_aditivo', 'approved'].includes(proposal.status) && !proposal.projectId && !proposal.tapPayload) {
+    return false;
+  }
+  return true;
+}
+
+function isProposalTapReadOnly(proposal: Proposal | null): boolean {
+  if (!proposal) return false;
+  return Boolean(proposal.projectId) || ['generated', 'sent', 'failed'].includes(String(proposal.tapStatus || ''));
+}
+
+function RichTextEditor({
+  value,
+  onChange,
+  disabled,
+  testId,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  testId?: string;
+}) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+    const nextValue = value || '';
+    if (editorRef.current.innerHTML !== nextValue) {
+      editorRef.current.innerHTML = nextValue;
+    }
+  }, [value]);
+
+  const runCommand = (command: string) => {
+    if (disabled) return;
+    editorRef.current?.focus();
+    document.execCommand(command, false);
+    onChange(editorRef.current?.innerHTML || '');
+  };
+
+  const toolbarButtons = [
+    { key: 'bold', icon: Bold, label: 'Negrito' },
+    { key: 'italic', icon: Italic, label: 'Itálico' },
+    { key: 'underline', icon: Underline, label: 'Sublinhado' },
+    { key: 'insertUnorderedList', icon: List, label: 'Lista' },
+    { key: 'insertOrderedList', icon: ListOrdered, label: 'Lista numerada' },
+  ];
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1 rounded-md border bg-muted/30 p-1">
+        {toolbarButtons.map(({ key, icon: Icon, label }) => (
+          <Button
+            key={key}
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8"
+            disabled={disabled}
+            onClick={() => runCommand(key)}
+            title={label}
+          >
+            <Icon className="h-4 w-4" />
+          </Button>
+        ))}
+      </div>
+      <div
+        ref={editorRef}
+        contentEditable={!disabled}
+        suppressContentEditableWarning
+        data-testid={testId}
+        onInput={() => onChange(editorRef.current?.innerHTML || '')}
+        className={cn(
+          'min-h-[240px] rounded-md border bg-background px-3 py-3 text-sm leading-7 outline-none',
+          disabled ? 'cursor-not-allowed bg-muted/20 text-muted-foreground' : 'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+        )}
+      />
+    </div>
+  );
+}
+
 export default function Proposals() {
   const [location] = useLocation();
   const queryClient = useQueryClient();
@@ -497,12 +651,16 @@ export default function Proposals() {
   const [additivesDialogOpen, setAdditivesDialogOpen] = useState(false);
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [detailFullscreen, setDetailFullscreen] = useState(false);
+  const [tapDialogOpen, setTapDialogOpen] = useState(false);
   const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
   const [deleteConfirmProposalId, setDeleteConfirmProposalId] = useState<string | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
+  const [tapProposal, setTapProposal] = useState<Proposal | null>(null);
+  const [tapForm, setTapForm] = useState<ProposalTapDraft>(() => createEmptyTapDraft());
   const [expensesProposal, setExpensesProposal] = useState<Proposal | null>(null);
   const [additivesProposal, setAdditivesProposal] = useState<Proposal | null>(null);
+  const tapFileInputRef = useRef<HTMLInputElement | null>(null);
   const [expenseForm, setExpenseForm] = useState<{ description: string; value: string; reimbursable: boolean }>({
     description: '',
     value: '',
@@ -546,6 +704,21 @@ export default function Proposals() {
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const tableViewportRef = useRef<HTMLDivElement>(null);
   const [tableViewportWidth, setTableViewportWidth] = useState(0);
+
+  const syncProposalReferences = useCallback((proposal: Proposal | null | undefined) => {
+    if (!proposal) return;
+    setSelectedProposal((current) => current?.id === proposal.id ? { ...current, ...proposal } : current);
+    setTapProposal((current) => current?.id === proposal.id ? proposal : current);
+  }, []);
+
+  const {
+    uploadFile: uploadTapAttachment,
+    isUploading: isUploadingTapAttachment,
+  } = useUpload({
+    onError: (error) => {
+      toast({ title: 'Erro ao enviar anexo', description: error.message, variant: 'destructive' });
+    },
+  });
 
   const expensesProposalId = expensesProposal?.id;
   const expensesQueryKey = expensesProposalId
@@ -1592,6 +1765,55 @@ export default function Proposals() {
     },
   });
 
+  const saveTapMutation = useMutation({
+    mutationFn: ({ proposalId, data }: { proposalId: string; data: ProposalTapDraft }) => proposalsApi.saveTap(proposalId, data),
+    onSuccess: (updatedProposal) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
+      syncProposalReferences(updatedProposal);
+      toast({ title: 'TAP salvo', description: 'O rascunho do TAP foi atualizado com sucesso.', variant: 'success' });
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao salvar TAP', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const generateTapMutation = useMutation({
+    mutationFn: ({ proposalId, data }: { proposalId: string; data: ProposalTapDraft }) => proposalsApi.generateTap(proposalId, data),
+    onSuccess: ({ proposal, project }) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      syncProposalReferences(proposal);
+      setTapDialogOpen(false);
+      toast({
+        title: proposal.tapStatus === 'failed' ? 'Projeto criado, mas o e-mail do TAP falhou' : 'TAP gerado com sucesso',
+        description: proposal.tapStatus === 'failed'
+          ? 'O projeto foi criado e o TAP ficou somente leitura. Use o reenvio para tentar novamente.'
+          : `Projeto criado e TAP enviado com sucesso.`,
+        variant: proposal.tapStatus === 'failed' ? 'destructive' : 'success',
+      });
+      if (selectedProposal?.id === proposal.id) {
+        setSelectedProposal(proposal);
+      }
+      setTapProposal(proposal);
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao gerar TAP', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const resendTapEmailMutation = useMutation({
+    mutationFn: (proposalId: string) => proposalsApi.resendTapEmail(proposalId),
+    onSuccess: (updatedProposal) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      syncProposalReferences(updatedProposal);
+      toast({ title: 'E-mail reenviado', description: 'O envio do TAP foi reenviado com sucesso.', variant: 'success' });
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao reenviar TAP', description: error.message, variant: 'destructive' });
+    },
+  });
+
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<Proposal> }) => proposalsApi.update(id, data),
     onSuccess: (updatedProposal) => {
@@ -1673,6 +1895,67 @@ export default function Proposals() {
     setSelectedProposal(proposal);
     setDetailSheetOpen(true);
   };
+
+  const openTapDialog = (proposal: Proposal, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+
+    if (!isLatestRevision(proposal)) {
+      toast({
+        title: 'Somente a última revisão pode abrir o TAP',
+        description: `Crie uma nova revisão para continuar a partir da proposta ${proposal.code}.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setTapProposal(proposal);
+    setTapForm(createTapDraftFromProposal(proposal));
+    setTapDialogOpen(true);
+  };
+
+  const handleTapFieldChange = <K extends keyof ProposalTapDraft>(field: K, value: ProposalTapDraft[K]) => {
+    setTapForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleTapAttachmentFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    for (const file of files) {
+      const uploaded = await uploadTapAttachment(file);
+      if (!uploaded) continue;
+
+      setTapForm((current) => ({
+        ...current,
+        attachments: [
+          ...current.attachments,
+          {
+            id: crypto.randomUUID(),
+            title: uploaded.metadata.name,
+            description: '',
+            name: uploaded.metadata.name,
+            objectPath: uploaded.objectPath,
+            contentType: uploaded.metadata.contentType || null,
+            size: uploaded.metadata.size || null,
+          },
+        ],
+      }));
+    }
+
+    event.target.value = '';
+  };
+
+  const tapReadOnly = useMemo(() => isProposalTapReadOnly(tapProposal), [tapProposal]);
+  const tapCanResendEmail = Boolean(tapProposal?.projectId && tapProposal?.tapStatus === 'failed');
+  const tapGenerateDisabledReason = useMemo(() => {
+    if (tapReadOnly) return null;
+    if (generateTapMutation.isPending) return 'Gerando TAP...';
+    if (isUploadingTapAttachment) return 'Aguarde o término do upload dos anexos.';
+    if (!tapForm.projectName.trim()) return 'Informe o nome do projeto.';
+    if (!tapForm.executiveSummary.trim()) return 'Informe o sumário executivo.';
+    if (!stripTapHtml(tapForm.scopeHtml)) return 'Informe o escopo do TAP.';
+    return null;
+  }, [generateTapMutation.isPending, isUploadingTapAttachment, tapForm.executiveSummary, tapForm.projectName, tapForm.scopeHtml, tapReadOnly]);
 
   const handleEditProposal = (proposal: Proposal, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -3352,6 +3635,21 @@ export default function Proposals() {
                           ))}
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
+                              {isLatestRevision(proposal) && canOpenProposalTap(proposal) && (
+                                <Button
+                                  size="sm"
+                                  variant={proposal.projectId ? 'secondary' : 'outline'}
+                                  className="h-7 px-2 text-xs"
+                                  data-testid={`button-open-tap-${proposal.id}`}
+                                  onClick={(e) => openTapDialog(proposal, e)}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  title="Abrir TAP"
+                                >
+                                  TAP
+                                </Button>
+                              )}
+
                               {isLatestRevision(proposal) && (
                                 <Button
                                   size="icon"
@@ -3642,6 +3940,395 @@ export default function Proposals() {
           </div>
         )}
 
+        <Dialog open={tapDialogOpen} onOpenChange={setTapDialogOpen}>
+          <DialogContent className="max-w-6xl h-[92vh] flex flex-col overflow-hidden">
+            <DialogHeader className="flex-shrink-0">
+              <DialogTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-primary" />
+                TAP da proposta {tapProposal?.code || '-'}
+              </DialogTitle>
+              <DialogDescription>
+                {tapReadOnly
+                  ? 'Documento bloqueado para edição após a geração do TAP. Consulte os dados e use o reenvio em caso de falha de e-mail.'
+                  : 'Complete os dados do termo de abertura, revise o escopo e gere o TAP para criar o projeto.'}
+              </DialogDescription>
+            </DialogHeader>
+
+            {tapProposal ? (
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <ScrollArea className="h-full pr-4">
+                  <div className="space-y-6 pb-6">
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+                      <Card className="lg:col-span-3">
+                        <CardContent className="p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Status do TAP</p>
+                              <p className="mt-1 text-base font-semibold">{proposalTapStatusLabels[tapProposal.tapStatus || 'not_started'] || 'Não iniciado'}</p>
+                            </div>
+                            {tapProposal.tapLastEmailError ? (
+                              <Badge variant="destructive" className="whitespace-normal text-left">
+                                {tapProposal.tapLastEmailError}
+                              </Badge>
+                            ) : null}
+                          </div>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="p-4">
+                          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Modo</p>
+                          <p className="mt-1 text-base font-semibold">{tapReadOnly ? 'Somente leitura' : 'Edição liberada'}</p>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {tapProposal.projectId ? 'Projeto já criado a partir deste TAP.' : 'O projeto será criado no clique em Gerar TAP.'}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_360px]">
+                      <div className="space-y-6">
+                        <Card>
+                          <CardContent className="p-5 space-y-4">
+                            <div>
+                              <p className="text-sm font-semibold">Dados do projeto</p>
+                              <p className="text-sm text-muted-foreground">Campos pré-preenchidos a partir da proposta e editáveis até a geração.</p>
+                            </div>
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                              <div className="space-y-2 md:col-span-2">
+                                <Label>Nome do projeto</Label>
+                                <Input
+                                  value={tapForm.projectName}
+                                  onChange={(event) => handleTapFieldChange('projectName', event.target.value)}
+                                  disabled={tapReadOnly}
+                                  data-testid="input-tap-project-name"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Início previsto</Label>
+                                <Input
+                                  type="date"
+                                  value={tapForm.startDate || ''}
+                                  onChange={(event) => handleTapFieldChange('startDate', event.target.value || null)}
+                                  disabled={tapReadOnly}
+                                  data-testid="input-tap-start-date"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Término previsto</Label>
+                                <Input
+                                  type="date"
+                                  value={tapForm.endDate || ''}
+                                  onChange={(event) => handleTapFieldChange('endDate', event.target.value || null)}
+                                  disabled={tapReadOnly}
+                                  data-testid="input-tap-end-date"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Horas previstas</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={String(tapForm.budgetHours)}
+                                  onChange={(event) => handleTapFieldChange('budgetHours', Number(event.target.value || 0))}
+                                  disabled={tapReadOnly}
+                                  data-testid="input-tap-budget-hours"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Valor aprovado</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={String(tapForm.budgetValue)}
+                                  onChange={(event) => handleTapFieldChange('budgetValue', Number(event.target.value || 0))}
+                                  disabled={tapReadOnly}
+                                  data-testid="input-tap-budget-value"
+                                />
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        <Card>
+                          <CardContent className="p-5 space-y-4">
+                            <div>
+                              <p className="text-sm font-semibold">Conteúdo do TAP</p>
+                              <p className="text-sm text-muted-foreground">O sumário e o escopo seguem para o TAP e são bloqueados depois da geração.</p>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label>Sumário executivo</Label>
+                              <Textarea
+                                value={tapForm.executiveSummary}
+                                onChange={(event) => handleTapFieldChange('executiveSummary', event.target.value)}
+                                disabled={tapReadOnly}
+                                className="min-h-[140px]"
+                                data-testid="input-tap-executive-summary"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label>Escopo</Label>
+                              <RichTextEditor
+                                value={tapForm.scopeHtml}
+                                onChange={(value) => handleTapFieldChange('scopeHtml', value)}
+                                disabled={tapReadOnly}
+                                testId="input-tap-scope"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label>Objetivos</Label>
+                                <Textarea
+                                  value={tapForm.objectives}
+                                  onChange={(event) => handleTapFieldChange('objectives', event.target.value)}
+                                  disabled={tapReadOnly}
+                                  className="min-h-[120px]"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Entregáveis</Label>
+                                <Textarea
+                                  value={tapForm.deliverables}
+                                  onChange={(event) => handleTapFieldChange('deliverables', event.target.value)}
+                                  disabled={tapReadOnly}
+                                  className="min-h-[120px]"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Premissas</Label>
+                                <Textarea
+                                  value={tapForm.premises}
+                                  onChange={(event) => handleTapFieldChange('premises', event.target.value)}
+                                  disabled={tapReadOnly}
+                                  className="min-h-[120px]"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Exclusões</Label>
+                                <Textarea
+                                  value={tapForm.exclusions}
+                                  onChange={(event) => handleTapFieldChange('exclusions', event.target.value)}
+                                  disabled={tapReadOnly}
+                                  className="min-h-[120px]"
+                                />
+                              </div>
+                              <div className="space-y-2 md:col-span-2">
+                                <Label>Stakeholders</Label>
+                                <Textarea
+                                  value={tapForm.stakeholders}
+                                  onChange={(event) => handleTapFieldChange('stakeholders', event.target.value)}
+                                  disabled={tapReadOnly}
+                                  className="min-h-[120px]"
+                                />
+                              </div>
+                              <div className="space-y-2 md:col-span-2">
+                                <Label>Observações internas</Label>
+                                <Textarea
+                                  value={tapForm.notes}
+                                  onChange={(event) => handleTapFieldChange('notes', event.target.value)}
+                                  disabled={tapReadOnly}
+                                  className="min-h-[120px]"
+                                />
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        <Card>
+                          <CardContent className="p-5 space-y-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold">Anexos do TAP</p>
+                                <p className="text-sm text-muted-foreground">Os arquivos ficam no sistema. No e-mail seguem apenas título e descrição.</p>
+                              </div>
+                              {!tapReadOnly ? (
+                                <>
+                                  <input
+                                    ref={tapFileInputRef}
+                                    type="file"
+                                    multiple
+                                    className="hidden"
+                                    onChange={handleTapAttachmentFiles}
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => tapFileInputRef.current?.click()}
+                                    disabled={isUploadingTapAttachment}
+                                  >
+                                    {isUploadingTapAttachment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Paperclip className="mr-2 h-4 w-4" />}
+                                    Adicionar anexo
+                                  </Button>
+                                </>
+                              ) : null}
+                            </div>
+
+                            <div className="space-y-3">
+                              {tapForm.attachments.length === 0 ? (
+                                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                                  Nenhum anexo vinculado ao TAP.
+                                </div>
+                              ) : tapForm.attachments.map((attachment, index) => (
+                                <div key={attachment.id} className="rounded-lg border p-4 space-y-3">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                      <p className="font-medium">{attachment.name}</p>
+                                      <p className="text-xs text-muted-foreground">{attachment.objectPath}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Button type="button" variant="outline" size="sm" onClick={() => window.open(attachment.objectPath, '_blank', 'noopener,noreferrer')}>
+                                        Abrir
+                                      </Button>
+                                      {!tapReadOnly ? (
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => setTapForm((current) => ({
+                                            ...current,
+                                            attachments: current.attachments.filter((item) => item.id !== attachment.id),
+                                          }))}
+                                        >
+                                          Remover
+                                        </Button>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                    <div className="space-y-2">
+                                      <Label>Título do anexo</Label>
+                                      <Input
+                                        value={attachment.title}
+                                        onChange={(event) => setTapForm((current) => ({
+                                          ...current,
+                                          attachments: current.attachments.map((item, itemIndex) => itemIndex === index ? { ...item, title: event.target.value } : item),
+                                        }))}
+                                        disabled={tapReadOnly}
+                                      />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Descrição</Label>
+                                      <Input
+                                        value={attachment.description || ''}
+                                        onChange={(event) => setTapForm((current) => ({
+                                          ...current,
+                                          attachments: current.attachments.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item),
+                                        }))}
+                                        disabled={tapReadOnly}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+
+                      <div className="space-y-6">
+                        <Card>
+                          <CardContent className="p-5 space-y-4">
+                            <div>
+                              <p className="text-sm font-semibold">Resumo da proposta</p>
+                              <p className="text-sm text-muted-foreground">Base herdada do cadastro comercial e do legado.</p>
+                            </div>
+                            <div className="grid grid-cols-1 gap-3 text-sm">
+                              <div className="rounded-lg border bg-muted/20 p-3">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Cliente</p>
+                                <p className="mt-1 font-semibold">{tapProposal.client?.razaoSocial || '-'}</p>
+                              </div>
+                              <div className="rounded-lg border bg-muted/20 p-3">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Responsável</p>
+                                <p className="mt-1 font-semibold">{tapProposal.coordinatorName || '-'}</p>
+                              </div>
+                              <div className="rounded-lg border bg-muted/20 p-3">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Tipo do contrato</p>
+                                <p className="mt-1 font-semibold">{typeLabels[tapProposal.type] || '-'}</p>
+                              </div>
+                              <div className="rounded-lg border bg-muted/20 p-3">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Expectativa</p>
+                                <p className="mt-1 font-semibold">{tapProposal.expectation || '-'}</p>
+                              </div>
+                              <div className="rounded-lg border bg-muted/20 p-3">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Tipo principal</p>
+                                <p className="mt-1 font-semibold">{tapProposal.mainType || '-'}</p>
+                              </div>
+                              <div className="rounded-lg border bg-muted/20 p-3">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Prazo</p>
+                                <p className="mt-1 font-semibold">{tapProposal.termMonths ? `${tapProposal.termMonths} meses` : '-'}</p>
+                              </div>
+                              <div className="rounded-lg border bg-muted/20 p-3">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Avaliação de risco</p>
+                                <p className="mt-1 font-semibold">{tapProposal.riskAssessment || '-'}</p>
+                              </div>
+                              <div className="rounded-lg border bg-muted/20 p-3">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Contrato / OAs</p>
+                                <p className="mt-1 font-semibold">{tapProposal.contractCode || tapProposal.workOrders || '-'}</p>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        <Card>
+                          <CardContent className="p-5 space-y-4">
+                            <div>
+                              <p className="text-sm font-semibold">Ações</p>
+                              <p className="text-sm text-muted-foreground">Salvar rascunho, gerar o TAP e reenviar o e-mail quando necessário.</p>
+                            </div>
+                            <div className="space-y-2">
+                              {!tapReadOnly ? (
+                                <Button
+                                  type="button"
+                                  className="w-full"
+                                  variant="outline"
+                                  onClick={() => tapProposal && saveTapMutation.mutate({ proposalId: tapProposal.id, data: tapForm })}
+                                  disabled={saveTapMutation.isPending || generateTapMutation.isPending || isUploadingTapAttachment}
+                                >
+                                  {saveTapMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                  Salvar TAP
+                                </Button>
+                              ) : null}
+                              {!tapReadOnly ? (
+                                <Button
+                                  type="button"
+                                  className="w-full"
+                                  onClick={() => tapProposal && generateTapMutation.mutate({ proposalId: tapProposal.id, data: tapForm })}
+                                  disabled={Boolean(tapGenerateDisabledReason)}
+                                >
+                                  {generateTapMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}
+                                  Gerar TAP
+                                </Button>
+                              ) : null}
+                              {tapCanResendEmail ? (
+                                <Button
+                                  type="button"
+                                  className="w-full"
+                                  variant="secondary"
+                                  onClick={() => tapProposal && resendTapEmailMutation.mutate(tapProposal.id)}
+                                  disabled={resendTapEmailMutation.isPending}
+                                >
+                                  {resendTapEmailMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}
+                                  Reenviar e-mail do TAP
+                                </Button>
+                              ) : null}
+                              {tapGenerateDisabledReason ? (
+                                <p className="text-xs text-muted-foreground">{tapGenerateDisabledReason}</p>
+                              ) : null}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    </div>
+                  </div>
+                </ScrollArea>
+              </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+
         {/* Detail Sheet (Side Panel) */}
         <Sheet open={detailSheetOpen && !detailFullscreen} onOpenChange={setDetailSheetOpen}>
           <SheetContent 
@@ -3686,24 +4373,15 @@ export default function Proposals() {
                       Editar
                     </Button>
                   )}
-                  {selectedProposal.projectId ? (
+                  {canOpenProposalTap(selectedProposal) ? (
                     <Button
-                      variant="outline"
+                      variant={selectedProposal.projectId ? 'secondary' : 'default'}
                       className="flex-1"
-                      disabled
-                      data-testid="button-converted-from-sheet"
+                      onClick={() => openTapDialog(selectedProposal)}
+                      data-testid="button-open-tap-from-sheet"
                     >
-                      Projeto gerado
-                    </Button>
-                  ) : ['com_sucesso', 'sucesso_aditivo', 'approved'].includes(selectedProposal.status) ? (
-                    <Button
-                      className="flex-1"
-                      onClick={() => convertMutation.mutate(selectedProposal.id)}
-                      disabled={convertMutation.isPending}
-                      data-testid="button-convert-from-sheet"
-                    >
-                      <ArrowRight className="h-4 w-4 mr-2" />
-                      Converter em Projeto
+                      <FileText className="h-4 w-4 mr-2" />
+                      TAP
                     </Button>
                   ) : null}
                 </div>
@@ -3928,22 +4606,14 @@ export default function Proposals() {
                       Editar
                     </Button>
                   )}
-                  {selectedProposal.projectId ? (
+                  {canOpenProposalTap(selectedProposal) ? (
                     <Button
-                      variant="outline"
-                      disabled
-                      data-testid="button-converted-from-fullscreen"
+                      variant={selectedProposal.projectId ? 'secondary' : 'default'}
+                      onClick={() => openTapDialog(selectedProposal)}
+                      data-testid="button-open-tap-from-fullscreen"
                     >
-                      Projeto gerado
-                    </Button>
-                  ) : ['com_sucesso', 'sucesso_aditivo', 'approved'].includes(selectedProposal.status) ? (
-                    <Button
-                      onClick={() => convertMutation.mutate(selectedProposal.id)}
-                      disabled={convertMutation.isPending}
-                      data-testid="button-convert-from-fullscreen"
-                    >
-                      <ArrowRight className="h-4 w-4 mr-2" />
-                      Converter em Projeto
+                      <FileText className="h-4 w-4 mr-2" />
+                      TAP
                     </Button>
                   ) : null}
                 </div>

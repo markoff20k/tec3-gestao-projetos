@@ -6,6 +6,7 @@ import {
   Clock,
   BarChart3,
   Tags,
+  Landmark,
   Settings,
   Users,
   type LucideIcon,
@@ -32,6 +33,7 @@ export const mainMenuItems: NavigationItem[] = [
 
 export const adminMenuItems: NavigationItem[] = [
   { path: '/categories', label: 'Categorias', icon: Tags, roles: ['admin'], description: 'Gerenciar categorias de proposta' },
+  { path: '/cost-centers', label: 'Centros de Custo', icon: Landmark, roles: ['admin'], description: 'Gerenciar centros de custo' },
   { path: '/users', label: 'Profissionais da Tec3', icon: Users, roles: ['admin'], description: 'Gerenciar profissionais da Tec3' },
 ];
 
@@ -51,6 +53,7 @@ export const pageDescriptions: Record<string, string> = {
   '/time-entries': 'Registrar horas trabalhadas',
   '/reports': 'Visualizar relatórios',
   '/categories': 'Gerenciar categorias de proposta',
+  '/cost-centers': 'Gerenciar centros de custo',
   '/users': 'Gerenciar profissionais da Tec3',
   '/settings': 'Gerenciar preferências da conta',
 };

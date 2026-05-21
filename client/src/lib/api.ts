@@ -311,6 +311,12 @@ export interface Proposal {
   expectedEndDate?: string | null;
   sentDate?: string | null;
   projectId?: string | null;
+  tapPayload?: ProposalTapDraft | null;
+  tapStatus?: 'not_started' | 'draft' | 'generated' | 'sent' | 'failed';
+  tapGeneratedAt?: string | null;
+  tapGeneratedById?: string | null;
+  tapSentAt?: string | null;
+  tapLastEmailError?: string | null;
   createdAt: string;
   updatedAt?: string | null;
   // Campos adicionais do sistema legado
@@ -343,6 +349,38 @@ export interface Proposal {
   anfibex?: string | null;
   discount?: string | null;
   proposalOrigin?: string | null;
+}
+
+export interface ProposalTapAttachment {
+  id: string;
+  title: string;
+  description?: string | null;
+  name: string;
+  objectPath: string;
+  contentType?: string | null;
+  size?: number | null;
+}
+
+export interface ProposalTapDraft {
+  projectName: string;
+  executiveSummary: string;
+  scopeHtml: string;
+  objectives: string;
+  deliverables: string;
+  premises: string;
+  exclusions: string;
+  stakeholders: string;
+  notes: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  budgetHours: number;
+  budgetValue: number;
+  attachments: ProposalTapAttachment[];
+}
+
+export interface ProposalTapGenerateResponse {
+  proposal: Proposal;
+  project: Project;
 }
 
 export interface ProposalExpenseItem {
@@ -483,10 +521,12 @@ export interface TimeEntry {
   id: string;
   projectId: string;
   collaboratorId: string;
+  costCenterId?: string | null;
   entryDate: string;
   hours: number;
   description?: string;
   attachments?: TimeEntryAttachment[] | null;
+  costCenter?: CostCenter | null;
   status: string;
 }
 
@@ -498,6 +538,14 @@ export interface TimeEntryAttachment {
 }
 
 export interface ProposalCategory {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  createdAt?: string;
+}
+
+export interface CostCenter {
   id: string;
   code: string;
   name: string;
@@ -612,6 +660,9 @@ export const proposalsApi = {
   update: (id: string, data: Partial<Proposal>) => api.put<Proposal>(`/proposals/${id}`, data),
   delete: (id: string) => api.delete(`/proposals/${id}`),
   convert: (proposalId: string) => api.post<Project>('/proposals/convert', { proposalId }),
+  saveTap: (proposalId: string, data: ProposalTapDraft) => api.put<Proposal>(`/proposals/${proposalId}/tap`, data),
+  generateTap: (proposalId: string, data: ProposalTapDraft) => api.post<ProposalTapGenerateResponse>(`/proposals/${proposalId}/tap/generate`, data),
+  resendTapEmail: (proposalId: string) => api.post<Proposal>(`/proposals/${proposalId}/tap/resend-email`, {}),
   createRevision: (id: string) => api.post<Proposal>(`/proposals/${id}/revision`, {}),
 };
 
@@ -662,4 +713,13 @@ export const proposalCategoriesApi = {
   update: (id: string, data: Partial<ProposalCategory>) =>
     api.put<ProposalCategory>(`/proposal-categories/${id}`, data),
   delete: (id: string) => api.delete(`/proposal-categories/${id}`),
+};
+
+export const costCentersApi = {
+  getAll: () => api.get<CostCenter[]>('/cost-centers'),
+  create: (data: { code: string; name: string; isActive?: boolean }) =>
+    api.post<CostCenter>('/cost-centers', data),
+  update: (id: string, data: Partial<CostCenter>) =>
+    api.put<CostCenter>(`/cost-centers/${id}`, data),
+  delete: (id: string) => api.delete(`/cost-centers/${id}`),
 };

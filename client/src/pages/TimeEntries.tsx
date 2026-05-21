@@ -54,7 +54,7 @@ import { Calendar as DateCalendar } from '@/components/ui/calendar';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { useUpload } from '@/hooks/use-upload';
-import { projectsApi, Project, TimeEntry, TimeEntryAttachment } from '@/lib/api';
+import { costCentersApi, CostCenter, projectsApi, Project, TimeEntry, TimeEntryAttachment } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const statusLabels: Record<string, string> = {
@@ -105,6 +105,7 @@ export default function TimeEntries() {
   const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [hoursValue, setHoursValue] = useState('');
+  const [selectedCostCenterId, setSelectedCostCenterId] = useState('');
   const [descriptionValue, setDescriptionValue] = useState('');
   const [attachments, setAttachments] = useState<TimeEntryAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -112,6 +113,11 @@ export default function TimeEntries() {
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['/api/projects'],
     queryFn: () => projectsApi.getAll(),
+  });
+
+  const { data: costCenters = [] } = useQuery<CostCenter[]>({
+    queryKey: ['/api/cost-centers'],
+    queryFn: () => costCentersApi.getAll(),
   });
 
   useEffect(() => {
@@ -157,11 +163,22 @@ export default function TimeEntries() {
     [sortedProjects]
   );
 
+  const availableCostCenters = useMemo(
+    () => costCenters.filter((costCenter) => costCenter.isActive),
+    [costCenters]
+  );
+
   useEffect(() => {
     if (!selectedProjectId) return;
     if (launchableProjects.some((project) => project.id === selectedProjectId)) return;
     setSelectedProjectId('');
   }, [launchableProjects, selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedCostCenterId) return;
+    if (availableCostCenters.some((costCenter) => costCenter.id === selectedCostCenterId)) return;
+    setSelectedCostCenterId('');
+  }, [availableCostCenters, selectedCostCenterId]);
 
   const filteredEntries = useMemo(
     () => timeEntries.filter((entry) => (statusFilter === 'all' ? true : entry.status === statusFilter)),
@@ -220,6 +237,7 @@ export default function TimeEntries() {
       await queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId, 'time-entries'] });
       toast({ title: 'Horas lançadas com sucesso', variant: 'success' });
       setHoursValue('');
+      setSelectedCostCenterId('');
       setDescriptionValue('');
       setAttachments([]);
     },
@@ -317,6 +335,7 @@ export default function TimeEntries() {
     createMutation.mutate({
       projectId: selectedProjectId,
       collaboratorId: '',
+      costCenterId: selectedCostCenterId || null,
       entryDate: key,
       hours: requestedHours,
       description: descriptionValue,
@@ -512,7 +531,7 @@ export default function TimeEntries() {
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-3">
                   <div className="space-y-2">
                     <Label htmlFor="time-entry-hours">Horas</Label>
                     <Input
@@ -528,6 +547,26 @@ export default function TimeEntries() {
                       disabled={!selectedProjectId || !canLaunchHours}
                       required
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Centro de custo</Label>
+                    <Select
+                      value={selectedCostCenterId || 'none'}
+                      onValueChange={(value) => setSelectedCostCenterId(value === 'none' ? '' : value)}
+                      disabled={!selectedProjectId || !canLaunchHours}
+                    >
+                      <SelectTrigger data-testid="select-time-entry-cost-center">
+                        <SelectValue placeholder="Opcional" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Sem centro de custo</SelectItem>
+                        {availableCostCenters.map((costCenter) => (
+                          <SelectItem key={costCenter.id} value={costCenter.id}>
+                            {costCenter.code} · {costCenter.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-2">
                     <Label>Status do fluxo</Label>
@@ -729,6 +768,11 @@ export default function TimeEntries() {
                                   {statusLabels[entry.status] ?? entry.status}
                                 </Badge>
                               </div>
+                              {entry.costCenter && (
+                                <p className="mt-1 text-[11px] font-medium text-primary">
+                                  {entry.costCenter.code} · {entry.costCenter.name}
+                                </p>
+                              )}
                               <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                                 {entry.description || 'Sem descrição'}
                               </p>
@@ -791,6 +835,11 @@ export default function TimeEntries() {
                               <span className="font-semibold text-foreground">{entry.hours}h</span>
                               <span className="text-muted-foreground">{statusLabels[entry.status] ?? entry.status}</span>
                             </div>
+                            {entry.costCenter && (
+                              <p className="mt-1 line-clamp-1 text-[11px] font-medium text-primary">
+                                {entry.costCenter.code}
+                              </p>
+                            )}
                             <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{entry.description || 'Sem descrição'}</p>
                           </div>
                         ))}
@@ -834,6 +883,11 @@ export default function TimeEntries() {
                           {statusLabels[entry.status] ?? entry.status}
                         </Badge>
                       </div>
+                      {entry.costCenter && (
+                        <div className="mt-4 inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                          {entry.costCenter.code} · {entry.costCenter.name}
+                        </div>
+                      )}
                       <p className="mt-4 text-sm leading-6 text-muted-foreground">{entry.description || 'Sem descrição informada.'}</p>
                       {entry.attachments && entry.attachments.length > 0 && (
                         <div className="mt-4 flex flex-wrap gap-2">

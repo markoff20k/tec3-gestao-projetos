@@ -24,6 +24,14 @@ const PROJECT_TAP_STATUS = {
   FAILED: 'failed',
 } as const;
 
+const PROPOSAL_TAP_STATUS = {
+  NOT_STARTED: 'not_started',
+  DRAFT: 'draft',
+  GENERATED: 'generated',
+  SENT: 'sent',
+  FAILED: 'failed',
+} as const;
+
 const EMAIL_OUTBOX_STATUS = {
   PENDING: 'pending',
   SENT: 'sent',
@@ -397,12 +405,144 @@ function parseRecipients(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
+type ProposalTapAttachment = {
+  id: string;
+  title: string;
+  description: string | null;
+  name: string;
+  objectPath: string;
+  contentType: string | null;
+  size: number | null;
+};
+
+type ProposalTapDraft = {
+  projectName: string;
+  executiveSummary: string;
+  scopeHtml: string;
+  objectives: string;
+  deliverables: string;
+  premises: string;
+  exclusions: string;
+  stakeholders: string;
+  notes: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  budgetHours: number;
+  budgetValue: number;
+  attachments: ProposalTapAttachment[];
+};
+
+function normalizeProposalTapAttachmentList(value: unknown): ProposalTapAttachment[] {
+  if (!Array.isArray(value)) return [];
+
+  const normalizedItems = value
+    .map((item) => {
+      const raw = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+      const title = String(raw.title ?? '').trim();
+      const name = String(raw.name ?? '').trim();
+      const objectPath = String(raw.objectPath ?? '').trim();
+
+      if (!title || !name || !objectPath) return null;
+
+      return {
+        id: String(raw.id ?? crypto.randomUUID()).trim() || crypto.randomUUID(),
+        title,
+        description: String(raw.description ?? '').trim() || null,
+        name,
+        objectPath,
+        contentType: String(raw.contentType ?? '').trim() || null,
+        size: Number.isFinite(Number(raw.size)) ? Number(raw.size) : null,
+      };
+    });
+
+  return normalizedItems.filter((item): item is ProposalTapAttachment => item !== null);
+}
+
+function stripHtmlTags(value: string): string {
+  return String(value || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sanitizeProposalTapHtml(value: unknown): string {
+  const source = String(value || '').trim();
+  if (!source) return '';
+
+  const normalized = source
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<div\b[^>]*>/gi, '<p>')
+    .replace(/<\/div>/gi, '</p>')
+    .replace(/\son\w+=("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\sstyle=("[^"]*"|'[^']*')/gi, '')
+    .replace(/\shref=("javascript:[^"]*"|'javascript:[^']*')/gi, '')
+    .replace(/<(?!\/?(p|br|ul|ol|li|strong|b|em|i|u|h1|h2|h3)\b)[^>]+>/gi, '');
+
+  return normalized.trim();
+}
+
+function formatProjectTapHtmlContent(value: string | null | undefined) {
+  const sanitized = sanitizeProposalTapHtml(value);
+  if (sanitized) return sanitized;
+  return formatProjectTapEmailRichText(stripHtmlTags(String(value || '')) || '-');
+}
+
+function normalizeProposalTapDraft(proposal: any, input?: unknown): ProposalTapDraft {
+  const existing = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const description = String(proposal?.description || '').trim();
+  const defaultScope = description ? `<p>${escapeProjectTapEmailHtml(description)}</p>` : '';
+
+  return {
+    projectName: String(existing.projectName ?? proposal?.title ?? '').trim(),
+    executiveSummary: String(existing.executiveSummary ?? description).trim(),
+    scopeHtml: sanitizeProposalTapHtml(existing.scopeHtml ?? defaultScope),
+    objectives: String(existing.objectives ?? '').trim(),
+    deliverables: String(existing.deliverables ?? '').trim(),
+    premises: String(existing.premises ?? '').trim(),
+    exclusions: String(existing.exclusions ?? '').trim(),
+    stakeholders: String(existing.stakeholders ?? '').trim(),
+    notes: String(existing.notes ?? '').trim(),
+    startDate: String(existing.startDate ?? proposal?.expectedStartDate ?? '').trim() || null,
+    endDate: String(existing.endDate ?? proposal?.expectedEndDate ?? '').trim() || null,
+    budgetHours: Number.isFinite(Number(existing.budgetHours)) ? Number(existing.budgetHours) : Number(proposal?.estimatedHours || 0),
+    budgetValue: Number.isFinite(Number(existing.budgetValue)) ? Number(existing.budgetValue) : Number(proposal?.totalValue || 0),
+    attachments: normalizeProposalTapAttachmentList(existing.attachments),
+  };
+}
+
+function validateProposalTapDraft(draft: ProposalTapDraft) {
+  if (!draft.projectName.trim()) {
+    throw new Error('Informe o nome do projeto no TAP');
+  }
+
+  if (!draft.executiveSummary.trim()) {
+    throw new Error('Informe o sumário executivo antes de gerar o TAP');
+  }
+
+  if (!stripHtmlTags(draft.scopeHtml)) {
+    throw new Error('Informe o escopo antes de gerar o TAP');
+  }
+}
+
+async function syncProposalTapStatusByProject(projectId: string, updates: Record<string, unknown>) {
+  await prisma.proposal.updateMany({
+    where: { projectId },
+    data: updates,
+  });
+}
+
 function buildProjectTapPayload(params: {
   proposal: any;
   project: any;
   client: any;
+  tapDraft?: ProposalTapDraft | null;
 }) {
   const { proposal, project, client } = params;
+  const tapDraft = normalizeProposalTapDraft(proposal, params.tapDraft ?? proposal?.tapPayload ?? null);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -417,6 +557,16 @@ function buildProjectTapPayload(params: {
       estimatedHours: Number(proposal.estimatedHours || 0),
       expectedStartDate: proposal.expectedStartDate ?? null,
       expectedEndDate: proposal.expectedEndDate ?? null,
+      type: proposal.type ?? null,
+      coordinatorName: proposal.coordinatorName ?? null,
+      proposalOrigin: proposal.proposalOrigin ?? null,
+      umbrellaRef: proposal.umbrellaRef ?? null,
+      expectation: proposal.expectation ?? null,
+      mainType: proposal.mainType ?? null,
+      termMonths: proposal.termMonths ?? null,
+      riskAssessment: proposal.riskAssessment ?? null,
+      contractCode: proposal.contractCode ?? null,
+      workOrders: proposal.workOrders ?? null,
     },
     project: {
       id: project.id,
@@ -429,6 +579,7 @@ function buildProjectTapPayload(params: {
       dailyLimitHours: Number(project.dailyLimitHours || 0),
       requiresApproval: Boolean(project.requiresApproval),
     },
+    tap: tapDraft,
     client: client
       ? {
           id: client.id,
@@ -456,11 +607,15 @@ function buildProjectTapTemplateModel(params: {
   projectUrl: string | null;
 }) {
   const { payload, projectUrl } = params;
+  const tapStartDate = payload.tap?.startDate || payload.proposal.expectedStartDate;
+  const tapEndDate = payload.tap?.endDate || payload.proposal.expectedEndDate;
+  const tapAttachments = Array.isArray(payload.tap?.attachments) ? payload.tap.attachments : [];
 
   return {
     project_code: payload.project.code,
     project_name: payload.project.name,
     project_status: payload.project.status,
+    project_status_label: formatProjectTapStatusLabel(payload.project.status),
     project_budget_hours: `${payload.project.budgetHours} h`,
     project_budget_value: formatProjectTapEmailCurrency(payload.project.budgetValue),
     proposal_code: payload.proposal.code,
@@ -471,6 +626,28 @@ function buildProjectTapTemplateModel(params: {
     proposal_expected_start_date: formatProjectTapEmailDate(payload.proposal.expectedStartDate),
     proposal_expected_end_date: formatProjectTapEmailDate(payload.proposal.expectedEndDate),
     client_name: payload.client?.razaoSocial || payload.client?.nomeFantasia || '-',
+    tap_executive_summary: payload.tap?.executiveSummary || '-',
+    tap_generated_at: formatProjectTapEmailDate(payload.generatedAt),
+    tap_start_date: formatProjectTapEmailDate(tapStartDate),
+    tap_end_date: formatProjectTapEmailDate(tapEndDate),
+    tap_budget_hours: `${payload.tap?.budgetHours ?? payload.project.budgetHours} h`,
+    tap_budget_value: formatProjectTapEmailCurrency(payload.tap?.budgetValue ?? payload.project.budgetValue),
+    tap_scope_html: formatProjectTapHtmlContent(payload.tap?.scopeHtml || ''),
+    tap_scope_plain_text: stripHtmlTags(payload.tap?.scopeHtml || '') || '-',
+    tap_objectives: payload.tap?.objectives || '-',
+    tap_deliverables: payload.tap?.deliverables || '-',
+    tap_premises: payload.tap?.premises || '-',
+    tap_exclusions: payload.tap?.exclusions || '-',
+    tap_stakeholders: payload.tap?.stakeholders || '-',
+    tap_notes: payload.tap?.notes || '-',
+    tap_attachments: tapAttachments.length > 0
+      ? tapAttachments.map((attachment: ProposalTapAttachment) => `${attachment.title}${attachment.description ? ` — ${attachment.description}` : ''}`).join('\n')
+      : '-',
+    tap_attachments_list: tapAttachments.map((attachment: ProposalTapAttachment) => ({
+      title: attachment.title,
+      description: attachment.description || '',
+      name: attachment.name,
+    })),
     project_url: projectUrl,
   };
 }
@@ -529,7 +706,7 @@ function renderProjectTapHtml(
   const projectName = escapeProjectTapEmailHtml(payload.project.name);
   const projectStatus = escapeProjectTapEmailHtml(formatProjectTapStatusLabel(payload.project.status));
   const projectDescription = formatProjectTapEmailRichText(
-    payload.project.description || payload.proposal.description ||
+    payload.tap?.executiveSummary || payload.project.description || payload.proposal.description ||
       'Projeto estruturado a partir de proposta aprovada, pronto para setup operacional e início da execução.'
   );
   const proposalCode = escapeProjectTapEmailHtml(payload.proposal.code);
@@ -540,6 +717,21 @@ function renderProjectTapHtml(
   const projectUrl = options?.projectUrl || null;
   const logoUrl = options?.logoUrl || null;
   const tapId = escapeProjectTapEmailHtml(options?.tapId || '-');
+  const tapStartDate = escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.tap?.startDate || payload.proposal.expectedStartDate));
+  const tapEndDate = escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.tap?.endDate || payload.proposal.expectedEndDate));
+  const tapObjectives = formatProjectTapEmailRichText(payload.tap?.objectives || '-');
+  const tapDeliverables = formatProjectTapEmailRichText(payload.tap?.deliverables || '-');
+  const tapPremises = formatProjectTapEmailRichText(payload.tap?.premises || '-');
+  const tapExclusions = formatProjectTapEmailRichText(payload.tap?.exclusions || '-');
+  const tapStakeholders = formatProjectTapEmailRichText(payload.tap?.stakeholders || '-');
+  const tapNotes = formatProjectTapEmailRichText(payload.tap?.notes || '-');
+  const tapScope = formatProjectTapHtmlContent(payload.tap?.scopeHtml || '');
+  const tapAttachments = Array.isArray(payload.tap?.attachments) ? payload.tap.attachments : [];
+  const tapAttachmentsHtml = tapAttachments.length > 0
+    ? `<ul style="margin:0;padding-left:18px;color:#475569;font-size:14px;line-height:1.8;">${tapAttachments
+        .map((attachment: ProposalTapAttachment) => `<li><strong>${escapeProjectTapEmailHtml(attachment.title)}</strong>${attachment.description ? ` — ${escapeProjectTapEmailHtml(attachment.description)}` : ''}</li>`)
+        .join('')}</ul>`
+    : '<div style="font-size:14px;line-height:1.8;color:#475569;">Nenhum anexo informado.</div>';
 
   const infoCard = (label: string, value: string) => `
     <td style="padding:0 6px 12px 6px;" valign="top">
@@ -677,24 +869,69 @@ function renderProjectTapHtml(
                               <tr>
                                 <td style="padding:0 12px 14px 0;" width="50%" valign="top">
                                   <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Início previsto</div>
-                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.proposal.expectedStartDate))}</div>
+                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${tapStartDate}</div>
                                 </td>
                                 <td style="padding:0 0 14px 12px;" width="50%" valign="top">
                                   <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Término previsto</div>
-                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.proposal.expectedEndDate))}</div>
+                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${tapEndDate}</div>
                                 </td>
                               </tr>
                               <tr>
                                 <td style="padding:0 12px 0 0;" width="50%" valign="top">
-                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Horas estimadas na proposta</div>
-                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(`${payload.proposal.estimatedHours} h`)}</div>
+                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Horas previstas no TAP</div>
+                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(`${payload.project.budgetHours} h`)}</div>
                                 </td>
                                 <td style="padding:0 0 0 12px;" width="50%" valign="top">
-                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Valor total da proposta</div>
-                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(formatProjectTapEmailCurrency(payload.proposal.totalValue))}</div>
+                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Valor aprovado no TAP</div>
+                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(formatProjectTapEmailCurrency(payload.project.budgetValue))}</div>
                                 </td>
                               </tr>
                             </table>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="padding:18px 30px 8px 30px;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#ffffff;border:1px solid #d7e5f3;border-radius:22px;">
+                        <tr>
+                          <td style="padding:22px 24px;">
+                            <div style="font-size:20px;line-height:1.3;color:#0f172a;font-weight:800;">Escopo</div>
+                            <div style="padding-top:14px;font-size:14px;line-height:1.8;color:#475569;">${tapScope}</div>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="padding:18px 24px 8px 24px;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                        <tr>
+                          ${infoCard('Objetivos', tapObjectives)}
+                          ${infoCard('Entregáveis', tapDeliverables)}
+                        </tr>
+                        <tr>
+                          ${infoCard('Premissas', tapPremises)}
+                          ${infoCard('Exclusões', tapExclusions)}
+                        </tr>
+                        <tr>
+                          ${infoCard('Stakeholders', tapStakeholders)}
+                          ${infoCard('Observações', tapNotes)}
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="padding:18px 30px 8px 30px;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#f8fbff;border:1px solid #d7e5f3;border-radius:22px;">
+                        <tr>
+                          <td style="padding:22px 24px;">
+                            <div style="font-size:20px;line-height:1.3;color:#0f172a;font-weight:800;">Anexos vinculados ao TAP</div>
+                            <div style="padding-top:14px;">${tapAttachmentsHtml}</div>
                           </td>
                         </tr>
                       </table>
@@ -760,6 +997,19 @@ async function sendProjectTapEmail(params: {
     `Horas previstas: ${params.payload.project.budgetHours} h`,
     `Valor aprovado: ${formatProjectTapEmailCurrency(params.payload.project.budgetValue)}`,
     `Status inicial: ${formatProjectTapStatusLabel(params.payload.project.status)}`,
+    `Início previsto: ${formatProjectTapEmailDate(params.payload.tap?.startDate || params.payload.proposal.expectedStartDate)}`,
+    `Término previsto: ${formatProjectTapEmailDate(params.payload.tap?.endDate || params.payload.proposal.expectedEndDate)}`,
+    `Sumário executivo: ${params.payload.tap?.executiveSummary || '-'}`,
+    `Escopo: ${stripHtmlTags(params.payload.tap?.scopeHtml || '') || '-'}`,
+    `Objetivos: ${params.payload.tap?.objectives || '-'}`,
+    `Entregáveis: ${params.payload.tap?.deliverables || '-'}`,
+    `Premissas: ${params.payload.tap?.premises || '-'}`,
+    `Exclusões: ${params.payload.tap?.exclusions || '-'}`,
+    `Stakeholders: ${params.payload.tap?.stakeholders || '-'}`,
+    `Observações: ${params.payload.tap?.notes || '-'}`,
+    Array.isArray(params.payload.tap?.attachments) && params.payload.tap.attachments.length > 0
+      ? `Anexos: ${params.payload.tap.attachments.map((attachment: ProposalTapAttachment) => `${attachment.title}${attachment.description ? ` (${attachment.description})` : ''}`).join('; ')}`
+      : null,
     `Identificador do TAP: ${params.tapId}`,
     projectUrl ? `Acesse o projeto: ${projectUrl}` : null,
   ]
@@ -863,32 +1113,43 @@ async function resendProjectTapEmail(params: {
       tapId: latestTap.id,
     });
 
-    if (emailResult.ok) {
-      await storage.updateProject(project.id, {
-        tapStatus: PROJECT_TAP_STATUS.SENT,
-        tapSentAt: new Date(),
-        tapLastEmailError: null,
-      } as any);
-      await storage.updateEmailOutbox(outbox.id, {
-        status: EMAIL_OUTBOX_STATUS.SENT,
-        attemptCount: 1,
-        sentAt: new Date(),
-        lastError: null,
-      } as any);
-      await clearTapEmailFailureNotifications(project.id);
-      await safeCreateUserActivity(params.req, params.actorUserId, {
-        category: 'system',
-        action: 'PROJECT_TAP_EMAIL_RESENT',
-        title: `TAP reenviado — ${project.code}`,
-        metadata: { projectId: project.id, tapId: latestTap.id },
-      });
+    if (!emailResult.ok) {
+      throw new Error('Postmark não configurado para envio do TAP');
     }
+
+    await storage.updateProject(project.id, {
+      tapStatus: PROJECT_TAP_STATUS.SENT,
+      tapSentAt: new Date(),
+      tapLastEmailError: null,
+    } as any);
+    await syncProposalTapStatusByProject(project.id, {
+      tapStatus: PROPOSAL_TAP_STATUS.SENT,
+      tapSentAt: new Date(),
+      tapLastEmailError: null,
+    });
+    await storage.updateEmailOutbox(outbox.id, {
+      status: EMAIL_OUTBOX_STATUS.SENT,
+      attemptCount: 1,
+      sentAt: new Date(),
+      lastError: null,
+    } as any);
+    await clearTapEmailFailureNotifications(project.id);
+    await safeCreateUserActivity(params.req, params.actorUserId, {
+      category: 'system',
+      action: 'PROJECT_TAP_EMAIL_RESENT',
+      title: `TAP reenviado — ${project.code}`,
+      metadata: { projectId: project.id, tapId: latestTap.id },
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await storage.updateProject(project.id, {
       tapStatus: PROJECT_TAP_STATUS.FAILED,
       tapLastEmailError: errorMessage,
     } as any);
+    await syncProposalTapStatusByProject(project.id, {
+      tapStatus: PROPOSAL_TAP_STATUS.FAILED,
+      tapLastEmailError: errorMessage,
+    });
     await storage.updateEmailOutbox(outbox.id, {
       status: EMAIL_OUTBOX_STATUS.FAILED,
       attemptCount: 1,
@@ -954,19 +1215,14 @@ export async function registerRoutes(
     'approved',
   ]);
 
-  const autoConvertStatuses = new Set<string>([
-    'com_sucesso',
-    'approved',
-  ]);
-
-  const convertProposalToProject = async (params: {
+  const generateProposalTapFromProposal = async (params: {
     proposal: any;
-    projectName?: string | null;
-    startDate?: string | null;
+    tapDraft?: ProposalTapDraft | null;
     actorUserId?: string | null;
     req: Request;
   }) => {
-    const { proposal, projectName, startDate, actorUserId, req } = params;
+    const { proposal, actorUserId, req } = params;
+    const tapDraft = normalizeProposalTapDraft(proposal, params.tapDraft ?? proposal.tapPayload ?? null);
 
     if (proposal.projectId) {
       throw new Error('Proposta ja convertida em projeto');
@@ -976,19 +1232,21 @@ export async function registerRoutes(
       throw new Error('Apenas propostas com sucesso podem ser convertidas');
     }
 
+    validateProposalTapDraft(tapDraft);
+
     const project = await storage.createProject({
-      name: projectName || proposal.title,
-      description: proposal.description,
+      name: tapDraft.projectName || proposal.title,
+      description: tapDraft.executiveSummary || proposal.description,
       clientId: proposal.clientId,
       coordinatorId: proposal.coordinatorId,
-      startDate: startDate || proposal.expectedStartDate,
-      endDate: proposal.expectedEndDate,
-      budgetHours: proposal.estimatedHours,
-      budgetValue: proposal.totalValue,
+      startDate: tapDraft.startDate || proposal.expectedStartDate,
+      endDate: tapDraft.endDate || proposal.expectedEndDate,
+      budgetHours: tapDraft.budgetHours,
+      budgetValue: tapDraft.budgetValue,
     });
 
     const client = await storage.getClient(proposal.clientId);
-    const tapPayload = buildProjectTapPayload({ proposal, project, client });
+    const tapPayload = buildProjectTapPayload({ proposal, project, client, tapDraft });
     const tapLinks = buildProjectTapEmailLinks(project.id);
     const tap = await storage.createProjectTap({
       projectId: project.id,
@@ -1006,6 +1264,17 @@ export async function registerRoutes(
       tapGeneratedAt: new Date(),
       tapLastEmailError: null,
       setupStatus: PROJECT_SETUP_STATUS.PENDING,
+    } as any);
+
+    await storage.updateProposal(proposal.id, {
+      ...(proposal.status === 'approved' ? { status: 'com_sucesso' } : {}),
+      projectId: project.id,
+      tapPayload: tapDraft as any,
+      tapStatus: PROPOSAL_TAP_STATUS.GENERATED,
+      tapGeneratedAt: new Date(),
+      tapGeneratedById: actorUserId ?? null,
+      tapSentAt: null,
+      tapLastEmailError: null,
     } as any);
 
     const outbox = await storage.queueEmailOutbox({
@@ -1027,24 +1296,35 @@ export async function registerRoutes(
         tapId: tap.id,
       });
 
-      if (emailResult.ok) {
-        await storage.updateProject(project.id, {
-          tapStatus: PROJECT_TAP_STATUS.SENT,
-          tapSentAt: new Date(),
-          tapLastEmailError: null,
-        } as any);
-        await storage.updateEmailOutbox(outbox.id, {
-          status: EMAIL_OUTBOX_STATUS.SENT,
-          attemptCount: 1,
-          sentAt: new Date(),
-          lastError: null,
-        } as any);
-        await clearTapEmailFailureNotifications(project.id);
+      if (!emailResult.ok) {
+        throw new Error('Postmark não configurado para envio do TAP');
       }
+
+      await storage.updateProject(project.id, {
+        tapStatus: PROJECT_TAP_STATUS.SENT,
+        tapSentAt: new Date(),
+        tapLastEmailError: null,
+      } as any);
+      await storage.updateProposal(proposal.id, {
+        tapStatus: PROPOSAL_TAP_STATUS.SENT,
+        tapSentAt: new Date(),
+        tapLastEmailError: null,
+      } as any);
+      await storage.updateEmailOutbox(outbox.id, {
+        status: EMAIL_OUTBOX_STATUS.SENT,
+        attemptCount: 1,
+        sentAt: new Date(),
+        lastError: null,
+      } as any);
+      await clearTapEmailFailureNotifications(project.id);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       await storage.updateProject(project.id, {
         tapStatus: PROJECT_TAP_STATUS.FAILED,
+        tapLastEmailError: errorMessage,
+      } as any);
+      await storage.updateProposal(proposal.id, {
+        tapStatus: PROPOSAL_TAP_STATUS.FAILED,
         tapLastEmailError: errorMessage,
       } as any);
       await storage.updateEmailOutbox(outbox.id, {
@@ -1061,16 +1341,11 @@ export async function registerRoutes(
       });
     }
 
-    await storage.updateProposal(proposal.id, {
-      ...(proposal.status === 'approved' ? { status: 'com_sucesso' } : {}),
-      projectId: project.id,
-    });
-
     if (typeof actorUserId === 'string') {
       await safeCreateUserActivity(req, actorUserId, {
         category: 'system',
-        action: 'PROPOSAL_CONVERTED',
-        title: `Proposta convertida em projeto — ${proposal.code}`,
+        action: 'PROPOSAL_TAP_GENERATED',
+        title: `TAP gerado a partir da proposta — ${proposal.code}`,
         metadata: {
           proposalId: proposal.id,
           code: proposal.code,
@@ -1092,7 +1367,13 @@ export async function registerRoutes(
       });
     }
 
-    return project;
+    const updatedProject = await storage.getProject(project.id);
+    const updatedProposal = await storage.getProposal(proposal.id);
+
+    return {
+      project: updatedProject ?? project,
+      proposal: updatedProposal,
+    };
   };
 
   app.post('/api/auth/login', async (req, res) => {
@@ -1343,7 +1624,7 @@ export async function registerRoutes(
     });
   });
 
-  const allowedHeaderShortcutPaths = new Set(['/', '/clients', '/proposals', '/projects', '/time-entries', '/reports', '/categories', '/users', '/settings']);
+  const allowedHeaderShortcutPaths = new Set(['/', '/clients', '/proposals', '/projects', '/time-entries', '/reports', '/categories', '/cost-centers', '/users', '/settings']);
 
   const normalizeHeaderShortcutPaths = (value: unknown): string[] => {
     if (!Array.isArray(value)) return [];
@@ -1902,15 +2183,6 @@ export async function registerRoutes(
       }
 
       const proposal = await storage.updateProposal(req.params.id, req.body);
-      const proposalStatus = typeof (proposal as any)?.status === 'string' ? (proposal as any).status : existing.status;
-
-      if (proposal && !proposal.projectId && autoConvertStatuses.has(proposalStatus)) {
-        await convertProposalToProject({
-          proposal,
-          actorUserId: typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null,
-          req,
-        });
-      }
 
       const responseProposal = await storage.getProposal(req.params.id);
 
@@ -2049,15 +2321,108 @@ export async function registerRoutes(
       return res.status(400).json({ message: 'Apenas propostas com sucesso podem ser convertidas' });
     }
 
-    const project = await convertProposalToProject({
+    const result = await generateProposalTapFromProposal({
       proposal,
-      projectName,
-      startDate,
+      tapDraft: normalizeProposalTapDraft(proposal, {
+        ...(proposal.tapPayload && typeof proposal.tapPayload === 'object' ? proposal.tapPayload : {}),
+        projectName,
+        startDate,
+      }),
       actorUserId: typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null,
       req,
     });
 
-    res.status(201).json(project);
+    res.status(201).json(result.project);
+  });
+
+  app.put('/api/proposals/:id/tap', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+    try {
+      const proposal = await storage.getProposal(req.params.id);
+      if (!proposal) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      const latest = await storage.getLatestProposalByCode(proposal.code);
+      if (latest && (latest.revision ?? 0) > (proposal.revision ?? 0)) {
+        return res.status(400).json({ message: 'Somente a ultima revisao pode gerar TAP' });
+      }
+
+      if (!conversionAllowedStatuses.has(proposal.status)) {
+        return res.status(400).json({ message: 'O TAP so pode ser preparado para propostas concluídas com sucesso' });
+      }
+
+      if (proposal.projectId) {
+        return res.status(400).json({ message: 'O TAP desta proposta ja foi gerado e esta em modo somente leitura' });
+      }
+
+      const tapDraft = normalizeProposalTapDraft(proposal, req.body);
+      const updated = await storage.updateProposal(req.params.id, {
+        tapPayload: tapDraft as any,
+        tapStatus: PROPOSAL_TAP_STATUS.DRAFT,
+        tapLastEmailError: null,
+      } as any);
+
+      res.json(updated);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao salvar TAP';
+      res.status(500).json({ message });
+    }
+  });
+
+  app.post('/api/proposals/:id/tap/generate', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+    try {
+      const proposal = await storage.getProposal(req.params.id);
+      if (!proposal) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      const latest = await storage.getLatestProposalByCode(proposal.code);
+      if (latest && (latest.revision ?? 0) > (proposal.revision ?? 0)) {
+        return res.status(400).json({ message: 'Somente a ultima revisao pode gerar TAP' });
+      }
+
+      const result = await generateProposalTapFromProposal({
+        proposal,
+        tapDraft: req.body,
+        actorUserId: typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null,
+        req,
+      });
+
+      res.status(201).json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao gerar TAP';
+      res.status(500).json({ message });
+    }
+  });
+
+  app.post('/api/proposals/:id/tap/resend-email', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+    const requester = (req as any).user as TokenPayload | undefined;
+    if (!requester?.sub) {
+      return res.status(401).json({ message: 'Usuário não autenticado' });
+    }
+
+    try {
+      const proposal = await storage.getProposal(req.params.id);
+      if (!proposal) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      if (!proposal.projectId) {
+        return res.status(400).json({ message: 'A proposta ainda nao gerou um projeto/TAP' });
+      }
+
+      await resendProjectTapEmail({
+        projectId: proposal.projectId,
+        actorUserId: requester.sub,
+        req,
+      });
+
+      const updatedProposal = await storage.getProposal(req.params.id);
+      res.json(updatedProposal);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao reenviar TAP';
+      res.status(500).json({ message });
+    }
   });
 
   app.get('/api/projects', authenticateToken, requireRoles(['projects']), async (_req, res) => {
@@ -2220,7 +2585,7 @@ export async function registerRoutes(
     res.json(tap);
   });
 
-  app.post('/api/projects/:id/tap/resend-email', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.post('/api/projects/:id/tap/resend-email', authenticateToken, requireRoles(['admin', 'commercial', 'projects']), async (req, res) => {
     const requester = (req as any).user as TokenPayload | undefined;
     if (!requester?.sub) {
       return res.status(401).json({ message: 'Usuário não autenticado' });
@@ -2422,7 +2787,7 @@ export async function registerRoutes(
   });
 
   app.post('/api/projects/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
-    const { projectId, collaboratorId, entryDate, hours, description, attachments } = req.body;
+    const { projectId, collaboratorId, costCenterId, entryDate, hours, description, attachments } = req.body;
 
     const normalizedAttachments = Array.isArray(attachments)
       ? attachments
@@ -2441,6 +2806,14 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
 
+    const normalizedCostCenterId = typeof costCenterId === 'string' && costCenterId.trim() ? costCenterId.trim() : null;
+    if (normalizedCostCenterId) {
+      const costCenter = await storage.getCostCenter(normalizedCostCenterId);
+      if (!costCenter || !costCenter.isActive) {
+        return res.status(400).json({ message: 'Centro de custo inválido' });
+      }
+    }
+
     const dailyEntries = await storage.getTimeEntriesByCollaboratorAndDate(collaboratorId, entryDate);
     const totalDailyHours = dailyEntries.reduce((sum, e) => sum + parseFloat(String(e.hours)), 0);
 
@@ -2453,6 +2826,7 @@ export async function registerRoutes(
     const entry = await storage.createTimeEntry({
       projectId,
       collaboratorId,
+      costCenterId: normalizedCostCenterId,
       entryDate,
       hours: String(hours),
       description,
@@ -2945,6 +3319,77 @@ export async function registerRoutes(
     const includeInactive = role === 'admin';
     const categories = await storage.getAllProposalCategories({ includeInactive });
     res.json(categories);
+  });
+
+  app.get('/api/cost-centers', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const role = (req as any)?.user?.role;
+    const includeInactive = role === 'admin';
+    const costCenters = await storage.getAllCostCenters({ includeInactive });
+    res.json(costCenters);
+  });
+
+  app.post('/api/cost-centers', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const isActive = req.body?.isActive;
+
+    if (!code || !name) {
+      return res.status(400).json({ message: 'Nome e sigla são obrigatórios' });
+    }
+
+    try {
+      const costCenter = await storage.createCostCenter({ code, name, isActive });
+      res.status(201).json(costCenter);
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return res.status(409).json({ message: 'Sigla já existe' });
+      }
+      res.status(500).json({ message: 'Erro ao criar centro de custo' });
+    }
+  });
+
+  app.put('/api/cost-centers/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const { id } = req.params;
+    const updates: Record<string, unknown> = {};
+
+    if (req.body?.code !== undefined) {
+      const code = typeof req.body.code === 'string' ? req.body.code.trim() : '';
+      if (!code) {
+        return res.status(400).json({ message: 'Sigla é obrigatória' });
+      }
+      updates.code = code;
+    }
+
+    if (req.body?.name !== undefined) {
+      const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+      if (!name) {
+        return res.status(400).json({ message: 'Nome é obrigatório' });
+      }
+      updates.name = name;
+    }
+
+    if (req.body?.isActive !== undefined) {
+      updates.isActive = Boolean(req.body.isActive);
+    }
+
+    try {
+      const result = await storage.updateCostCenter(id, updates);
+      if (!result) {
+        return res.status(404).json({ message: 'Centro de custo não encontrado' });
+      }
+      res.json(result);
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return res.status(409).json({ message: 'Sigla já existe' });
+      }
+      res.status(500).json({ message: 'Erro ao atualizar centro de custo' });
+    }
+  });
+
+  app.delete('/api/cost-centers/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const { id } = req.params;
+    await storage.deleteCostCenter(id);
+    res.status(204).send();
   });
 
   app.post('/api/proposal-categories', authenticateToken, requireRoles(['admin']), async (req, res) => {

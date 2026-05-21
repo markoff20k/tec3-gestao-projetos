@@ -26,6 +26,7 @@ import Reports from "@/pages/Reports";
 import Users from "@/pages/Users";
 import Settings from "@/pages/Settings";
 import Categories from "@/pages/Categories";
+import CostCenters from "@/pages/CostCenters";
 
 function ProtectedRoute({ component: Component }: { component: () => JSX.Element }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -72,6 +73,9 @@ function Router() {
       </Route>
       <Route path="/categories">
         <ProtectedRoute component={Categories} />
+      </Route>
+      <Route path="/cost-centers">
+        <ProtectedRoute component={CostCenters} />
       </Route>
       <Route path="/settings">
         <ProtectedRoute component={Settings} />

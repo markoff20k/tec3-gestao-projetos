@@ -7,11 +7,14 @@ export {
   type InsertProposal,
   type InsertProject,
   type InsertTimeEntry,
+  type InsertCostCenter,
   type User,
   type Client,
   type Proposal,
   type Project,
   type TimeEntry,
+  type TimeEntryWithCostCenter,
+  type CostCenter,
 } from "../server/storage";
 
 export const UserRole = {
