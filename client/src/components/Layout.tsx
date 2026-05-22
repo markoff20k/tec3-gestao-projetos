@@ -106,11 +106,11 @@ export function Layout({ children }: LayoutProps) {
         key={item.path}
         href={item.path}
         data-testid={`nav-${item.path.replace('/', '') || 'dashboard'}`}
-        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200
+        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200
           ${sidebarCollapsed ? 'justify-center' : ''}
           ${isActive
-            ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-            : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
+            ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md shadow-black/20 dark:shadow-[0_18px_34px_-22px_rgba(2,10,38,0.9)]'
+            : 'text-sidebar-foreground/72 hover:text-sidebar-foreground hover:bg-sidebar-accent/90'
           }`}
         onClick={() => setSidebarOpen(false)}
       >
@@ -134,18 +134,18 @@ export function Layout({ children }: LayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background dark:bg-[radial-gradient(circle_at_top_left,_rgba(55,130,255,0.08),_transparent_26%),linear-gradient(180deg,_rgba(8,20,78,0.16)_0%,_rgba(8,20,78,0)_34%)]">
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 ${sidebarWidth} bg-sidebar text-sidebar-foreground border-r border-sidebar-border layout-sidebar-contour transform transition-all duration-300 ease-in-out
+        className={`fixed inset-y-0 left-0 z-40 ${sidebarWidth} bg-sidebar text-sidebar-foreground border-r border-sidebar-border layout-sidebar-contour backdrop-blur-xl dark:bg-sidebar/95 dark:supports-[backdrop-filter]:bg-sidebar/88 transform transition-all duration-300 ease-in-out
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
       >
         <div className="flex flex-col h-full">
           {/* Logo Section */}
-          <div className="p-4">
+          <div className="p-4 dark:border-b dark:border-white/5">
             {sidebarCollapsed ? (
               <div className="flex flex-col items-center gap-2">
-                <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-md shadow-black/20 dark:shadow-[0_12px_26px_-16px_rgba(10,132,255,0.9)]">
                   <span className="text-primary-foreground font-bold text-lg">T3</span>
                 </div>
                 <Tooltip>
@@ -166,7 +166,7 @@ export function Layout({ children }: LayoutProps) {
                 <img 
                   src="/assets/tec3-logo.svg" 
                   alt="TEC3 Engenharia" 
-                  className="w-full max-h-12 object-contain brightness-0 invert"
+                  className="w-full max-h-12 object-contain brightness-0 invert dark:drop-shadow-[0_10px_18px_rgba(6,18,58,0.45)]"
                   data-testid="img-sidebar-logo"
                 />
                 <button
@@ -181,7 +181,7 @@ export function Layout({ children }: LayoutProps) {
           </div>
 
           {/* User Profile Section */}
-          <div className="px-4 py-3 border-t border-b border-sidebar-border">
+          <div className="px-4 py-3 border-t border-b border-sidebar-border dark:bg-white/[0.02]">
             <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
               <Avatar className="h-10 w-10 flex-shrink-0 bg-sidebar-accent">
                 {user?.photoUrl && (
@@ -276,7 +276,7 @@ export function Layout({ children }: LayoutProps) {
       </aside>
 
       {/* Header */}
-      <header className={`fixed top-0 right-0 left-0 ${sidebarCollapsed ? 'lg:left-20' : 'lg:left-72'} h-16 bg-sidebar border-b border-sidebar-border layout-header-contour z-30 px-4 lg:px-6 transition-all duration-300 ease-in-out`}>
+      <header className={`fixed top-0 right-0 left-0 ${sidebarCollapsed ? 'lg:left-20' : 'lg:left-72'} h-16 bg-sidebar border-b border-sidebar-border layout-header-contour backdrop-blur-xl dark:bg-sidebar/90 dark:supports-[backdrop-filter]:bg-sidebar/80 z-30 px-4 lg:px-6 transition-all duration-300 ease-in-out`}>
         <div className="flex items-center justify-between h-full gap-4">
           {/* Left: Mobile menu + Page title */}
           <div className="flex items-center gap-4">
@@ -303,7 +303,7 @@ export function Layout({ children }: LayoutProps) {
                 type="text"
                 placeholder={isCommercialProfile ? 'Buscar propostas...' : 'Buscar...'}
                 data-testid="input-search"
-                className="w-full pl-10 bg-sidebar-accent/50 border-sidebar-border text-sidebar-foreground placeholder:text-sidebar-foreground/40 focus:bg-sidebar-accent"
+                className="w-full pl-10 bg-sidebar-accent/50 border-sidebar-border text-sidebar-foreground placeholder:text-sidebar-foreground/40 focus:bg-sidebar-accent dark:bg-white/[0.04] dark:border-white/10 dark:focus:bg-white/[0.07]"
                 value={headerSearch}
                 onChange={(e) => setHeaderSearch(e.target.value)}
                 onKeyDown={(e) => {
@@ -333,7 +333,7 @@ export function Layout({ children }: LayoutProps) {
                   size="icon"
                   data-testid="button-theme-toggle"
                   onClick={toggleTheme}
-                  className="text-white/70 hover:text-white hover:bg-white/10"
+                  className="text-white/72 hover:text-white hover:bg-white/10 dark:hover:bg-white/[0.08]"
                 >
                   {theme === 'dark' ? (
                     <Sun className="h-5 w-5" />
@@ -354,7 +354,7 @@ export function Layout({ children }: LayoutProps) {
                   variant="ghost"
                   size="icon"
                   data-testid="button-profile-menu"
-                  className="text-white/70 hover:text-white hover:bg-white/10"
+                  className="text-white/72 hover:text-white hover:bg-white/10 dark:hover:bg-white/[0.08]"
                 >
                   <User className="h-5 w-5" />
                 </Button>

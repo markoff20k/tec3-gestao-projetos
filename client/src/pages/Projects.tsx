@@ -1248,16 +1248,16 @@ export default function Projects() {
         )}
 
         <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-          <DialogContent className="flex w-[calc(100vw-1rem)] max-h-[90vh] flex-col overflow-hidden p-0 sm:w-[calc(100vw-2rem)] max-w-5xl">
-            <DialogHeader className="shrink-0 border-b px-4 py-4 pr-12 sm:px-6">
+          <DialogContent className="flex w-[calc(100vw-1rem)] max-h-[90vh] flex-col overflow-hidden p-0 sm:w-[calc(100vw-2rem)] max-w-5xl dark:bg-[#102452] dark:border-white/10">
+            <DialogHeader className="shrink-0 border-b px-4 py-4 pr-12 sm:px-6 dark:border-white/10 dark:bg-[#163266]">
               <DialogTitle>Detalhes do Projeto</DialogTitle>
             </DialogHeader>
 
             {isLoadingSelectedProject ? (
               <div className="py-12 text-center text-muted-foreground">Carregando detalhes...</div>
             ) : selectedProject ? (
-              <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6 space-y-5 sm:space-y-6">
-                <div className="rounded-lg border bg-card p-4 sm:p-5 space-y-4">
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6 space-y-5 sm:space-y-6 dark:bg-[#102452]">
+                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 dark:bg-[#19386f] dark:border-white/10 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div className="space-y-2 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1273,7 +1273,7 @@ export default function Projects() {
                     </Badge>
                   </div>
 
-                  <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-3">
+                  <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-3 dark:border-white/10 dark:bg-[#24457d]">
                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Coordenador do Projeto</p>
                     <div className="mt-1 flex items-center gap-2">
                       <UserRound className="h-4 w-4 text-primary" />
@@ -1284,11 +1284,11 @@ export default function Projects() {
                   </div>
                 </div>
 
-                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-5">
-                  <div className="rounded-xl border border-primary/20 bg-[linear-gradient(135deg,rgba(13,79,137,0.09)_0%,rgba(47,136,205,0.04)_100%)] p-4 sm:p-5 space-y-4">
+                <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-5 dark:bg-[#14305f] dark:border-white/10">
+                  <div className="rounded-2xl border border-primary/20 bg-[linear-gradient(135deg,rgba(13,79,137,0.09)_0%,rgba(47,136,205,0.04)_100%)] p-4 sm:p-5 space-y-4 dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(32,82,172,0.35)_0%,rgba(24,54,118,0.72)_55%,rgba(16,35,82,0.95)_100%)]">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div className="space-y-2">
-                        <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-background/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
+                        <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-background/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary dark:bg-[#24457d] dark:border-white/10 dark:text-blue-100">
                           <Sparkles className="h-3.5 w-3.5" />
                           Onboarding do Projeto
                         </div>
@@ -1300,8 +1300,8 @@ export default function Projects() {
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <Badge variant="outline">TAP: {tapStatusLabels[selectedProject.tapStatus || 'not_generated'] || selectedProject.tapStatus || '-'}</Badge>
-                        <Badge variant="outline">Setup: {setupStatusLabels[selectedProject.setupStatus || 'pending'] || selectedProject.setupStatus || '-'}</Badge>
+                        <Badge variant="outline" className="dark:border-white/10 dark:bg-[#214273] dark:text-blue-50">TAP: {tapStatusLabels[selectedProject.tapStatus || 'not_generated'] || selectedProject.tapStatus || '-'}</Badge>
+                        <Badge variant="outline" className="dark:border-white/10 dark:bg-[#214273] dark:text-blue-50">Setup: {setupStatusLabels[selectedProject.setupStatus || 'pending'] || selectedProject.setupStatus || '-'}</Badge>
                       </div>
                     </div>
 
@@ -1323,12 +1323,12 @@ export default function Projects() {
                             key={item.title}
                             type="button"
                             onClick={() => setSetupStep(index)}
-                            className={`rounded-xl border p-4 text-left transition-colors ${item.complete ? 'border-emerald-200 bg-emerald-50/80' : isCurrent ? 'border-primary/40 bg-background' : 'border-border bg-background/80'}`}
+                            className={`rounded-xl border p-4 text-left transition-colors ${item.complete ? 'border-emerald-200 bg-emerald-50/80 dark:border-emerald-400/30 dark:bg-[#183f44]' : isCurrent ? 'border-primary/40 bg-background dark:border-blue-300/35 dark:bg-[#1f4277]' : 'border-border bg-background/80 dark:border-white/10 dark:bg-[#122a57]'}`}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="space-y-2">
                                 <div className="flex items-center gap-2">
-                                  <div className={`flex h-8 w-8 items-center justify-center rounded-full ${item.complete ? 'bg-emerald-100 text-emerald-700' : 'bg-primary/10 text-primary'}`}>
+                                  <div className={`flex h-8 w-8 items-center justify-center rounded-full ${item.complete ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-300/18 dark:text-emerald-100' : 'bg-primary/10 text-primary dark:bg-blue-300/18 dark:text-blue-100'}`}>
                                     <Icon className="h-4 w-4" />
                                   </div>
                                   <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Etapa {index + 1}</span>
@@ -1336,7 +1336,7 @@ export default function Projects() {
                                 <p className="text-sm font-semibold leading-tight">{item.title}</p>
                                 <p className="text-sm text-muted-foreground">{item.description}</p>
                               </div>
-                              <Badge variant={item.complete ? 'default' : 'outline'} className={item.complete ? 'bg-emerald-600 text-white hover:bg-emerald-600' : ''}>
+                              <Badge variant={item.complete ? 'default' : 'outline'} className={item.complete ? 'bg-emerald-600 text-white hover:bg-emerald-600' : 'dark:border-white/10 dark:bg-[#214273] dark:text-blue-50'}>
                                 {item.complete ? 'Concluído' : 'Pendente'}
                               </Badge>
                             </div>
@@ -1347,7 +1347,7 @@ export default function Projects() {
                   </div>
 
                   <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-                    <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
+                    <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 dark:bg-[#183767] dark:border-white/10">
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="text-sm font-semibold">Setup guiado</p>
@@ -1360,7 +1360,7 @@ export default function Projects() {
 
                       <form onSubmit={handleSetupSubmit} className="space-y-4">
                         {setupStep === 0 ? (
-                          <div className="space-y-4 rounded-lg border p-4">
+                          <div className="space-y-4 rounded-xl border p-4 dark:border-white/10 dark:bg-[#102247]">
                             <div className="space-y-1">
                               <p className="text-base font-semibold">Definir responsável operacional</p>
                               <p className="text-sm text-muted-foreground">
@@ -1387,7 +1387,7 @@ export default function Projects() {
                         ) : null}
 
                         {setupStep === 1 ? (
-                          <div className="space-y-4 rounded-lg border p-4">
+                          <div className="space-y-4 rounded-xl border p-4 dark:border-white/10 dark:bg-[#102247]">
                             <div className="space-y-1">
                               <p className="text-base font-semibold">Configurar regras do projeto</p>
                               <p className="text-sm text-muted-foreground">
@@ -1421,7 +1421,7 @@ export default function Projects() {
                         ) : null}
 
                         {setupStep === 2 ? (
-                          <div className="space-y-4 rounded-lg border p-4">
+                          <div className="space-y-4 rounded-xl border p-4 dark:border-white/10 dark:bg-[#102247]">
                             <div className="space-y-1">
                               <p className="text-base font-semibold">Revisão final</p>
                               <p className="text-sm text-muted-foreground">
@@ -1429,19 +1429,19 @@ export default function Projects() {
                               </p>
                             </div>
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                              <div className="rounded-lg border bg-muted/30 p-3">
+                              <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Coordenador</p>
                                 <p className="mt-1 text-sm font-semibold">{selectedProject.coordinator?.name || 'Não definido'}</p>
                               </div>
-                              <div className="rounded-lg border bg-muted/30 p-3">
+                              <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Limite diário</p>
                                 <p className="mt-1 text-sm font-semibold">{setupForm.dailyLimitHours || '-'} h</p>
                               </div>
-                              <div className="rounded-lg border bg-muted/30 p-3">
+                              <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Aprovação</p>
                                 <p className="mt-1 text-sm font-semibold">{setupForm.requiresApproval === 'true' ? 'Obrigatória' : 'Dispensada'}</p>
                               </div>
-                              <div className="rounded-lg border bg-muted/30 p-3">
+                              <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">TAP</p>
                                 <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.title || 'Ainda não disponível'}</p>
                               </div>
@@ -1474,7 +1474,7 @@ export default function Projects() {
                       </div>
                     </div>
 
-                    <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4">
+                    <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 dark:bg-[#183767] dark:border-white/10">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-semibold">TAP do projeto</p>
@@ -1482,12 +1482,12 @@ export default function Projects() {
                             Visualize, imprima ou exporte o termo de abertura com o snapshot comercial do projeto.
                           </p>
                         </div>
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary dark:bg-blue-300/18 dark:text-blue-100">
                           <FileText className="h-5 w-5" />
                         </div>
                       </div>
 
-                      <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+                      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3 dark:border-white/10 dark:bg-[#112a57]">
                         <div className="flex items-center gap-2">
                           <MailCheck className="h-4 w-4 text-primary" />
                           <p className="text-sm font-semibold">{selectedProjectTap?.title || 'TAP ainda não disponível'}</p>
@@ -1508,19 +1508,19 @@ export default function Projects() {
                       </div>
 
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="rounded-lg border p-3">
+                        <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
                           <p className="text-xs uppercase tracking-wide text-muted-foreground">Cliente</p>
                           <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.payload?.client?.razaoSocial || selectedProject.client?.razaoSocial || '-'}</p>
                         </div>
-                        <div className="rounded-lg border p-3">
+                        <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
                           <p className="text-xs uppercase tracking-wide text-muted-foreground">Proposta origem</p>
                           <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.payload?.proposal?.code || '-'}</p>
                         </div>
-                        <div className="rounded-lg border p-3">
+                        <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
                           <p className="text-xs uppercase tracking-wide text-muted-foreground">Horas previstas</p>
                           <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.payload?.project?.budgetHours ?? selectedProject.budgetHours ?? 0} h</p>
                         </div>
-                        <div className="rounded-lg border p-3">
+                        <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
                           <p className="text-xs uppercase tracking-wide text-muted-foreground">Valor previsto</p>
                           <p className="mt-1 text-sm font-semibold">{formatCurrency(Number(selectedProjectTap?.payload?.project?.budgetValue ?? selectedProject.budgetValue ?? 0))}</p>
                         </div>
