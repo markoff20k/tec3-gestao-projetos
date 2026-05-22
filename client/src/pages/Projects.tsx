@@ -163,10 +163,13 @@ export default function Projects() {
     const statusSingle = parseQueryList(params.get('status'));
     const nextStatusFilters = Array.from(new Set([...statusFromList, ...statusSingle]));
     const nextClientFilter = (params.get('clientId') ?? params.get('client') ?? '').trim();
+    const nextProjectId = (params.get('projectId') ?? '').trim();
 
     setSearch(params.get('search') ?? '');
     setStatusFilters(nextStatusFilters);
     setClientFilter(nextClientFilter);
+    setSelectedProjectId(nextProjectId || null);
+    setDetailsOpen(Boolean(nextProjectId));
 
     if (nextStatusFilters.length > 0 || nextClientFilter) {
       setFiltersOpen(true);

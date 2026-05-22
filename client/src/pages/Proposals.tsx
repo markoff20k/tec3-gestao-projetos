@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star, StarOff, Maximize2, Minimize2, PanelRightClose, Trash2, Edit, Eye, Download, Upload, LayoutGrid, List, GripVertical, FileText, Loader2, Mail, Paperclip, Bold, Italic, Underline, ListOrdered } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star, StarOff, Maximize2, Minimize2, PanelRightClose, Trash2, Edit, Eye, Download, Upload, LayoutGrid, List, GripVertical, FileText, Loader2, Mail, Paperclip, Bold, Italic, Underline, ListOrdered, FolderKanban, ArrowUpRight, CircleDashed, AlertTriangle, Sparkles, Route } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -62,7 +62,7 @@ import {
 } from '@/components/ui/tooltip';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
-import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse, ProposalTapDraft, ProposalTapAttachment } from '@/lib/api';
+import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, projectsApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse, ProposalTapDraft, ProposalTapAttachment, Project } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -414,6 +414,64 @@ const proposalTapStatusLabels: Record<string, string> = {
   failed: 'Falha no envio',
 };
 
+const projectStatusLabels: Record<string, string> = {
+  planning: 'Planejamento',
+  in_progress: 'Em andamento',
+  active: 'Em andamento',
+  on_hold: 'Pausado',
+  completed: 'Concluído',
+  cancelled: 'Cancelado',
+};
+
+const projectSetupStatusLabels: Record<string, string> = {
+  pending: 'Pendente',
+  in_progress: 'Em andamento',
+  completed: 'Concluído',
+};
+
+function getProposalTapButtonState(proposal: Proposal | null): 'completed' | 'draft' | 'not_started' {
+  if (!proposal) return 'not_started';
+
+  const tapStatus = String(proposal.tapStatus || 'not_started');
+  if (proposal.projectId || ['generated', 'sent', 'failed'].includes(tapStatus)) {
+    return 'completed';
+  }
+
+  if (tapStatus === 'draft' || Boolean(proposal.tapPayload)) {
+    return 'draft';
+  }
+
+  return 'not_started';
+}
+
+function getProposalTapButtonClassName(proposal: Proposal | null): string {
+  const state = getProposalTapButtonState(proposal);
+
+  if (state === 'completed') {
+    return 'border-emerald-600 bg-emerald-600 text-white hover:border-emerald-700 hover:bg-emerald-700';
+  }
+
+  if (state === 'draft') {
+    return 'border-amber-300 bg-amber-100 text-amber-900 hover:border-amber-400 hover:bg-amber-200';
+  }
+
+  return 'border-slate-300 bg-slate-100 text-slate-700 hover:border-slate-400 hover:bg-slate-200';
+}
+
+function getProposalTapStatusBadgeClassName(proposal: Proposal | null): string {
+  const state = getProposalTapButtonState(proposal);
+
+  if (state === 'completed') {
+    return 'bg-green-500 text-white hover:bg-green-500';
+  }
+
+  if (state === 'draft') {
+    return 'bg-yellow-500 text-white hover:bg-yellow-500';
+  }
+
+  return 'bg-gray-500 text-white hover:bg-gray-500';
+}
+
 function escapeTapHtml(value: string) {
   return value
     .replace(/&/g, '&amp;')
@@ -560,7 +618,7 @@ function RichTextEditor({
 }
 
 export default function Proposals() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -652,6 +710,8 @@ export default function Proposals() {
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [detailFullscreen, setDetailFullscreen] = useState(false);
   const [tapDialogOpen, setTapDialogOpen] = useState(false);
+  const [traceabilityOpen, setTraceabilityOpen] = useState(false);
+  const [projectSummaryOpen, setProjectSummaryOpen] = useState(false);
   const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
   const [deleteConfirmProposalId, setDeleteConfirmProposalId] = useState<string | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
@@ -1947,6 +2007,13 @@ export default function Proposals() {
 
   const tapReadOnly = useMemo(() => isProposalTapReadOnly(tapProposal), [tapProposal]);
   const tapCanResendEmail = Boolean(tapProposal?.projectId && tapProposal?.tapStatus === 'failed');
+  const selectedProposalTapButtonState = useMemo(() => getProposalTapButtonState(selectedProposal), [selectedProposal]);
+  const selectedProposalProjectId = selectedProposal?.projectId || null;
+  const { data: selectedProposalProject, isLoading: isLoadingSelectedProposalProject } = useQuery<Project>({
+    queryKey: ['/api/projects', selectedProposalProjectId, 'proposal-traceability'],
+    queryFn: () => projectsApi.getOne(selectedProposalProjectId as string),
+    enabled: (detailSheetOpen || traceabilityOpen || projectSummaryOpen) && !!selectedProposalProjectId,
+  });
   const tapGenerateDisabledReason = useMemo(() => {
     if (tapReadOnly) return null;
     if (generateTapMutation.isPending) return 'Gerando TAP...';
@@ -2052,6 +2119,46 @@ export default function Proposals() {
       dueDate: sentDate ? addDaysToDateOnly(sentDate, 30) : '',
     }));
   };
+
+  const openTraceabilityDialog = useCallback((proposal: Proposal, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    setSelectedProposal(proposal);
+    setTraceabilityOpen(true);
+  }, []);
+
+  const openTapFromTraceability = useCallback(() => {
+    if (!selectedProposal) return;
+    setTraceabilityOpen(false);
+    openTapDialog(selectedProposal);
+  }, [selectedProposal]);
+
+  const openProjectSummary = useCallback(() => {
+    if (!selectedProposal?.projectId) return;
+    setTraceabilityOpen(false);
+    setProjectSummaryOpen(true);
+  }, [selectedProposal?.projectId]);
+
+  const navigateToProject = useCallback(() => {
+    if (!selectedProposal?.projectId) return;
+    setProjectSummaryOpen(false);
+    setDetailSheetOpen(false);
+    setDetailFullscreen(false);
+    const projectCodeQuery = selectedProposalProject?.code
+      ? `&search=${encodeURIComponent(selectedProposalProject.code)}`
+      : '';
+    setLocation(`/projects?projectId=${selectedProposal.projectId}${projectCodeQuery}`);
+  }, [selectedProposal?.projectId, selectedProposalProject?.code, setLocation]);
+
+  useEffect(() => {
+    if (selectedProposal?.projectId) return;
+    setProjectSummaryOpen(false);
+  }, [selectedProposal?.projectId]);
+
+  useEffect(() => {
+    if (selectedProposal) return;
+    setTraceabilityOpen(false);
+    setProjectSummaryOpen(false);
+  }, [selectedProposal]);
 
   const handleCreateSentDateChange = (sentDate: string) => {
     setFormData((current) => ({
@@ -3509,7 +3616,7 @@ export default function Proposals() {
                   {primaryColumns.map((col) => (
                     <col key={col.id} style={{ width: estimateColumnWidthPx(col.width) }} />
                   ))}
-                  <col style={{ width: 96 }} />
+                  <col style={{ width: 220 }} />
                 </colgroup>
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -3562,7 +3669,7 @@ export default function Proposals() {
                         </div>
                       </TableHead>
                     ))}
-                    <TableHead className="w-24 text-right">Ações</TableHead>
+                    <TableHead className="w-[220px] text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
               </Table>
@@ -3576,7 +3683,7 @@ export default function Proposals() {
                   {primaryColumns.map((col) => (
                     <col key={col.id} style={{ width: estimateColumnWidthPx(col.width) }} />
                   ))}
-                  <col style={{ width: 96 }} />
+                  <col style={{ width: 220 }} />
                 </colgroup>
                 <TableBody>
                   {paginatedProposals.map((proposal) => {
@@ -3634,12 +3741,12 @@ export default function Proposals() {
                             </TableCell>
                           ))}
                           <TableCell className="text-right">
-                            <div className="flex justify-end gap-1">
+                            <div className="flex items-center justify-end gap-1 whitespace-nowrap">
                               {isLatestRevision(proposal) && canOpenProposalTap(proposal) && (
                                 <Button
                                   size="sm"
-                                  variant={proposal.projectId ? 'secondary' : 'outline'}
-                                  className="h-7 px-2 text-xs"
+                                  variant="secondary"
+                                  className={cn('h-6 min-w-[90px] px-2 py-0 text-xs font-medium shadow-none', getProposalTapStatusBadgeClassName(proposal))}
                                   data-testid={`button-open-tap-${proposal.id}`}
                                   onClick={(e) => openTapDialog(proposal, e)}
                                   onMouseDown={(e) => e.stopPropagation()}
@@ -3649,6 +3756,19 @@ export default function Proposals() {
                                   TAP
                                 </Button>
                               )}
+
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                data-testid={`button-open-traceability-${proposal.id}`}
+                                onClick={(e) => openTraceabilityDialog(proposal, e)}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                title="Abrir rastreabilidade"
+                              >
+                                <Route className="h-4 w-4" />
+                              </Button>
 
                               {isLatestRevision(proposal) && (
                                 <Button
@@ -4375,8 +4495,8 @@ export default function Proposals() {
                   )}
                   {canOpenProposalTap(selectedProposal) ? (
                     <Button
-                      variant={selectedProposal.projectId ? 'secondary' : 'default'}
-                      className="flex-1"
+                      variant="outline"
+                      className={cn('flex-1', getProposalTapButtonClassName(selectedProposal))}
                       onClick={() => openTapDialog(selectedProposal)}
                       data-testid="button-open-tap-from-sheet"
                     >
@@ -4384,6 +4504,15 @@ export default function Proposals() {
                       TAP
                     </Button>
                   ) : null}
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => openTraceabilityDialog(selectedProposal)}
+                    data-testid="button-open-traceability-from-sheet"
+                  >
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Rastreabilidade
+                  </Button>
                 </div>
 
                 <Separator />
@@ -4608,7 +4737,8 @@ export default function Proposals() {
                   )}
                   {canOpenProposalTap(selectedProposal) ? (
                     <Button
-                      variant={selectedProposal.projectId ? 'secondary' : 'default'}
+                      variant="outline"
+                      className={getProposalTapButtonClassName(selectedProposal)}
                       onClick={() => openTapDialog(selectedProposal)}
                       data-testid="button-open-tap-from-fullscreen"
                     >
@@ -4616,6 +4746,14 @@ export default function Proposals() {
                       TAP
                     </Button>
                   ) : null}
+                  <Button
+                    variant="outline"
+                    onClick={() => openTraceabilityDialog(selectedProposal)}
+                    data-testid="button-open-traceability-from-fullscreen"
+                  >
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Rastreabilidade
+                  </Button>
                 </div>
 
                 <Separator />
@@ -4770,6 +4908,257 @@ export default function Proposals() {
                     </Card>
                   </div>
                 </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={traceabilityOpen} onOpenChange={setTraceabilityOpen}>
+          <DialogContent className="max-w-4xl overflow-hidden">
+            <DialogHeader>
+              <DialogTitle>Rastreabilidade da proposta</DialogTitle>
+              <DialogDescription>
+                Acompanhe o avanço da proposta, abra o TAP quando necessário e consulte o projeto vinculado sem sair deste contexto.
+              </DialogDescription>
+            </DialogHeader>
+
+            {selectedProposal ? (
+              <div className="space-y-5">
+                <div className="rounded-2xl border bg-muted/20 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="font-mono">{selectedProposal.code}</Badge>
+                        <Badge variant="secondary">{statusLabels[selectedProposal.status] || selectedProposal.status}</Badge>
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-semibold text-foreground">{selectedProposal.title}</h3>
+                        <p className="text-sm text-muted-foreground">
+                          {selectedProposal.client?.razaoSocial || 'Cliente não identificado'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge className={cn('border', getProposalTapButtonClassName(selectedProposal))}>
+                        TAP {proposalTapStatusLabels[selectedProposal.tapStatus || 'not_started'] || 'Não iniciado'}
+                      </Badge>
+                      <Badge variant="outline">
+                        Projeto {selectedProposal.projectId ? 'criado' : 'pendente'}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-3">
+                  <button
+                    type="button"
+                    className="rounded-2xl border bg-card p-4 text-left"
+                    data-testid="proposal-traceability-step-proposal"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Passo 1</p>
+                        <h4 className="text-base font-semibold text-foreground">Proposta</h4>
+                        <p className="text-sm text-muted-foreground">A etapa comercial registra o estado atual da proposta e libera o restante do fluxo quando aplicável.</p>
+                      </div>
+                      <Badge variant="secondary">{statusLabels[selectedProposal.status] || selectedProposal.status}</Badge>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={cn(
+                      'rounded-2xl border p-4 text-left transition-colors',
+                      selectedProposalTapButtonState === 'completed' && 'border-emerald-200 bg-emerald-50',
+                      selectedProposalTapButtonState === 'draft' && 'border-amber-200 bg-amber-50',
+                      selectedProposalTapButtonState === 'not_started' && 'border-slate-200 bg-slate-50',
+                      canOpenProposalTap(selectedProposal) && isLatestRevision(selectedProposal) ? 'hover:bg-opacity-80' : 'cursor-default'
+                    )}
+                    onClick={canOpenProposalTap(selectedProposal) && isLatestRevision(selectedProposal) ? openTapFromTraceability : undefined}
+                    data-testid="proposal-traceability-step-tap"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Passo 2</p>
+                        <h4 className="text-base font-semibold text-foreground">TAP</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {canOpenProposalTap(selectedProposal)
+                            ? isLatestRevision(selectedProposal)
+                              ? 'Abra o TAP para preencher, revisar ou consultar o termo operacional desta proposta.'
+                              : 'O TAP fica disponível para consulta na revisão mais recente da proposta.'
+                            : 'O TAP será liberado quando a proposta atingir o status comercial esperado.'}
+                        </p>
+                      </div>
+                      <Badge className={cn('border', getProposalTapButtonClassName(selectedProposal))}>
+                        {proposalTapStatusLabels[selectedProposal.tapStatus || 'not_started'] || 'Não iniciado'}
+                      </Badge>
+                    </div>
+                    {canOpenProposalTap(selectedProposal) && isLatestRevision(selectedProposal) ? (
+                      <div className="mt-4 flex items-center justify-between text-sm font-medium text-foreground">
+                        <span>Abrir TAP</span>
+                        <ArrowUpRight className="h-4 w-4" />
+                      </div>
+                    ) : null}
+                  </button>
+
+                  <button
+                    type="button"
+                    className={cn(
+                      'rounded-2xl border p-4 text-left transition-colors',
+                      selectedProposal.projectId ? 'border-primary/20 bg-primary/5 hover:bg-primary/10' : 'border-dashed bg-muted/10 cursor-default'
+                    )}
+                    onClick={selectedProposal.projectId ? openProjectSummary : undefined}
+                    data-testid="proposal-traceability-step-project"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Passo 3</p>
+                        <h4 className="text-base font-semibold text-foreground">Projeto</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {selectedProposal.projectId
+                            ? 'Consulte os principais dados operacionais do projeto criado a partir desta proposta.'
+                            : 'O projeto será criado após a geração final do TAP.'}
+                        </p>
+                      </div>
+                      <Badge variant={selectedProposal.projectId ? 'default' : 'outline'}>
+                        {selectedProposal.projectId ? 'Disponível' : 'Pendente'}
+                      </Badge>
+                    </div>
+                    {selectedProposal.projectId ? (
+                      <div className="mt-4 flex items-center justify-between text-sm font-medium text-foreground">
+                        <span>Ver projeto</span>
+                        <ArrowUpRight className="h-4 w-4" />
+                      </div>
+                    ) : null}
+                  </button>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-2xl border bg-card p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Valor</p>
+                    <p className="mt-2 text-lg font-semibold text-foreground">{formatCurrency(selectedProposal.totalValue || 0)}</p>
+                  </div>
+                  <div className="rounded-2xl border bg-card p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Prazo</p>
+                    <p className="mt-2 text-sm font-semibold text-foreground">{formatDate(selectedProposal.dueDate)}</p>
+                  </div>
+                  <div className="rounded-2xl border bg-card p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Projeto vinculado</p>
+                    <p className="mt-2 text-sm font-semibold text-foreground">{selectedProposalProject?.code || 'Ainda não criado'}</p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button type="button" variant="outline" onClick={() => setTraceabilityOpen(false)}>
+                    Fechar
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={projectSummaryOpen} onOpenChange={setProjectSummaryOpen}>
+          <DialogContent className="max-w-3xl overflow-hidden">
+            <DialogHeader>
+              <DialogTitle>Resumo do projeto vinculado</DialogTitle>
+              <DialogDescription>
+                Consulte o panorama operacional sem sair da proposta e avance para o projeto quando precisar aprofundar.
+              </DialogDescription>
+            </DialogHeader>
+
+            {isLoadingSelectedProposalProject ? (
+              <div className="space-y-4 py-6">
+                <div className="h-24 animate-pulse rounded-3xl bg-muted/60" />
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="h-24 animate-pulse rounded-2xl bg-muted/50" />
+                  <div className="h-24 animate-pulse rounded-2xl bg-muted/50" />
+                  <div className="h-24 animate-pulse rounded-2xl bg-muted/50" />
+                  <div className="h-24 animate-pulse rounded-2xl bg-muted/50" />
+                </div>
+              </div>
+            ) : selectedProposalProject ? (
+              <div className="space-y-5">
+                <div className="overflow-hidden rounded-[1.6rem] border bg-card p-5">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="font-mono">{selectedProposalProject.code}</Badge>
+                        <Badge className="bg-primary text-primary-foreground hover:bg-primary">
+                          {projectStatusLabels[selectedProposalProject.status] || selectedProposalProject.status}
+                        </Badge>
+                        <Badge variant="outline">
+                          Setup: {projectSetupStatusLabels[selectedProposalProject.setupStatus || 'pending'] || selectedProposalProject.setupStatus || '-'}
+                        </Badge>
+                        <Badge variant="outline">
+                          TAP: {selectedProposalProject.tapStatus ? (selectedProposalProject.tapStatus === 'not_generated' ? 'Não gerado' : selectedProposalProject.tapStatus === 'generated' ? 'Gerado' : selectedProposalProject.tapStatus === 'sent' ? 'Enviado' : 'Falha no envio') : '-'}
+                        </Badge>
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-semibold leading-tight text-foreground">{selectedProposalProject.name}</h3>
+                        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                          {selectedProposalProject.client?.razaoSocial || selectedProposal?.client?.razaoSocial || 'Cliente não identificado'}
+                        </p>
+                      </div>
+                      <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                        {selectedProposalProject.description || 'Projeto criado a partir desta proposta e pronto para consulta operacional.'}
+                      </p>
+                    </div>
+
+                    <div className="grid min-w-[220px] grid-cols-2 gap-3">
+                      <div className="rounded-2xl border border-border/70 bg-background/80 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Horas</p>
+                        <p className="mt-1 text-lg font-semibold text-foreground">{selectedProposalProject.budgetHours || 0}h</p>
+                      </div>
+                      <div className="rounded-2xl border border-border/70 bg-background/80 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Valor</p>
+                        <p className="mt-1 text-lg font-semibold text-foreground">{formatCurrency(selectedProposalProject.budgetValue || 0)}</p>
+                      </div>
+                      <div className="rounded-2xl border border-border/70 bg-background/80 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Início</p>
+                        <p className="mt-1 text-sm font-semibold text-foreground">{formatDate(selectedProposalProject.startDate)}</p>
+                      </div>
+                      <div className="rounded-2xl border border-border/70 bg-background/80 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Fim</p>
+                        <p className="mt-1 text-sm font-semibold text-foreground">{formatDate(selectedProposalProject.endDate)}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl border bg-card p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Coordenador</p>
+                    <p className="mt-2 text-sm font-semibold text-foreground">{selectedProposalProject.coordinator?.name || userNameById.get(selectedProposalProject.coordinatorId || '') || 'Não definido'}</p>
+                  </div>
+                  <div className="rounded-2xl border bg-card p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Limite diário</p>
+                    <p className="mt-2 text-sm font-semibold text-foreground">{selectedProposalProject.dailyLimitHours ? `${selectedProposalProject.dailyLimitHours}h` : 'Livre'}</p>
+                  </div>
+                  <div className="rounded-2xl border bg-card p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Aprovação de horas</p>
+                    <p className="mt-2 text-sm font-semibold text-foreground">{selectedProposalProject.requiresApproval ? 'Obrigatória' : 'Não obrigatória'}</p>
+                  </div>
+                  <div className="rounded-2xl border bg-card p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Criado em</p>
+                    <p className="mt-2 text-sm font-semibold text-foreground">{formatDate(selectedProposalProject.createdAt)}</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  <Button type="button" variant="outline" onClick={() => setProjectSummaryOpen(false)}>
+                    Fechar
+                  </Button>
+                  <Button type="button" onClick={navigateToProject} data-testid="button-go-to-linked-project">
+                    <FolderKanban className="mr-2 h-4 w-4" />
+                    Abrir projeto
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
+                O projeto vinculado ainda não está disponível para consulta.
               </div>
             )}
           </DialogContent>
