@@ -333,7 +333,7 @@ export function Layout({ children }: LayoutProps) {
                   size="icon"
                   data-testid="button-theme-toggle"
                   onClick={toggleTheme}
-                  className="text-white/72 hover:text-white hover:bg-white/10 dark:hover:bg-white/[0.08]"
+                  className="header-icon-button"
                 >
                   {theme === 'dark' ? (
                     <Sun className="h-5 w-5" />
@@ -354,7 +354,7 @@ export function Layout({ children }: LayoutProps) {
                   variant="ghost"
                   size="icon"
                   data-testid="button-profile-menu"
-                  className="text-white/72 hover:text-white hover:bg-white/10 dark:hover:bg-white/[0.08]"
+                  className="header-icon-button"
                 >
                   <User className="h-5 w-5" />
                 </Button>

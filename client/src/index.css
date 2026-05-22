@@ -340,4 +340,19 @@
       0 0 0 1px hsl(var(--sidebar-border) / 0.68),
       0 14px 30px -18px hsl(228 75% 4% / 0.58);
   }
+
+  .header-icon-button {
+    color: hsl(var(--sidebar-foreground) / 0.74);
+  }
+
+  .header-icon-button:hover {
+    color: hsl(var(--sidebar-foreground));
+    background-color: hsl(var(--sidebar-accent) / 0.8);
+  }
+
+  .header-icon-button > svg,
+  .header-icon-button svg {
+    color: inherit;
+    stroke: currentColor;
+  }
 }

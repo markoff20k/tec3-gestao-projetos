@@ -146,7 +146,7 @@ export function NotificationBell() {
               variant="ghost"
               size="icon"
               data-testid="button-notifications"
-              className="relative text-white/70 hover:text-white hover:bg-white/10"
+              className="header-icon-button relative"
             >
               <Bell className="h-5 w-5" />
               {unreadCount > 0 && (

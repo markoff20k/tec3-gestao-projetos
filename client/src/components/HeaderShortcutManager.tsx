@@ -113,7 +113,7 @@ export function HeaderShortcutManager() {
                 size="icon"
                 data-testid={`button-header-shortcut-${item.path.replace(/[^a-z0-9]/gi, '-')}`}
                 onClick={() => setLocation(item.path)}
-                className="text-white/70 hover:text-white hover:bg-white/10"
+                className="header-icon-button"
               >
                 <Icon className="h-5 w-5" />
               </Button>
@@ -131,7 +131,7 @@ export function HeaderShortcutManager() {
                 variant="ghost"
                 size="icon"
                 data-testid="button-header-shortcut-picker"
-                className="text-white/70 hover:text-white hover:bg-white/10"
+                className="header-icon-button"
               >
                 <Plus className="h-5 w-5" />
               </Button>
