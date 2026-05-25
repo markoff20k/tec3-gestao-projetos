@@ -56,6 +56,13 @@ export function useUpload(options: UseUploadOptions = {}) {
   const [error, setError] = useState<Error | null>(null);
   const [progress, setProgress] = useState(0);
 
+  const getAuthHeaders = useCallback((headers: Record<string, string> = {}) => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    return token
+      ? { ...headers, Authorization: `Bearer ${token}` }
+      : headers;
+  }, []);
+
   /**
    * Request a presigned URL from the backend.
    * IMPORTANT: Send JSON metadata, NOT the file itself.
@@ -64,9 +71,9 @@ export function useUpload(options: UseUploadOptions = {}) {
     async (file: File): Promise<UploadResponse> => {
       const response = await fetch("/api/uploads/request-url", {
         method: "POST",
-        headers: {
+        headers: getAuthHeaders({
           "Content-Type": "application/json",
-        },
+        }),
         body: JSON.stringify({
           name: file.name,
           size: file.size,
@@ -81,7 +88,7 @@ export function useUpload(options: UseUploadOptions = {}) {
 
       return response.json();
     },
-    []
+    [getAuthHeaders]
   );
 
   /**
@@ -92,16 +99,34 @@ export function useUpload(options: UseUploadOptions = {}) {
       const response = await fetch(uploadURL, {
         method: "PUT",
         body: file,
-        headers: {
+        headers: getAuthHeaders({
           "Content-Type": file.type || "application/octet-stream",
-        },
+        }),
       });
 
       if (!response.ok) {
         throw new Error("Failed to upload file to storage");
       }
     },
-    []
+    [getAuthHeaders]
+  );
+
+  const deleteUploadedFile = useCallback(
+    async (objectPath: string): Promise<void> => {
+      const normalizedObjectPath = String(objectPath || '').trim();
+      if (!normalizedObjectPath) return;
+
+      const response = await fetch(`/api/uploads?objectPath=${encodeURIComponent(normalizedObjectPath)}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to delete uploaded file');
+      }
+    },
+    [getAuthHeaders]
   );
 
   /**
@@ -164,9 +189,9 @@ export function useUpload(options: UseUploadOptions = {}) {
       // Use the actual file properties to request a per-file presigned URL
       const response = await fetch("/api/uploads/request-url", {
         method: "POST",
-        headers: {
+        headers: getAuthHeaders({
           "Content-Type": "application/json",
-        },
+        }),
         body: JSON.stringify({
           name: file.name,
           size: file.size,
@@ -185,11 +210,12 @@ export function useUpload(options: UseUploadOptions = {}) {
         headers: { "Content-Type": file.type || "application/octet-stream" },
       };
     },
-    []
+    [getAuthHeaders]
   );
 
   return {
     uploadFile,
+    deleteUploadedFile,
     getUploadParameters,
     isUploading,
     error,

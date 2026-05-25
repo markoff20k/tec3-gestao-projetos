@@ -57,6 +57,80 @@ const upload = multer({
   }
 });
 
+const LOCAL_UPLOADS_DIR = path.resolve(process.cwd(), 'uploads');
+const LOCAL_UPLOADS_ROUTE_PREFIX = '/uploads';
+
+function ensureLocalUploadsDir() {
+  if (!fs.existsSync(LOCAL_UPLOADS_DIR)) {
+    fs.mkdirSync(LOCAL_UPLOADS_DIR, { recursive: true });
+  }
+}
+
+function sanitizeUploadFileName(fileName: string): string {
+  const extension = path.extname(fileName || '').toLowerCase();
+  const baseName = path.basename(fileName || 'arquivo', extension)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+
+  const safeBaseName = baseName || 'arquivo';
+  const safeExtension = extension.replace(/[^.a-z0-9]/g, '');
+  return `${safeBaseName}${safeExtension}`;
+}
+
+function resolveLocalUploadPath(objectPath: string): string | null {
+  const normalizedObjectPath = String(objectPath || '').trim();
+  if (!normalizedObjectPath.startsWith(`${LOCAL_UPLOADS_ROUTE_PREFIX}/`)) {
+    return null;
+  }
+
+  const relativePath = normalizedObjectPath.slice(LOCAL_UPLOADS_ROUTE_PREFIX.length).replace(/^\/+/g, '');
+  if (!relativePath) {
+    return null;
+  }
+
+  const rootPath = path.resolve(LOCAL_UPLOADS_DIR);
+  const targetPath = path.resolve(rootPath, relativePath);
+  if (targetPath !== rootPath && !targetPath.startsWith(`${rootPath}${path.sep}`)) {
+    return null;
+  }
+
+  return targetPath;
+}
+
+async function deleteLocalUploadFile(objectPath: string) {
+  const targetPath = resolveLocalUploadPath(objectPath);
+  if (!targetPath) {
+    return;
+  }
+
+  try {
+    await fs.promises.unlink(targetPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+async function cleanupRemovedProposalTapAttachments(previousDraft: ProposalTapDraft | null | undefined, nextDraft: ProposalTapDraft | null | undefined) {
+  const previousAttachments = Array.isArray(previousDraft?.attachments) ? previousDraft.attachments : [];
+  const nextObjectPaths = new Set(
+    (Array.isArray(nextDraft?.attachments) ? nextDraft.attachments : [])
+      .map((attachment) => String(attachment.objectPath || '').trim())
+      .filter(Boolean)
+  );
+
+  const removedObjectPaths = previousAttachments
+    .map((attachment) => String(attachment.objectPath || '').trim())
+    .filter((objectPath) => objectPath && !nextObjectPaths.has(objectPath));
+
+  await Promise.all(removedObjectPaths.map((objectPath) => deleteLocalUploadFile(objectPath)));
+}
+
 const JWT_SECRET = process.env.SESSION_SECRET || 'dev-secret-key';
 const DEFAULT_JWT_EXPIRES_MINUTES = 24 * 60;
 const parsedJwtExpiresMinutes = Number.parseInt(String(process.env.JWT_EXPIRES_MINUTES ?? '').trim(), 10);
@@ -1209,6 +1283,85 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  ensureLocalUploadsDir();
+  app.use(LOCAL_UPLOADS_ROUTE_PREFIX, express.static(LOCAL_UPLOADS_DIR));
+
+  app.post('/api/uploads/request-url', authenticateToken, async (req, res) => {
+    try {
+      const { name, size, contentType } = req.body ?? {};
+      const rawName = String(name ?? '').trim();
+
+      if (!rawName) {
+        return res.status(400).json({ error: 'Missing required field: name' });
+      }
+
+      const fileId = crypto.randomUUID();
+      const safeFileName = sanitizeUploadFileName(rawName);
+      const storedFileName = `${fileId}-${safeFileName}`;
+
+      return res.json({
+        uploadURL: `/api/uploads/direct/${storedFileName}`,
+        objectPath: `${LOCAL_UPLOADS_ROUTE_PREFIX}/${storedFileName}`,
+        metadata: {
+          name: rawName,
+          size: Number(size) || 0,
+          contentType: String(contentType || 'application/octet-stream'),
+        },
+      });
+    } catch (error) {
+      console.error('Error generating local upload URL:', error);
+      return res.status(500).json({ error: 'Failed to generate upload URL' });
+    }
+  });
+
+  app.put('/api/uploads/direct/:fileName', authenticateToken, express.raw({ type: '*/*', limit: '25mb' }), async (req, res) => {
+    try {
+      const fileName = String(req.params.fileName || '').trim();
+      if (!fileName) {
+        return res.status(400).json({ error: 'Missing upload target' });
+      }
+
+      const uploadBody = Buffer.isBuffer(req.body)
+        ? req.body
+        : Buffer.from(req.body || []);
+
+      if (!uploadBody.length) {
+        return res.status(400).json({ error: 'Empty upload body' });
+      }
+
+      ensureLocalUploadsDir();
+      const targetPath = path.resolve(LOCAL_UPLOADS_DIR, fileName);
+      if (!targetPath.startsWith(LOCAL_UPLOADS_DIR)) {
+        return res.status(400).json({ error: 'Invalid upload target' });
+      }
+
+      fs.writeFileSync(targetPath, uploadBody);
+      return res.status(200).end();
+    } catch (error) {
+      console.error('Error storing local upload:', error);
+      return res.status(500).json({ error: 'Failed to store uploaded file' });
+    }
+  });
+
+  app.delete('/api/uploads', authenticateToken, async (req, res) => {
+    try {
+      const objectPath = String(req.query.objectPath || '').trim();
+      if (!objectPath) {
+        return res.status(400).json({ error: 'Missing objectPath' });
+      }
+
+      if (!resolveLocalUploadPath(objectPath)) {
+        return res.status(400).json({ error: 'Invalid upload target' });
+      }
+
+      await deleteLocalUploadFile(objectPath);
+      return res.status(204).end();
+    } catch (error) {
+      console.error('Error deleting local upload:', error);
+      return res.status(500).json({ error: 'Failed to delete uploaded file' });
+    }
+  });
+
   const conversionAllowedStatuses = new Set<string>([
     'com_sucesso',
     'sucesso_aditivo',
@@ -1222,6 +1375,7 @@ export async function registerRoutes(
     req: Request;
   }) => {
     const { proposal, actorUserId, req } = params;
+    const previousTapDraft = normalizeProposalTapDraft(proposal, proposal.tapPayload ?? null);
     const tapDraft = normalizeProposalTapDraft(proposal, params.tapDraft ?? proposal.tapPayload ?? null);
 
     if (proposal.projectId) {
@@ -1276,6 +1430,10 @@ export async function registerRoutes(
       tapSentAt: null,
       tapLastEmailError: null,
     } as any);
+
+    cleanupRemovedProposalTapAttachments(previousTapDraft, tapDraft).catch((error) => {
+      console.error('Error cleaning up removed TAP attachments:', error);
+    });
 
     const outbox = await storage.queueEmailOutbox({
       type: 'project_tap_generated',
@@ -2355,12 +2513,17 @@ export async function registerRoutes(
         return res.status(400).json({ message: 'O TAP desta proposta ja foi gerado e esta em modo somente leitura' });
       }
 
+      const previousTapDraft = normalizeProposalTapDraft(proposal, proposal.tapPayload ?? null);
       const tapDraft = normalizeProposalTapDraft(proposal, req.body);
       const updated = await storage.updateProposal(req.params.id, {
         tapPayload: tapDraft as any,
         tapStatus: PROPOSAL_TAP_STATUS.DRAFT,
         tapLastEmailError: null,
       } as any);
+
+      cleanupRemovedProposalTapAttachments(previousTapDraft, tapDraft).catch((error) => {
+        console.error('Error cleaning up removed TAP attachments:', error);
+      });
 
       res.json(updated);
     } catch (error) {

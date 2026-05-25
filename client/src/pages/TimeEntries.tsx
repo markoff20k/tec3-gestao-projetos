@@ -108,6 +108,7 @@ export default function TimeEntries() {
   const [selectedCostCenterId, setSelectedCostCenterId] = useState('');
   const [descriptionValue, setDescriptionValue] = useState('');
   const [attachments, setAttachments] = useState<TimeEntryAttachment[]>([]);
+  const [removingAttachmentPath, setRemovingAttachmentPath] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { data: projects = [] } = useQuery<Project[]>({
@@ -254,7 +255,7 @@ export default function TimeEntries() {
     setSelectedDate((current) => (viewMode === 'week' ? addWeeks(current, 1) : addMonths(current, 1)));
   };
 
-  const { uploadFile, isUploading, progress } = useUpload({
+  const { uploadFile, deleteUploadedFile, isUploading, progress } = useUpload({
     onError: (error) => {
       toast({ title: 'Erro ao anexar arquivo', description: error.message, variant: 'destructive' });
     },
@@ -291,8 +292,21 @@ export default function TimeEntries() {
     }
   };
 
-  const removeAttachment = (objectPath: string) => {
-    setAttachments((current) => current.filter((item) => item.objectPath !== objectPath));
+  const removeAttachment = async (objectPath: string) => {
+    setRemovingAttachmentPath(objectPath);
+
+    try {
+      await deleteUploadedFile(objectPath);
+      setAttachments((current) => current.filter((item) => item.objectPath !== objectPath));
+    } catch (error) {
+      toast({
+        title: 'Erro ao remover anexo',
+        description: error instanceof Error ? error.message : 'Não foi possível remover o anexo.',
+        variant: 'destructive',
+      });
+    } finally {
+      setRemovingAttachmentPath((current) => (current === objectPath ? null : current));
+    }
   };
 
   const handleSubmit = (event: React.FormEvent) => {
@@ -639,7 +653,7 @@ export default function TimeEntries() {
                             size="icon"
                             className="h-8 w-8 text-muted-foreground hover:text-foreground"
                             onClick={() => removeAttachment(attachment.objectPath)}
-                            disabled={createMutation.isPending}
+                            disabled={createMutation.isPending || removingAttachmentPath === attachment.objectPath}
                           >
                             <X className="h-4 w-4" />
                           </Button>
