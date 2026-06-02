@@ -843,24 +843,45 @@ export class PrismaStorage implements IStorage {
       },
     });
 
-    const coordinatorIds = Array.from(new Set(
-      proposals
-        .map((proposal) => proposal.coordinatorId)
-        .filter((coordinatorId): coordinatorId is string => Boolean(coordinatorId))
-    ));
-
-    const users = coordinatorIds.length > 0
-      ? await prisma.user.findMany({
-          where: { id: { in: coordinatorIds } },
-          select: { id: true, name: true },
-        })
-      : [];
+    const users = await prisma.user.findMany({
+      select: { id: true, name: true, email: true },
+      orderBy: [{ name: 'asc' }, { email: 'asc' }],
+    });
 
     const userNameById = new Map(users.map((user) => [user.id, user.name] as const));
+    const userNameByAlias = new Map<string, string>();
+    const normalize = (value: string | null | undefined): string => String(value ?? '').trim().toLocaleLowerCase('pt-BR');
+    const pushAlias = (alias: string | null | undefined, userName: string) => {
+      const key = normalize(alias);
+      if (!key || userNameByAlias.has(key)) return;
+      userNameByAlias.set(key, userName);
+    };
+
+    for (const user of users) {
+      pushAlias(user.name, user.name);
+      pushAlias(user.email, user.name);
+      const emailLocal = user.email.includes('@') ? user.email.split('@')[0] : user.email;
+      pushAlias(emailLocal, user.name);
+    }
 
     return proposals.map(p => ({
       ...p,
-      coordinatorName: p.coordinatorId ? userNameById.get(p.coordinatorId) ?? p.coordinatorName : p.coordinatorName,
+      coordinatorName: (() => {
+        const byId = p.coordinatorId ? userNameById.get(p.coordinatorId) : null;
+        if (byId) return byId;
+
+        const raw = String(p.coordinatorName ?? '').trim();
+        if (!raw) return p.coordinatorName;
+
+        const withoutDomain = raw.includes('\\') ? raw.split('\\').pop() || raw : raw;
+        const emailLocal = withoutDomain.includes('@') ? withoutDomain.split('@')[0] : withoutDomain;
+        return (
+          userNameByAlias.get(normalize(raw)) ||
+          userNameByAlias.get(normalize(withoutDomain)) ||
+          userNameByAlias.get(normalize(emailLocal)) ||
+          p.coordinatorName
+        );
+      })(),
       categoryValuesTotal: p.categoryValues?.reduce((sum, cv) => {
         const value = Number((cv as any).value) || 0;
         const hours = Number((cv as any).hours) || 0;

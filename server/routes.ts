@@ -8,6 +8,7 @@ import crypto from "crypto";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import puppeteer from "puppeteer-core";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 import { authenticateViaLdap, listAdDirectoryUsers } from "./ldap";
 
@@ -256,6 +257,12 @@ function toValidDate(value: unknown): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function getProposalPeriodDate(proposal: { sentDate?: unknown; createdAt?: unknown }): Date | null {
+  const sentDate = toValidDate((proposal as any).sentDate);
+  if (sentDate) return sentDate;
+  return toValidDate((proposal as any).createdAt);
+}
+
 function formatMonthYearLabel(date: Date): string {
   const month = date.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
   const year = date.getFullYear();
@@ -498,6 +505,13 @@ type ProposalTapDraft = {
   premises: string;
   exclusions: string;
   stakeholders: string;
+  reimbursableByClient: 'sim' | 'nao';
+  mobilityForecast: 'sim' | 'nao';
+  mobilityForecastDetails: string;
+  reimbursableExpensesForecast: 'sim' | 'nao';
+  reimbursableExpensesForecastDetails: string;
+  subcontractForecast: 'sim' | 'nao';
+  subcontractForecastDetails: string;
   notes: string;
   startDate?: string | null;
   endDate?: string | null;
@@ -505,6 +519,31 @@ type ProposalTapDraft = {
   budgetValue: number;
   attachments: ProposalTapAttachment[];
 };
+
+function normalizeTapYesNo(value: unknown, fallback: 'sim' | 'nao' = 'nao'): 'sim' | 'nao' {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'sim' || normalized === 's') return 'sim';
+  if (normalized === 'nao' || normalized === 'não' || normalized === 'n') return 'nao';
+  return fallback;
+}
+
+function toDateOnlyString(value: unknown): string | null {
+  if (!value) return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function resolveTapStartDateFromProposal(proposal: any, input?: Record<string, unknown>): string | null {
+  const status = String(proposal?.status ?? '').trim();
+  const successStatuses = new Set(['com_sucesso', 'sucesso_aditivo', 'approved']);
+
+  if (successStatuses.has(status)) {
+    return toDateOnlyString(proposal?.updatedAt) ?? toDateOnlyString(proposal?.expectedStartDate);
+  }
+
+  return toDateOnlyString(input?.startDate) ?? toDateOnlyString(proposal?.expectedStartDate);
+}
 
 function normalizeProposalTapAttachmentList(value: unknown): ProposalTapAttachment[] {
   if (!Array.isArray(value)) return [];
@@ -579,8 +618,15 @@ function normalizeProposalTapDraft(proposal: any, input?: unknown): ProposalTapD
     premises: String(existing.premises ?? '').trim(),
     exclusions: String(existing.exclusions ?? '').trim(),
     stakeholders: String(existing.stakeholders ?? '').trim(),
+    reimbursableByClient: normalizeTapYesNo(existing.reimbursableByClient),
+    mobilityForecast: normalizeTapYesNo(existing.mobilityForecast),
+    mobilityForecastDetails: String(existing.mobilityForecastDetails ?? '').trim(),
+    reimbursableExpensesForecast: normalizeTapYesNo(existing.reimbursableExpensesForecast),
+    reimbursableExpensesForecastDetails: String(existing.reimbursableExpensesForecastDetails ?? '').trim(),
+    subcontractForecast: normalizeTapYesNo(existing.subcontractForecast),
+    subcontractForecastDetails: String(existing.subcontractForecastDetails ?? '').trim(),
     notes: String(existing.notes ?? '').trim(),
-    startDate: String(existing.startDate ?? proposal?.expectedStartDate ?? '').trim() || null,
+    startDate: resolveTapStartDateFromProposal(proposal, existing),
     endDate: String(existing.endDate ?? proposal?.expectedEndDate ?? '').trim() || null,
     budgetHours: Number.isFinite(Number(existing.budgetHours)) ? Number(existing.budgetHours) : Number(proposal?.estimatedHours || 0),
     budgetValue: Number.isFinite(Number(existing.budgetValue)) ? Number(existing.budgetValue) : Number(proposal?.totalValue || 0),
@@ -592,14 +638,19 @@ function validateProposalTapDraft(draft: ProposalTapDraft) {
   if (!draft.projectName.trim()) {
     throw new Error('Informe o nome do projeto no TAP');
   }
+}
 
-  if (!draft.executiveSummary.trim()) {
-    throw new Error('Informe o sumário executivo antes de gerar o TAP');
+function resolveProposalTapErrorStatus(error: unknown): number {
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (
+    message === 'Informe o nome do projeto no TAP' ||
+    message === 'Proposta ja convertida em projeto' ||
+    message === 'Apenas propostas com sucesso podem ser convertidas'
+  ) {
+    return 400;
   }
 
-  if (!stripHtmlTags(draft.scopeHtml)) {
-    throw new Error('Informe o escopo antes de gerar o TAP');
-  }
+  return 500;
 }
 
 async function syncProposalTapStatusByProject(projectId: string, updates: Record<string, unknown>) {
@@ -631,8 +682,10 @@ function buildProjectTapPayload(params: {
       estimatedHours: Number(proposal.estimatedHours || 0),
       expectedStartDate: proposal.expectedStartDate ?? null,
       expectedEndDate: proposal.expectedEndDate ?? null,
+      successDate: proposal.updatedAt ?? null,
       type: proposal.type ?? null,
       coordinatorName: proposal.coordinatorName ?? null,
+      sentByName: proposal.sentByName ?? null,
       proposalOrigin: proposal.proposalOrigin ?? null,
       umbrellaRef: proposal.umbrellaRef ?? null,
       expectation: proposal.expectation ?? null,
@@ -663,6 +716,29 @@ function buildProjectTapPayload(params: {
           emailTecnico: client.emailTecnico ?? null,
         }
       : null,
+  };
+}
+
+function buildProjectTapPreviewProject(params: {
+  proposal: any;
+  project?: any | null;
+  tapDraft: ProposalTapDraft;
+}) {
+  const { proposal, project, tapDraft } = params;
+  if (project) {
+    return project;
+  }
+
+  return {
+    id: null,
+    code: proposal?.code || '-',
+    name: tapDraft.projectName || proposal?.title || '-',
+    description: proposal?.description ?? null,
+    status: 'planning',
+    budgetHours: Number(tapDraft.budgetHours || proposal?.estimatedHours || 0),
+    budgetValue: Number(tapDraft.budgetValue || proposal?.totalValue || 0),
+    dailyLimitHours: 0,
+    requiresApproval: false,
   };
 }
 
@@ -714,6 +790,13 @@ function buildProjectTapTemplateModel(params: {
     tap_exclusions: payload.tap?.exclusions || '-',
     tap_stakeholders: payload.tap?.stakeholders || '-',
     tap_notes: payload.tap?.notes || '-',
+    tap_reimbursable_by_client: payload.tap?.reimbursableByClient || 'nao',
+    tap_mobility_forecast: payload.tap?.mobilityForecast || 'nao',
+    tap_mobility_forecast_details: payload.tap?.mobilityForecastDetails || '-',
+    tap_reimbursable_expenses_forecast: payload.tap?.reimbursableExpensesForecast || 'nao',
+    tap_reimbursable_expenses_forecast_details: payload.tap?.reimbursableExpensesForecastDetails || '-',
+    tap_subcontract_forecast: payload.tap?.subcontractForecast || 'nao',
+    tap_subcontract_forecast_details: payload.tap?.subcontractForecastDetails || '-',
     tap_attachments: tapAttachments.length > 0
       ? tapAttachments.map((attachment: ProposalTapAttachment) => `${attachment.title}${attachment.description ? ` — ${attachment.description}` : ''}`).join('\n')
       : '-',
@@ -753,71 +836,105 @@ function formatProjectTapStatusLabel(value: string) {
 }
 
 const PROJECT_TAP_PUBLIC_LOGO_URL = 'https://www.tec3engenharia.com.br/wp-content/uploads/2025/09/tec3-LogoTagline-Cor.svg';
+const PROJECT_TAP_EMAIL_LOGO_ROUTE = '/branding/tec3-logo.png';
+const PROJECT_TAP_LOCAL_LOGO_PATH = path.resolve(process.cwd(), 'attached_assets', 'tec3-LogoTagline-Cor-320.png');
 
 const PROJECT_TAP_EMBEDDED_LOGO_URL = (() => {
   try {
-    const logoPath = path.resolve(process.cwd(), 'attached_assets', 'tec3-LogoTagline-Cor-320.png');
-    const logoBuffer = fs.readFileSync(logoPath);
+    const logoBuffer = fs.readFileSync(PROJECT_TAP_LOCAL_LOGO_PATH);
     return `data:image/png;base64,${logoBuffer.toString('base64')}`;
   } catch {
     return PROJECT_TAP_PUBLIC_LOGO_URL;
   }
 })();
 
-function buildProjectTapEmailLinks(projectId: string) {
-  const baseUrl = String(process.env.APP_BASE_URL || '').trim().replace(/\/$/, '');
+function getAppBaseUrl() {
+  return String(process.env.APP_BASE_URL || '').trim().replace(/\/$/, '');
+}
+
+function buildProjectTapRenderLinks(projectId: string) {
+  const baseUrl = getAppBaseUrl();
   return {
     projectUrl: baseUrl ? `${baseUrl}/projects/${projectId}` : null,
     logoUrl: PROJECT_TAP_EMBEDDED_LOGO_URL,
   };
 }
 
+function buildProjectTapEmailLinks(projectId: string) {
+  const baseUrl = getAppBaseUrl();
+  return {
+    projectUrl: baseUrl ? `${baseUrl}/projects/${projectId}` : null,
+    logoUrl: baseUrl ? `${baseUrl}${PROJECT_TAP_EMAIL_LOGO_ROUTE}` : PROJECT_TAP_PUBLIC_LOGO_URL,
+  };
+}
+
+function formatTapYesNoLabel(value: string | null | undefined): string {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'sim' || normalized === 's') return 'Sim';
+  return 'Não';
+}
+
+function formatProposalTypeForTap(value: string | null | undefined): string {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'fixed_price') return 'Preço fechado';
+  if (normalized === 'appropriation') return 'Preço sob demanda';
+  if (normalized === 'umbrella') return 'Guarda-chuva';
+  if (normalized === 'service_order') return 'Ordem de Serviço';
+  if (normalized === 'additive') return 'Aditivo';
+  return '-';
+}
+
 function renderProjectTapHtml(
   payload: ReturnType<typeof buildProjectTapPayload>,
-  options?: { projectUrl?: string | null; logoUrl?: string | null; tapId?: string | null }
+  options?: { projectUrl?: string | null; logoUrl?: string | null; logoCid?: string | null; tapId?: string | null }
 ) {
-  const projectCode = escapeProjectTapEmailHtml(payload.project.code);
-  const projectName = escapeProjectTapEmailHtml(payload.project.name);
-  const projectStatus = escapeProjectTapEmailHtml(formatProjectTapStatusLabel(payload.project.status));
-  const projectDescription = formatProjectTapEmailRichText(
-    payload.tap?.executiveSummary || payload.project.description || payload.proposal.description ||
-      'Projeto estruturado a partir de proposta aprovada, pronto para setup operacional e início da execução.'
-  );
-  const proposalCode = escapeProjectTapEmailHtml(payload.proposal.code);
-  const proposalTitle = escapeProjectTapEmailHtml(payload.proposal.title);
-  const proposalDescription = formatProjectTapEmailRichText(payload.proposal.description || '-');
+  const projectCode = escapeProjectTapEmailHtml(payload.project.code || '-');
+  const proposalOrigin = escapeProjectTapEmailHtml(payload.proposal.proposalOrigin || payload.proposal.code || '-');
   const clientName = escapeProjectTapEmailHtml(payload.client?.razaoSocial || payload.client?.nomeFantasia || '-');
+  const analystName = escapeProjectTapEmailHtml(payload.proposal.sentByName || '-');
+  const coordinatorName = escapeProjectTapEmailHtml(payload.proposal.coordinatorName || '-');
+  const projectTitle = escapeProjectTapEmailHtml(payload.project.name || payload.proposal.title || '-');
+  const contractType = escapeProjectTapEmailHtml(formatProposalTypeForTap(payload.proposal.type));
+  const reimbursableByClient = escapeProjectTapEmailHtml(formatTapYesNoLabel(payload.tap?.reimbursableByClient));
+  const contractGc = escapeProjectTapEmailHtml(payload.proposal.contractCode || payload.proposal.workOrders || '-');
+  const executionTerm = payload.proposal.termMonths != null ? escapeProjectTapEmailHtml(String(payload.proposal.termMonths)) : '-';
+  const startDate = escapeProjectTapEmailHtml(
+    formatProjectTapEmailDate(payload.tap?.startDate || payload.proposal.successDate || payload.proposal.expectedStartDate)
+  );
+  const mobilityForecast = escapeProjectTapEmailHtml(formatTapYesNoLabel(payload.tap?.mobilityForecast));
+  const reimbursableExpensesForecast = escapeProjectTapEmailHtml(formatTapYesNoLabel(payload.tap?.reimbursableExpensesForecast));
+  const subcontractForecast = escapeProjectTapEmailHtml(formatTapYesNoLabel(payload.tap?.subcontractForecast));
+  const mobilityDetails = formatProjectTapEmailRichText(payload.tap?.mobilityForecastDetails || '-');
+  const reimbursableExpensesDetails = formatProjectTapEmailRichText(payload.tap?.reimbursableExpensesForecastDetails || '-');
+  const subcontractDetails = formatProjectTapEmailRichText(payload.tap?.subcontractForecastDetails || '-');
+  const notes = formatProjectTapEmailRichText(payload.tap?.notes || '-');
   const generatedAt = escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.generatedAt));
   const projectUrl = options?.projectUrl || null;
   const logoUrl = options?.logoUrl || null;
+  const logoCid = String(options?.logoCid || '').trim();
+  const logoSrc = logoCid ? `cid:${logoCid}` : logoUrl;
   const tapId = escapeProjectTapEmailHtml(options?.tapId || '-');
-  const tapStartDate = escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.tap?.startDate || payload.proposal.expectedStartDate));
-  const tapEndDate = escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.tap?.endDate || payload.proposal.expectedEndDate));
-  const tapObjectives = formatProjectTapEmailRichText(payload.tap?.objectives || '-');
-  const tapDeliverables = formatProjectTapEmailRichText(payload.tap?.deliverables || '-');
-  const tapPremises = formatProjectTapEmailRichText(payload.tap?.premises || '-');
-  const tapExclusions = formatProjectTapEmailRichText(payload.tap?.exclusions || '-');
-  const tapStakeholders = formatProjectTapEmailRichText(payload.tap?.stakeholders || '-');
-  const tapNotes = formatProjectTapEmailRichText(payload.tap?.notes || '-');
-  const tapScope = formatProjectTapHtmlContent(payload.tap?.scopeHtml || '');
   const tapAttachments = Array.isArray(payload.tap?.attachments) ? payload.tap.attachments : [];
   const tapAttachmentsHtml = tapAttachments.length > 0
-    ? `<ul style="margin:0;padding-left:18px;color:#475569;font-size:14px;line-height:1.8;">${tapAttachments
+    ? `<ul style="margin:0;padding-left:18px;color:#334155;font-size:13px;line-height:1.7;">${tapAttachments
         .map((attachment: ProposalTapAttachment) => `<li><strong>${escapeProjectTapEmailHtml(attachment.title)}</strong>${attachment.description ? ` — ${escapeProjectTapEmailHtml(attachment.description)}` : ''}</li>`)
         .join('')}</ul>`
-    : '<div style="font-size:14px;line-height:1.8;color:#475569;">Nenhum anexo informado.</div>';
+    : '<span style="color:#334155;">Nenhum anexo informado.</span>';
 
-  const infoCard = (label: string, value: string) => `
-    <td style="padding:0 6px 12px 6px;" valign="top">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#f8fbff;border:1px solid #d7e5f3;border-radius:18px;">
-        <tr>
-          <td style="padding:16px 18px;">
-            <div style="font-size:11px;line-height:1.4;letter-spacing:0.12em;text-transform:uppercase;color:#5b6f82;font-weight:700;">${escapeProjectTapEmailHtml(label)}</div>
-            <div style="padding-top:8px;font-size:17px;line-height:1.45;color:#0f172a;font-weight:700;">${value}</div>
-          </td>
-        </tr>
-      </table>
-    </td>`;
+  const row = (labelLeft: string, valueLeft: string, labelRight: string, valueRight: string) => `
+    <tr>
+      <td style="padding:10px 12px;border:1px solid #d1d5db;background:#f3f4f6;font-size:13px;font-weight:700;color:#111827;">${escapeProjectTapEmailHtml(labelLeft)}</td>
+      <td style="padding:10px 12px;border:1px solid #d1d5db;background:#ffffff;font-size:13px;color:#111827;">${valueLeft}</td>
+      <td style="padding:10px 12px;border:1px solid #d1d5db;background:#f3f4f6;font-size:13px;font-weight:700;color:#111827;">${escapeProjectTapEmailHtml(labelRight)}</td>
+      <td style="padding:10px 12px;border:1px solid #d1d5db;background:#ffffff;font-size:13px;color:#111827;">${valueRight}</td>
+    </tr>`;
+
+  const ssmaRow = (label: string, value: string, details: string) => `
+    <tr>
+      <td style="padding:10px 12px;border:1px solid #d1d5db;background:#f3f4f6;font-size:13px;font-weight:700;color:#111827;">${escapeProjectTapEmailHtml(label)}</td>
+      <td style="padding:10px 12px;border:1px solid #d1d5db;background:#ffffff;font-size:13px;color:#111827;white-space:nowrap;">${value}</td>
+      <td style="padding:10px 12px;border:1px solid #d1d5db;background:#ffffff;font-size:13px;color:#111827;">${details}</td>
+    </tr>`;
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -826,216 +943,47 @@ function renderProjectTapHtml(
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TAP do Projeto ${projectCode}</title>
   </head>
-  <body style="margin:0;padding:0;background-color:#edf3f8;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:linear-gradient(180deg,#edf3f8 0%,#f8fbfe 100%);">
+  <body style="margin:0;padding:0;background-color:#eef2f7;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#eef2f7;">
       <tr>
-        <td align="center" style="padding:32px 14px;">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;max-width:760px;">
+        <td align="center" style="padding:24px 12px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;max-width:860px;">
             <tr>
-              <td style="padding-bottom:18px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#0d4f89;border-radius:28px 28px 0 0;overflow:hidden;">
+              <td style="padding:14px 18px;background:linear-gradient(90deg,#4f46e5 0%,#3b82f6 100%);border-radius:10px 10px 0 0;color:#ffffff;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
                   <tr>
-                    <td style="padding:28px 30px 18px 30px;background:linear-gradient(135deg,#0b4b82 0%,#1566aa 55%,#2f88cd 100%);">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-                        <tr>
-                          <td valign="top" style="padding-right:16px;">
-                            ${logoUrl ? `<img src="${escapeProjectTapEmailHtml(logoUrl)}" alt="Tec3 Engenharia" style="display:block;height:52px;width:auto;border:0;" />` : `<div style="display:inline-block;padding:10px 16px;border-radius:999px;background:rgba(255,255,255,0.14);font-size:15px;font-weight:800;letter-spacing:0.08em;color:#ffffff;">TEC3 ENGENHARIA</div>`}
-                          </td>
-                          <td align="right" valign="top">
-                            <div style="display:inline-block;padding:10px 14px;border-radius:999px;background:rgba(255,255,255,0.14);font-size:11px;line-height:1.2;letter-spacing:0.14em;text-transform:uppercase;color:#d9ebfb;font-weight:700;">Termo de Abertura do Projeto</div>
-                          </td>
-                        </tr>
-                      </table>
-
-                      <div style="padding-top:28px;font-size:13px;line-height:1.4;letter-spacing:0.18em;text-transform:uppercase;color:#cde4f9;font-weight:700;">Projeto aprovado e pronto para onboarding</div>
-                      <div style="padding-top:12px;font-size:34px;line-height:1.16;color:#ffffff;font-weight:800;">${projectCode} · ${projectName}</div>
-                      <div style="padding-top:14px;font-size:16px;line-height:1.7;color:#ecf5fd;max-width:620px;">
-                        A Tec3 Engenharia confirma a geração do TAP deste projeto, consolidando as bases comerciais, operacionais e de planejamento para um início seguro, organizado e com excelente percepção junto ao cliente.
-                      </div>
-
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;padding-top:26px;">
-                        <tr>
-                          ${infoCard('Cliente', clientName)}
-                          ${infoCard('Horas previstas', escapeProjectTapEmailHtml(`${payload.project.budgetHours} h`))}
-                        </tr>
-                        <tr>
-                          ${infoCard('Valor aprovado', escapeProjectTapEmailHtml(formatProjectTapEmailCurrency(payload.project.budgetValue)))}
-                          ${infoCard('Status inicial', projectStatus)}
-                        </tr>
-                      </table>
-                    </td>
+                    <td style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;">TAP - Termo de Abertura de Projeto</td>
+                    <td align="right">${logoSrc ? `<span style="display:inline-block;background:#ffffff;border-radius:6px;padding:4px 8px;"><img src="${escapeProjectTapEmailHtml(logoSrc)}" alt="Tec3 Engenharia" style="display:block;height:28px;width:auto;border:0;" /></span>` : ''}</td>
                   </tr>
                 </table>
               </td>
             </tr>
-
             <tr>
-              <td>
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#ffffff;border:1px solid #d7e5f3;border-top:0;border-radius:0 0 28px 28px;overflow:hidden;box-shadow:0 24px 60px rgba(15,23,42,0.08);">
+              <td style="background:#ffffff;border:1px solid #d1d5db;border-top:0;border-radius:0 0 10px 10px;padding:14px 10px 20px 10px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                  ${row('Centro de Custo', projectCode, 'Proposta Origem', proposalOrigin)}
+                  ${row('Cliente', clientName, 'Analista de Projeto', analystName)}
+                  ${row('Descrição (título)', projectTitle, 'Tipo de Contrato', contractType)}
+                  ${row('Coordenador', coordinatorName, 'Projeto Contrato GC', contractGc)}
+                  ${row('Despesa Reembolsável pelo Cliente?', reimbursableByClient, 'Prazo execução', executionTerm)}
+                  ${row('Data início', startDate, 'TAP ID', tapId)}
                   <tr>
-                    <td style="padding:28px 30px 12px 30px;">
-                      <div style="font-size:22px;line-height:1.3;color:#0f172a;font-weight:800;">Resumo executivo</div>
-                      <div style="padding-top:12px;font-size:15px;line-height:1.75;color:#475569;">
-                        ${projectDescription}
-                      </div>
-                    </td>
+                    <td colspan="4" style="padding:8px 12px;border:1px solid #d1d5db;background:linear-gradient(90deg,#4f46e5 0%,#3b82f6 100%);font-size:13px;color:#ffffff;font-weight:700;text-align:center;">SSMA e Despesas</td>
                   </tr>
-
+                  ${ssmaRow('Há previsão de mobilização de pessoas e/ou veículos?', mobilityForecast, mobilityDetails)}
+                  ${ssmaRow('Há previsão de despesas reembolsáveis?', reimbursableExpensesForecast, reimbursableExpensesDetails)}
+                  ${ssmaRow('Há previsão de subcontratação?', subcontractForecast, subcontractDetails)}
                   <tr>
-                    <td style="padding:0 24px;">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-                        <tr>
-                          <td style="padding:6px;" width="50%" valign="top">
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#f8fbff;border:1px solid #d7e5f3;border-radius:20px;">
-                              <tr>
-                                <td style="padding:20px;">
-                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.12em;text-transform:uppercase;color:#0d4f89;font-weight:800;">Base comercial</div>
-                                  <div style="padding-top:14px;font-size:13px;line-height:1.5;color:#5b6f82;font-weight:700;">Proposta de origem</div>
-                                  <div style="padding-top:4px;font-size:18px;line-height:1.45;color:#0f172a;font-weight:800;">${proposalCode}</div>
-                                  <div style="padding-top:14px;font-size:13px;line-height:1.5;color:#5b6f82;font-weight:700;">Título</div>
-                                  <div style="padding-top:4px;font-size:15px;line-height:1.6;color:#0f172a;font-weight:700;">${proposalTitle}</div>
-                                  <div style="padding-top:14px;font-size:13px;line-height:1.5;color:#5b6f82;font-weight:700;">Descrição</div>
-                                  <div style="padding-top:4px;font-size:14px;line-height:1.7;color:#475569;">${proposalDescription}</div>
-                                </td>
-                              </tr>
-                            </table>
-                          </td>
-                          <td style="padding:6px;" width="50%" valign="top">
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#0f172a;border-radius:20px;">
-                              <tr>
-                                <td style="padding:20px;">
-                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.12em;text-transform:uppercase;color:#7dd3fc;font-weight:800;">Próximos passos</div>
-                                  <div style="padding-top:14px;font-size:14px;line-height:1.8;color:#dbeafe;">
-                                    1. Validar o setup operacional do projeto.<br />
-                                    2. Confirmar responsáveis, limites de horas e regras de aprovação.<br />
-                                    3. Iniciar a execução com rastreabilidade e governança desde o primeiro dia.
-                                  </div>
-                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-top:20px;">
-                                    <tr>
-                                      <td style="padding:12px 0;border-top:1px solid rgba(255,255,255,0.12);font-size:12px;line-height:1.5;color:#93c5fd;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">TAP ID</td>
-                                    </tr>
-                                    <tr>
-                                      <td style="padding:0 0 10px 0;font-size:15px;line-height:1.6;color:#ffffff;font-weight:700;">${tapId}</td>
-                                    </tr>
-                                    <tr>
-                                      <td style="padding:12px 0 0 0;border-top:1px solid rgba(255,255,255,0.12);font-size:12px;line-height:1.5;color:#93c5fd;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">Gerado em</td>
-                                    </tr>
-                                    <tr>
-                                      <td style="padding-top:4px;font-size:15px;line-height:1.6;color:#ffffff;font-weight:700;">${generatedAt}</td>
-                                    </tr>
-                                  </table>
-                                </td>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
+                    <td style="padding:10px 12px;border:1px solid #d1d5db;background:#f3f4f6;font-size:13px;font-weight:700;color:#111827;">Obs:</td>
+                    <td colspan="3" style="padding:10px 12px;border:1px solid #d1d5db;background:#ffffff;font-size:13px;color:#111827;">${notes}</td>
                   </tr>
-
                   <tr>
-                    <td style="padding:18px 30px 8px 30px;">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#f5f9fd;border:1px solid #d7e5f3;border-radius:22px;">
-                        <tr>
-                          <td style="padding:22px 24px;">
-                            <div style="font-size:20px;line-height:1.3;color:#0f172a;font-weight:800;">Linha de base do projeto</div>
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-top:16px;">
-                              <tr>
-                                <td style="padding:0 12px 14px 0;" width="50%" valign="top">
-                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Início previsto</div>
-                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${tapStartDate}</div>
-                                </td>
-                                <td style="padding:0 0 14px 12px;" width="50%" valign="top">
-                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Término previsto</div>
-                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${tapEndDate}</div>
-                                </td>
-                              </tr>
-                              <tr>
-                                <td style="padding:0 12px 0 0;" width="50%" valign="top">
-                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Horas previstas no TAP</div>
-                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(`${payload.project.budgetHours} h`)}</div>
-                                </td>
-                                <td style="padding:0 0 0 12px;" width="50%" valign="top">
-                                  <div style="font-size:12px;line-height:1.4;letter-spacing:0.1em;text-transform:uppercase;color:#5b6f82;font-weight:700;">Valor aprovado no TAP</div>
-                                  <div style="padding-top:6px;font-size:15px;line-height:1.5;color:#0f172a;font-weight:700;">${escapeProjectTapEmailHtml(formatProjectTapEmailCurrency(payload.project.budgetValue))}</div>
-                                </td>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-
-                  <tr>
-                    <td style="padding:18px 30px 8px 30px;">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#ffffff;border:1px solid #d7e5f3;border-radius:22px;">
-                        <tr>
-                          <td style="padding:22px 24px;">
-                            <div style="font-size:20px;line-height:1.3;color:#0f172a;font-weight:800;">Escopo</div>
-                            <div style="padding-top:14px;font-size:14px;line-height:1.8;color:#475569;">${tapScope}</div>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-
-                  <tr>
-                    <td style="padding:18px 24px 8px 24px;">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-                        <tr>
-                          ${infoCard('Objetivos', tapObjectives)}
-                          ${infoCard('Entregáveis', tapDeliverables)}
-                        </tr>
-                        <tr>
-                          ${infoCard('Premissas', tapPremises)}
-                          ${infoCard('Exclusões', tapExclusions)}
-                        </tr>
-                        <tr>
-                          ${infoCard('Stakeholders', tapStakeholders)}
-                          ${infoCard('Observações', tapNotes)}
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-
-                  <tr>
-                    <td style="padding:18px 30px 8px 30px;">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#f8fbff;border:1px solid #d7e5f3;border-radius:22px;">
-                        <tr>
-                          <td style="padding:22px 24px;">
-                            <div style="font-size:20px;line-height:1.3;color:#0f172a;font-weight:800;">Anexos vinculados ao TAP</div>
-                            <div style="padding-top:14px;">${tapAttachmentsHtml}</div>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-
-                  ${projectUrl ? `<tr>
-                    <td style="padding:16px 30px 8px 30px;">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-                        <tr>
-                          <td align="center" style="padding:10px 0 0 0;">
-                            <a href="${escapeProjectTapEmailHtml(projectUrl)}" style="display:inline-block;padding:15px 26px;border-radius:999px;background:#0d4f89;color:#ffffff;font-size:14px;font-weight:800;line-height:1.2;text-decoration:none;letter-spacing:0.04em;">Abrir projeto no sistema</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>` : ''}
-
-                  <tr>
-                    <td style="padding:26px 30px 30px 30px;">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border-top:1px solid #d7e5f3;">
-                        <tr>
-                          <td style="padding-top:18px;font-size:12px;line-height:1.7;color:#64748b;">
-                            Este e-mail foi gerado automaticamente pela Tec3 Engenharia para formalizar a abertura do projeto e apoiar um onboarding organizado, profissional e transparente.
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
+                    <td style="padding:10px 12px;border:1px solid #d1d5db;background:#f3f4f6;font-size:13px;font-weight:700;color:#111827;">Anexos</td>
+                    <td colspan="3" style="padding:10px 12px;border:1px solid #d1d5db;background:#ffffff;">${tapAttachmentsHtml}</td>
                   </tr>
                 </table>
+                ${projectUrl ? `<div style="padding-top:16px;text-align:center;"><a href="${escapeProjectTapEmailHtml(projectUrl)}" style="display:inline-block;padding:12px 22px;border-radius:999px;background:#0d4f89;color:#ffffff;font-size:13px;font-weight:700;text-decoration:none;">Abrir projeto no sistema</a></div>` : ''}
+                <div style="padding-top:14px;font-size:12px;line-height:1.7;color:#475569;text-align:right;">Gerado em: ${generatedAt}</div>
               </td>
             </tr>
           </table>
@@ -1046,6 +994,113 @@ function renderProjectTapHtml(
 </html>`;
 }
 
+type PostmarkEmailAttachment = {
+  Name: string;
+  Content: string;
+  ContentType: string;
+  ContentID?: string;
+  ContentDisposition?: 'inline' | 'attachment';
+};
+
+function buildProjectTapInlineLogoAttachment(): PostmarkEmailAttachment | null {
+  try {
+    if (!fs.existsSync(PROJECT_TAP_LOCAL_LOGO_PATH)) {
+      return null;
+    }
+
+    const logoBuffer = fs.readFileSync(PROJECT_TAP_LOCAL_LOGO_PATH);
+    return {
+      Name: 'tec3-logo.png',
+      Content: logoBuffer.toString('base64'),
+      ContentType: 'image/png',
+      ContentID: 'tec3-tap-logo',
+      ContentDisposition: 'inline',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function resolveBrowserExecutablePath(): string | null {
+  const explicit = String(process.env.PUPPETEER_EXECUTABLE_PATH || '').trim();
+  if (explicit && fs.existsSync(explicit)) return explicit;
+
+  const userProfile = process.env.USERPROFILE || '';
+  const candidates = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    userProfile ? path.join(userProfile, 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+async function renderTapPdfBuffer(htmlContent: string): Promise<Buffer> {
+  const executablePath = resolveBrowserExecutablePath();
+  if (!executablePath) {
+    throw new Error('Navegador Chrome/Edge não encontrado para gerar PDF. Defina PUPPETEER_EXECUTABLE_PATH.');
+  }
+
+  const browser = await puppeteer.launch({
+    executablePath,
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setContent(htmlContent, { waitUntil: 'load' });
+    const pdfBytes = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: {
+        top: '10mm',
+        right: '10mm',
+        bottom: '10mm',
+        left: '10mm',
+      },
+    });
+
+    return Buffer.from(pdfBytes);
+  } finally {
+    await browser.close();
+  }
+}
+
+async function buildProjectTapEmailAttachments(attachments: ProposalTapAttachment[]): Promise<PostmarkEmailAttachment[]> {
+  const emailAttachments: PostmarkEmailAttachment[] = [];
+
+  for (const attachment of attachments) {
+    const objectPath = String(attachment?.objectPath || '').trim();
+    if (!objectPath) continue;
+
+    const localPath = resolveLocalUploadPath(objectPath);
+    if (!localPath) continue;
+    if (!fs.existsSync(localPath)) continue;
+
+    const fileBuffer = await fs.promises.readFile(localPath);
+    const fallbackName = path.basename(localPath);
+    const providedName = String(attachment?.name || attachment?.title || '').trim();
+    const attachmentName = sanitizeUploadFileName(providedName || fallbackName || 'anexo');
+    const contentType = String(attachment?.contentType || '').trim() || 'application/octet-stream';
+
+    emailAttachments.push({
+      Name: attachmentName,
+      Content: fileBuffer.toString('base64'),
+      ContentType: contentType,
+      ContentDisposition: 'attachment',
+    });
+  }
+
+  return emailAttachments;
+}
+
 async function sendProjectTapEmail(params: {
   payload: ReturnType<typeof buildProjectTapPayload>;
   tapId: string;
@@ -1054,32 +1109,31 @@ async function sendProjectTapEmail(params: {
   const fromEmail = String(process.env.POSTMARK_FROM_EMAIL || '').trim();
   const recipients = parseRecipients(process.env.PROJECT_TAP_NOTIFICATION_TO);
   const ccRecipients = parseRecipients(process.env.PROJECT_TAP_NOTIFICATION_CC);
-  const templateAlias = String(process.env.POSTMARK_PROJECT_TAP_TEMPLATE_ALIAS || 'project-tap-generated').trim();
 
   if (!serverToken || !fromEmail || recipients.length === 0) {
     return { ok: false, reason: 'postmark_not_configured' as const };
   }
 
   const { projectUrl, logoUrl } = buildProjectTapEmailLinks(params.payload.project.id);
+  const inlineLogoAttachment = buildProjectTapInlineLogoAttachment();
   const subject = `TAP do Projeto ${params.payload.project.code} · ${params.payload.project.name}`;
   const textBody = [
-    `O Termo de Abertura do Projeto ${params.payload.project.code} foi gerado com sucesso.`,
+    `O TAP do projeto ${params.payload.project.code} foi gerado com sucesso.`,
     '',
-    `Projeto: ${params.payload.project.name}`,
+    `Centro de Custo: ${params.payload.project.code}`,
+    `Proposta Origem: ${params.payload.proposal.proposalOrigin || params.payload.proposal.code}`,
     `Cliente: ${params.payload.client?.razaoSocial || params.payload.client?.nomeFantasia || '-'}`,
-    `Proposta de origem: ${params.payload.proposal.code}`,
-    `Horas previstas: ${params.payload.project.budgetHours} h`,
-    `Valor aprovado: ${formatProjectTapEmailCurrency(params.payload.project.budgetValue)}`,
-    `Status inicial: ${formatProjectTapStatusLabel(params.payload.project.status)}`,
-    `Início previsto: ${formatProjectTapEmailDate(params.payload.tap?.startDate || params.payload.proposal.expectedStartDate)}`,
-    `Término previsto: ${formatProjectTapEmailDate(params.payload.tap?.endDate || params.payload.proposal.expectedEndDate)}`,
-    `Sumário executivo: ${params.payload.tap?.executiveSummary || '-'}`,
-    `Escopo: ${stripHtmlTags(params.payload.tap?.scopeHtml || '') || '-'}`,
-    `Objetivos: ${params.payload.tap?.objectives || '-'}`,
-    `Entregáveis: ${params.payload.tap?.deliverables || '-'}`,
-    `Premissas: ${params.payload.tap?.premises || '-'}`,
-    `Exclusões: ${params.payload.tap?.exclusions || '-'}`,
-    `Stakeholders: ${params.payload.tap?.stakeholders || '-'}`,
+    `Analista de Projeto: ${params.payload.proposal.sentByName || '-'}`,
+    `Descrição (título): ${params.payload.project.name || params.payload.proposal.title || '-'}`,
+    `Coordenador: ${params.payload.proposal.coordinatorName || '-'}`,
+    `Tipo de Contrato: ${formatProposalTypeForTap(params.payload.proposal.type)}`,
+    `Despesa Reembolsável pelo Cliente?: ${formatTapYesNoLabel(params.payload.tap?.reimbursableByClient)}`,
+    `Projeto Contrato GC: ${params.payload.proposal.contractCode || params.payload.proposal.workOrders || '-'}`,
+    `Prazo execução: ${params.payload.proposal.termMonths ?? '-'}`,
+    `Data início: ${formatProjectTapEmailDate(params.payload.tap?.startDate || params.payload.proposal.successDate || params.payload.proposal.expectedStartDate)}`,
+    `Mobilização de pessoas/veículos?: ${formatTapYesNoLabel(params.payload.tap?.mobilityForecast)} (${params.payload.tap?.mobilityForecastDetails || '-'})`,
+    `Despesas reembolsáveis?: ${formatTapYesNoLabel(params.payload.tap?.reimbursableExpensesForecast)} (${params.payload.tap?.reimbursableExpensesForecastDetails || '-'})`,
+    `Subcontratação?: ${formatTapYesNoLabel(params.payload.tap?.subcontractForecast)} (${params.payload.tap?.subcontractForecastDetails || '-'})`,
     `Observações: ${params.payload.tap?.notes || '-'}`,
     Array.isArray(params.payload.tap?.attachments) && params.payload.tap.attachments.length > 0
       ? `Anexos: ${params.payload.tap.attachments.map((attachment: ProposalTapAttachment) => `${attachment.title}${attachment.description ? ` (${attachment.description})` : ''}`).join('; ')}`
@@ -1089,51 +1143,28 @@ async function sendProjectTapEmail(params: {
   ]
     .filter(Boolean)
     .join('\n');
+
   const htmlBody = renderProjectTapHtml(params.payload, {
     projectUrl,
-    logoUrl,
+    logoUrl: inlineLogoAttachment ? null : logoUrl,
+    logoCid: inlineLogoAttachment?.ContentID || null,
     tapId: params.tapId,
   });
-  const templateModel = {
-    ...buildProjectTapTemplateModel({
-      payload: params.payload,
-      projectUrl,
-    }),
-    tap_id: params.tapId,
-  };
+  const fileAttachments = await buildProjectTapEmailAttachments(
+    Array.isArray(params.payload.tap?.attachments) ? params.payload.tap.attachments : []
+  );
+  const emailAttachments = [
+    ...(inlineLogoAttachment ? [inlineLogoAttachment] : []),
+    ...fileAttachments,
+  ];
 
-  const postmarkHeaders = {
-    'Accept': 'application/json',
-    'Content-Type': 'application/json',
-    'X-Postmark-Server-Token': serverToken,
-  };
-
-  const response = await fetch('https://api.postmarkapp.com/email/withTemplate', {
+  const response = await fetch('https://api.postmarkapp.com/email', {
     method: 'POST',
-    headers: postmarkHeaders,
-    body: JSON.stringify({
-      From: fromEmail,
-      To: recipients.join(','),
-      Cc: ccRecipients.length ? ccRecipients.join(',') : undefined,
-      TemplateAlias: templateAlias,
-      TemplateModel: templateModel,
-      MessageStream: 'outbound',
-    }),
-  });
-
-  if (response.ok) {
-    return { ok: true as const };
-  }
-
-  const templateErrorBody = await response.text();
-  const shouldFallbackToHtml = response.status === 422 && templateErrorBody.includes('"ErrorCode":1101');
-  if (!shouldFallbackToHtml) {
-    throw new Error(templateErrorBody || `Postmark returned ${response.status}`);
-  }
-
-  const standardResponse = await fetch('https://api.postmarkapp.com/email', {
-    method: 'POST',
-    headers: postmarkHeaders,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Postmark-Server-Token': serverToken,
+    },
     body: JSON.stringify({
       From: fromEmail,
       To: recipients.join(','),
@@ -1141,13 +1172,14 @@ async function sendProjectTapEmail(params: {
       Subject: subject,
       TextBody: textBody,
       HtmlBody: htmlBody,
+      Attachments: emailAttachments.length > 0 ? emailAttachments : undefined,
       MessageStream: 'outbound',
     }),
   });
 
-  if (!standardResponse.ok) {
-    const body = await standardResponse.text();
-    throw new Error(body || `Postmark returned ${standardResponse.status}`);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `Postmark returned ${response.status}`);
   }
 
   return { ok: true as const };
@@ -1163,9 +1195,33 @@ async function resendProjectTapEmail(params: {
     throw new Error('Projeto nao encontrado');
   }
 
-  const latestTap = await storage.getLatestProjectTap(project.id);
+  let latestTap = await storage.getLatestProjectTap(project.id);
+
   if (!latestTap) {
-    throw new Error('TAP nao encontrada para o projeto');
+    const proposals = await storage.getAllProposals();
+    const proposal = proposals
+      .filter((item) => item.projectId === project.id)
+      .sort((a, b) => (b.revision ?? 0) - (a.revision ?? 0))[0] || null;
+
+    if (!proposal) {
+      throw new Error('TAP nao encontrada para o projeto');
+    }
+
+    const client = await storage.getClient(project.clientId || proposal.clientId);
+    const tapDraft = normalizeProposalTapDraft(proposal, proposal.tapPayload ?? null);
+    const payload = buildProjectTapPayload({ proposal, project, client, tapDraft });
+    const tapLinks = buildProjectTapEmailLinks(project.id);
+
+    latestTap = await storage.createProjectTap({
+      projectId: project.id,
+      title: `TAP ${project.code}`,
+      payload: payload as any,
+      htmlContent: renderProjectTapHtml(payload, {
+        projectUrl: tapLinks.projectUrl,
+        logoUrl: tapLinks.logoUrl,
+      }),
+      generatedById: params.actorUserId,
+    });
   }
 
   const payload = latestTap.payload as ReturnType<typeof buildProjectTapPayload>;
@@ -1286,6 +1342,19 @@ export async function registerRoutes(
   ensureLocalUploadsDir();
   app.use(LOCAL_UPLOADS_ROUTE_PREFIX, express.static(LOCAL_UPLOADS_DIR));
 
+  app.get(PROJECT_TAP_EMAIL_LOGO_ROUTE, (_req, res) => {
+    try {
+      if (!fs.existsSync(PROJECT_TAP_LOCAL_LOGO_PATH)) {
+        return res.redirect(PROJECT_TAP_PUBLIC_LOGO_URL);
+      }
+
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.sendFile(PROJECT_TAP_LOCAL_LOGO_PATH);
+    } catch {
+      return res.redirect(PROJECT_TAP_PUBLIC_LOGO_URL);
+    }
+  });
+
   app.post('/api/uploads/request-url', authenticateToken, async (req, res) => {
     try {
       const { name, size, contentType } = req.body ?? {};
@@ -1401,7 +1470,7 @@ export async function registerRoutes(
 
     const client = await storage.getClient(proposal.clientId);
     const tapPayload = buildProjectTapPayload({ proposal, project, client, tapDraft });
-    const tapLinks = buildProjectTapEmailLinks(project.id);
+    const tapLinks = buildProjectTapRenderLinks(project.id);
     const tap = await storage.createProjectTap({
       projectId: project.id,
       title: `TAP ${project.code}`,
@@ -2532,6 +2601,122 @@ export async function registerRoutes(
     }
   });
 
+  app.get('/api/proposals/:id/tap/html', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+    try {
+      const proposal = await storage.getProposal(req.params.id);
+      if (!proposal) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      if (!proposal.projectId) {
+        return res.status(400).json({ message: 'A proposta ainda nao gerou um projeto/TAP' });
+      }
+
+      const project = await storage.getProject(proposal.projectId);
+      if (!project) {
+        return res.status(404).json({ message: 'Projeto nao encontrado' });
+      }
+
+      const latestTap = await storage.getLatestProjectTap(project.id);
+      const persistedHtml = String(latestTap?.htmlContent || '').trim();
+      if (persistedHtml) {
+        return res.json({ htmlContent: persistedHtml });
+      }
+
+      const client = await storage.getClient(project.clientId || proposal.clientId);
+      const tapDraft = normalizeProposalTapDraft(proposal, proposal.tapPayload ?? null);
+      const payload = buildProjectTapPayload({ proposal, project, client, tapDraft });
+      const links = buildProjectTapRenderLinks(project.id);
+      const htmlContent = renderProjectTapHtml(payload, {
+        projectUrl: links.projectUrl,
+        logoUrl: links.logoUrl,
+        tapId: latestTap?.id || null,
+      });
+
+      return res.json({ htmlContent });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao preparar HTML do TAP';
+      return res.status(500).json({ message });
+    }
+  });
+
+  app.post('/api/proposals/:id/tap/preview-html', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+    try {
+      const proposal = await storage.getProposal(req.params.id);
+      if (!proposal) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      const tapDraft = normalizeProposalTapDraft(proposal, req.body ?? proposal.tapPayload ?? null);
+      validateProposalTapDraft(tapDraft);
+
+      const project = proposal.projectId ? await storage.getProject(proposal.projectId) : null;
+      const previewProject = buildProjectTapPreviewProject({ proposal, project, tapDraft });
+      const client = await storage.getClient((project?.clientId || proposal.clientId) as string);
+      const payload = buildProjectTapPayload({
+        proposal,
+        project: previewProject,
+        client,
+        tapDraft,
+      });
+      const links = project?.id ? buildProjectTapRenderLinks(project.id) : { projectUrl: null, logoUrl: PROJECT_TAP_EMBEDDED_LOGO_URL };
+      const htmlContent = renderProjectTapHtml(payload, {
+        projectUrl: links.projectUrl,
+        logoUrl: links.logoUrl,
+        tapId: project?.id ? null : 'PREVIEW',
+      });
+
+      return res.json({ htmlContent });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao preparar prévia do TAP';
+      return res.status(resolveProposalTapErrorStatus(error)).json({ message });
+    }
+  });
+
+  app.get('/api/proposals/:id/tap/pdf', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+    try {
+      const proposal = await storage.getProposal(req.params.id);
+      if (!proposal) {
+        return res.status(404).json({ message: 'Proposta nao encontrada' });
+      }
+
+      if (!proposal.projectId) {
+        return res.status(400).json({ message: 'A proposta ainda nao gerou um projeto/TAP' });
+      }
+
+      const project = await storage.getProject(proposal.projectId);
+      if (!project) {
+        return res.status(404).json({ message: 'Projeto nao encontrado' });
+      }
+
+      const latestTap = await storage.getLatestProjectTap(project.id);
+      const persistedHtml = String(latestTap?.htmlContent || '').trim();
+      let htmlContent = persistedHtml;
+      if (!htmlContent) {
+        const client = await storage.getClient(project.clientId || proposal.clientId);
+        const tapDraft = normalizeProposalTapDraft(proposal, proposal.tapPayload ?? null);
+        const payload = buildProjectTapPayload({ proposal, project, client, tapDraft });
+        const links = buildProjectTapRenderLinks(project.id);
+        htmlContent = renderProjectTapHtml(payload, {
+          projectUrl: links.projectUrl,
+          logoUrl: links.logoUrl,
+          tapId: latestTap?.id || null,
+        });
+      }
+
+      const pdfBuffer = await renderTapPdfBuffer(htmlContent);
+      const safeCode = String(project.code || 'tap').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="TAP_${safeCode}.pdf"`);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.send(pdfBuffer);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao gerar PDF do TAP';
+      return res.status(500).json({ message });
+    }
+  });
+
   app.post('/api/proposals/:id/tap/generate', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     try {
       const proposal = await storage.getProposal(req.params.id);
@@ -2554,7 +2739,7 @@ export async function registerRoutes(
       res.status(201).json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro ao gerar TAP';
-      res.status(500).json({ message });
+      res.status(resolveProposalTapErrorStatus(error)).json({ message });
     }
   });
 
@@ -3013,9 +3198,9 @@ export async function registerRoutes(
     const currentYear = now.getFullYear();
 
     const proposalsCurrentPeriod = proposals.filter((proposal) => {
-      const createdAt = toValidDate((proposal as any).createdAt);
-      if (!createdAt) return false;
-      return isWithinRange(createdAt, periodRanges.current);
+      const proposalDate = getProposalPeriodDate(proposal);
+      if (!proposalDate) return false;
+      return isWithinRange(proposalDate, periodRanges.current);
     });
 
     const projectsCurrentPeriod = projects.filter((project) => {
@@ -3055,9 +3240,9 @@ export async function registerRoutes(
         return proposals
           .filter((proposal) => {
             if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
-            const createdAt = toValidDate((proposal as any).createdAt);
-            if (!createdAt) return false;
-            return createdAt >= bucket.start && createdAt <= bucket.end;
+            const proposalDate = getProposalPeriodDate(proposal);
+            if (!proposalDate) return false;
+            return proposalDate >= bucket.start && proposalDate <= bucket.end;
           })
           .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
       }),
@@ -3066,9 +3251,9 @@ export async function registerRoutes(
 
     const proposalCountByBucket = trendBuckets.map((bucket) => {
       return proposals.filter((proposal) => {
-        const createdAt = toValidDate((proposal as any).createdAt);
-        if (!createdAt) return false;
-        return createdAt >= bucket.start && createdAt <= bucket.end;
+        const proposalDate = getProposalPeriodDate(proposal);
+        if (!proposalDate) return false;
+        return proposalDate >= bucket.start && proposalDate <= bucket.end;
       }).length;
     });
 
@@ -3080,18 +3265,18 @@ export async function registerRoutes(
     const currentApprovedValue = proposals
       .filter((proposal) => {
         if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
-        const createdAt = toValidDate((proposal as any).createdAt);
-        if (!createdAt) return false;
-        return isWithinRange(createdAt, periodRanges.current);
+        const proposalDate = getProposalPeriodDate(proposal);
+        if (!proposalDate) return false;
+        return isWithinRange(proposalDate, periodRanges.current);
       })
       .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
 
     const previousApprovedValue = proposals
       .filter((proposal) => {
         if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
-        const createdAt = toValidDate((proposal as any).createdAt);
-        if (!createdAt) return false;
-        return isWithinRange(createdAt, periodRanges.previous);
+        const proposalDate = getProposalPeriodDate(proposal);
+        if (!proposalDate) return false;
+        return isWithinRange(proposalDate, periodRanges.previous);
       })
       .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
 
@@ -3225,9 +3410,9 @@ export async function registerRoutes(
     const currentYear = now.getFullYear();
 
     const proposalsCurrentPeriod = proposals.filter((proposal) => {
-      const createdAt = toValidDate((proposal as any).createdAt);
-      if (!createdAt) return false;
-      return isWithinRange(createdAt, periodRanges.current);
+      const proposalDate = getProposalPeriodDate(proposal);
+      if (!proposalDate) return false;
+      return isWithinRange(proposalDate, periodRanges.current);
     });
 
     const proposalsByStatus = proposalsCurrentPeriod.reduce((acc, p) => {
@@ -3251,9 +3436,9 @@ export async function registerRoutes(
         return proposals
           .filter((proposal) => {
             if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
-            const createdAt = toValidDate((proposal as any).createdAt);
-            if (!createdAt) return false;
-            return createdAt >= bucket.start && createdAt <= bucket.end;
+            const proposalDate = getProposalPeriodDate(proposal);
+            if (!proposalDate) return false;
+            return proposalDate >= bucket.start && proposalDate <= bucket.end;
           })
           .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
       }),
@@ -3262,9 +3447,9 @@ export async function registerRoutes(
 
     const proposalCountByBucket = trendBuckets.map((bucket) => {
       return proposals.filter((proposal) => {
-        const createdAt = toValidDate((proposal as any).createdAt);
-        if (!createdAt) return false;
-        return createdAt >= bucket.start && createdAt <= bucket.end;
+        const proposalDate = getProposalPeriodDate(proposal);
+        if (!proposalDate) return false;
+        return proposalDate >= bucket.start && proposalDate <= bucket.end;
       }).length;
     });
 
@@ -3276,18 +3461,18 @@ export async function registerRoutes(
     const currentApprovedValue = proposals
       .filter((proposal) => {
         if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
-        const createdAt = toValidDate((proposal as any).createdAt);
-        if (!createdAt) return false;
-        return isWithinRange(createdAt, periodRanges.current);
+        const proposalDate = getProposalPeriodDate(proposal);
+        if (!proposalDate) return false;
+        return isWithinRange(proposalDate, periodRanges.current);
       })
       .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
 
     const previousApprovedValue = proposals
       .filter((proposal) => {
         if (!APPROVED_PROPOSAL_STATUSES.has(proposal.status)) return false;
-        const createdAt = toValidDate((proposal as any).createdAt);
-        if (!createdAt) return false;
-        return isWithinRange(createdAt, periodRanges.previous);
+        const proposalDate = getProposalPeriodDate(proposal);
+        if (!proposalDate) return false;
+        return isWithinRange(proposalDate, periodRanges.previous);
       })
       .reduce((sum, proposal) => sum + getProposalApprovedAmount(proposal), 0);
 

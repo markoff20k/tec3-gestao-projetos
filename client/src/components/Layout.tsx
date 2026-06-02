@@ -1,4 +1,5 @@
-import { ReactNode, useState, useEffect } from 'react';
+import { ReactNode, useState, useEffect, useMemo, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useRoute } from 'wouter';
 import {
   LogOut,
@@ -33,11 +34,20 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { NotificationBell } from '@/components/NotificationBell';
 import { HeaderShortcutManager } from '@/components/HeaderShortcutManager';
+import { clientsApi, projectsApi, proposalsApi, type Client, type Project, type Proposal } from '@/lib/api';
 import { adminMenuItems, mainMenuItems, pageDescriptions, settingsNavigationItem, type NavigationItem } from '@/lib/navigation';
 
 interface LayoutProps {
   children: ReactNode;
 }
+
+type HeaderSearchResult = {
+  id: string;
+  type: 'proposal' | 'project' | 'client';
+  title: string;
+  subtitle: string;
+  targetPath: string;
+};
 
 const roleLabels: Record<string, string> = {
   admin: 'Administrador',
@@ -52,8 +62,34 @@ export function Layout({ children }: LayoutProps) {
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [headerSearch, setHeaderSearch] = useState('');
+  const [debouncedHeaderSearch, setDebouncedHeaderSearch] = useState('');
+  const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
+  const [headerSearchHighlightIndex, setHeaderSearchHighlightIndex] = useState(-1);
+  const [headerPlaceholderPhraseIndex, setHeaderPlaceholderPhraseIndex] = useState(0);
+  const [headerPlaceholderCharCount, setHeaderPlaceholderCharCount] = useState(0);
+  const [headerPlaceholderDeleting, setHeaderPlaceholderDeleting] = useState(false);
+  const [headerPlaceholderCaretVisible, setHeaderPlaceholderCaretVisible] = useState(true);
+  const headerSearchRef = useRef<HTMLDivElement | null>(null);
 
-  const isCommercialProfile = user?.role === 'commercial';
+  const headerPlaceholderPhrases = useMemo(
+    () => [
+      'Buscar propostas, projetos ou clientes...',
+      'Ex.: P26126, T26067 ou JMN Mineração',
+      'Digite para encontrar resultados instantâneos',
+    ],
+    []
+  );
+
+  const headerAnimatedPlaceholder = useMemo(() => {
+    const currentPhrase = headerPlaceholderPhrases[headerPlaceholderPhraseIndex] || '';
+    return currentPhrase.slice(0, headerPlaceholderCharCount);
+  }, [headerPlaceholderPhrases, headerPlaceholderPhraseIndex, headerPlaceholderCharCount]);
+
+  const headerDisplayPlaceholder = useMemo(() => {
+    return `${headerAnimatedPlaceholder}${headerPlaceholderCaretVisible ? '|' : ''}`;
+  }, [headerAnimatedPlaceholder, headerPlaceholderCaretVisible]);
+
+  const isSearchRoute = location.startsWith('/proposals') || location.startsWith('/projects') || location.startsWith('/clients');
 
   const handleSettings = () => {
     setLocation('/settings');
@@ -74,13 +110,188 @@ export function Layout({ children }: LayoutProps) {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
-    if (!isCommercialProfile) return;
-    if (!location.startsWith('/proposals')) return;
+    if (!isSearchRoute) {
+      setHeaderSearch('');
+      return;
+    }
 
     const queryString = location.split('?')[1] ?? '';
     const params = new URLSearchParams(queryString);
     setHeaderSearch(params.get('search') ?? '');
-  }, [location, isCommercialProfile]);
+  }, [location, isSearchRoute]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedHeaderSearch(headerSearch.trim());
+    }, 220);
+
+    return () => window.clearTimeout(timer);
+  }, [headerSearch]);
+
+  useEffect(() => {
+    const currentPhrase = headerPlaceholderPhrases[headerPlaceholderPhraseIndex] || '';
+    let timeoutMs = 70;
+
+    if (!headerPlaceholderDeleting && headerPlaceholderCharCount < currentPhrase.length) {
+      timeoutMs = 70;
+    } else if (!headerPlaceholderDeleting && headerPlaceholderCharCount === currentPhrase.length) {
+      timeoutMs = 1400;
+    } else if (headerPlaceholderDeleting && headerPlaceholderCharCount > 0) {
+      timeoutMs = 35;
+    } else {
+      timeoutMs = 200;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (!headerPlaceholderDeleting && headerPlaceholderCharCount < currentPhrase.length) {
+        setHeaderPlaceholderCharCount((current) => current + 1);
+        return;
+      }
+
+      if (!headerPlaceholderDeleting && headerPlaceholderCharCount === currentPhrase.length) {
+        setHeaderPlaceholderDeleting(true);
+        return;
+      }
+
+      if (headerPlaceholderDeleting && headerPlaceholderCharCount > 0) {
+        setHeaderPlaceholderCharCount((current) => current - 1);
+        return;
+      }
+
+      setHeaderPlaceholderDeleting(false);
+      setHeaderPlaceholderPhraseIndex((current) => (current + 1) % headerPlaceholderPhrases.length);
+    }, timeoutMs);
+
+    return () => window.clearTimeout(timer);
+  }, [headerPlaceholderPhrases, headerPlaceholderPhraseIndex, headerPlaceholderCharCount, headerPlaceholderDeleting]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setHeaderPlaceholderCaretVisible((current) => !current);
+    }, 520);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!headerSearchRef.current) return;
+      if (headerSearchRef.current.contains(event.target as Node)) return;
+      setHeaderSearchOpen(false);
+      setHeaderSearchHighlightIndex(-1);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  const canSearchProposals = hasRole(['commercial']);
+  const canSearchProjects = hasRole(['projects']);
+  const canSearchClients = hasRole(['commercial', 'projects']);
+  const searchEnabled = headerSearchOpen && debouncedHeaderSearch.length >= 2;
+
+  const proposalsSearchQuery = useQuery<Proposal[]>({
+    queryKey: ['/api/search/header', 'proposals'],
+    queryFn: async () => proposalsApi.getAll().catch(() => []),
+    enabled: searchEnabled && canSearchProposals,
+    staleTime: 120000,
+    retry: false,
+  });
+
+  const projectsSearchQuery = useQuery<Project[]>({
+    queryKey: ['/api/search/header', 'projects'],
+    queryFn: async () => projectsApi.getAll().catch(() => []),
+    enabled: searchEnabled && canSearchProjects,
+    staleTime: 120000,
+    retry: false,
+  });
+
+  const clientsSearchQuery = useQuery<Client[]>({
+    queryKey: ['/api/search/header', 'clients'],
+    queryFn: async () => clientsApi.getAll().catch(() => []),
+    enabled: searchEnabled && canSearchClients,
+    staleTime: 120000,
+    retry: false,
+  });
+
+  const headerSearchResults = useMemo<HeaderSearchResult[]>(() => {
+    const query = debouncedHeaderSearch.toLowerCase();
+    if (!query || query.length < 2) return [];
+
+    const proposals = (proposalsSearchQuery.data || [])
+      .filter((proposal) => {
+        const revisionSuffix = Number(proposal.revision || 0) > 0 ? `-R${proposal.revision}` : '';
+        const code = `${proposal.code || ''}${revisionSuffix}`.toLowerCase();
+        const title = String(proposal.title || '').toLowerCase();
+        const client = String(proposal.client?.razaoSocial || proposal.client?.nomeFantasia || '').toLowerCase();
+        return code.includes(query) || title.includes(query) || client.includes(query);
+      })
+      .slice(0, 5)
+      .map((proposal) => ({
+        id: proposal.id,
+        type: 'proposal' as const,
+        title: `${proposal.code}${Number(proposal.revision || 0) > 0 ? `-R${proposal.revision}` : ''} · ${proposal.title || '-'}`,
+        subtitle: proposal.client?.razaoSocial || proposal.client?.nomeFantasia || 'Proposta',
+        targetPath: `/proposals?search=${encodeURIComponent(proposal.code || '')}`,
+      }));
+
+    const projects = (projectsSearchQuery.data || [])
+      .filter((project) => {
+        const code = String(project.code || '').toLowerCase();
+        const name = String(project.name || '').toLowerCase();
+        const client = String(project.client?.razaoSocial || project.client?.nomeFantasia || '').toLowerCase();
+        return code.includes(query) || name.includes(query) || client.includes(query);
+      })
+      .slice(0, 5)
+      .map((project) => ({
+        id: project.id,
+        type: 'project' as const,
+        title: `${project.code} · ${project.name || '-'}`,
+        subtitle: project.client?.razaoSocial || project.client?.nomeFantasia || 'Projeto',
+        targetPath: `/projects?projectId=${project.id}&search=${encodeURIComponent(project.code || '')}`,
+      }));
+
+    const clients = (clientsSearchQuery.data || [])
+      .filter((client) => {
+        const name = String(client.razaoSocial || '').toLowerCase();
+        const tradeName = String(client.nomeFantasia || '').toLowerCase();
+        const cnpj = String(client.cnpj || '').toLowerCase();
+        return name.includes(query) || tradeName.includes(query) || cnpj.includes(query);
+      })
+      .slice(0, 5)
+      .map((client) => ({
+        id: client.id,
+        type: 'client' as const,
+        title: client.razaoSocial || client.nomeFantasia || 'Cliente',
+        subtitle: client.nomeFantasia || client.cnpj || 'Cliente',
+        targetPath: `/clients?search=${encodeURIComponent(client.razaoSocial || client.nomeFantasia || '')}`,
+      }));
+
+    return [...proposals, ...projects, ...clients].slice(0, 10);
+  }, [debouncedHeaderSearch, proposalsSearchQuery.data, projectsSearchQuery.data, clientsSearchQuery.data]);
+
+  useEffect(() => {
+    if (headerSearchResults.length === 0) {
+      setHeaderSearchHighlightIndex(-1);
+      return;
+    }
+
+    if (headerSearchHighlightIndex >= headerSearchResults.length) {
+      setHeaderSearchHighlightIndex(0);
+    }
+  }, [headerSearchResults, headerSearchHighlightIndex]);
+
+  const resolveResultTypeLabel = (type: HeaderSearchResult['type']) => {
+    if (type === 'proposal') return 'Proposta';
+    if (type === 'project') return 'Projeto';
+    return 'Cliente';
+  };
+
+  const openHeaderSearchResult = (result: HeaderSearchResult) => {
+    setHeaderSearchOpen(false);
+    setHeaderSearchHighlightIndex(-1);
+    setLocation(result.targetPath);
+  };
 
   const filteredMainItems = mainMenuItems.filter(
     (item) => item.roles.length === 0 || hasRole(item.roles)
@@ -297,27 +508,84 @@ export function Layout({ children }: LayoutProps) {
 
           {/* Center: Search */}
           <div className="hidden md:flex flex-1 max-w-md mx-4">
-            <div className="relative w-full">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-sidebar-foreground/40" />
+            <div className="relative w-full" ref={headerSearchRef}>
+              <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-r from-white/[0.07] via-white/[0.02] to-transparent" />
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 transition-colors ${headerSearchOpen ? 'text-sidebar-foreground/80' : 'text-sidebar-foreground/45'}`} />
               <Input
                 type="text"
-                placeholder={isCommercialProfile ? 'Buscar propostas...' : 'Buscar...'}
+                placeholder={headerDisplayPlaceholder}
                 data-testid="input-search"
-                className="w-full pl-10 bg-sidebar-accent/50 border-sidebar-border text-sidebar-foreground placeholder:text-sidebar-foreground/40 focus:bg-sidebar-accent dark:bg-white/[0.04] dark:border-white/10 dark:focus:bg-white/[0.07]"
+                className="w-full pl-10 rounded-xl border-white/20 bg-sidebar-accent/55 text-sidebar-foreground placeholder:text-sidebar-foreground/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_10px_24px_-20px_rgba(2,6,23,0.85)] transition-all focus:bg-sidebar-accent/80 focus:border-white/35 focus:ring-2 focus:ring-white/15 dark:bg-white/[0.06] dark:border-white/15 dark:focus:bg-white/[0.1]"
                 value={headerSearch}
-                onChange={(e) => setHeaderSearch(e.target.value)}
+                onChange={(e) => {
+                  setHeaderSearch(e.target.value);
+                  setHeaderSearchOpen(true);
+                }}
+                onFocus={() => setHeaderSearchOpen(true)}
                 onKeyDown={(e) => {
-                  if (e.key !== 'Enter') return;
-                  if (!isCommercialProfile) return;
+                  if (e.key === 'Escape') {
+                    setHeaderSearchOpen(false);
+                    setHeaderSearchHighlightIndex(-1);
+                    return;
+                  }
 
-                  const trimmed = headerSearch.trim();
-                  const next = trimmed
-                    ? `/proposals?search=${encodeURIComponent(trimmed)}`
-                    : '/proposals';
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (headerSearchResults.length === 0) return;
+                    setHeaderSearchOpen(true);
+                    setHeaderSearchHighlightIndex((current) => {
+                      if (current < 0) return 0;
+                      return (current + 1) % headerSearchResults.length;
+                    });
+                    return;
+                  }
 
-                  setLocation(next);
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (headerSearchResults.length === 0) return;
+                    setHeaderSearchOpen(true);
+                    setHeaderSearchHighlightIndex((current) => {
+                      if (current <= 0) return headerSearchResults.length - 1;
+                      return current - 1;
+                    });
+                    return;
+                  }
+
+                  if (e.key === 'Enter') {
+                    const highlighted = headerSearchResults[headerSearchHighlightIndex] || headerSearchResults[0];
+                    if (highlighted) {
+                      e.preventDefault();
+                      openHeaderSearchResult(highlighted);
+                    }
+                  }
                 }}
               />
+
+              {headerSearchOpen && debouncedHeaderSearch.length >= 2 ? (
+                <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-50 rounded-xl border border-sidebar-border bg-sidebar shadow-xl shadow-black/20 backdrop-blur-xl overflow-hidden">
+                  {headerSearchResults.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-sidebar-foreground/60">Nenhum resultado encontrado.</div>
+                  ) : (
+                    <div className="max-h-80 overflow-y-auto py-1">
+                      {headerSearchResults.map((result, index) => (
+                        <button
+                          key={`${result.type}-${result.id}-${index}`}
+                          type="button"
+                          className={`w-full text-left px-4 py-2.5 transition-colors ${headerSearchHighlightIndex === index ? 'bg-sidebar-accent text-sidebar-foreground' : 'text-sidebar-foreground/85 hover:bg-sidebar-accent/80'}`}
+                          onMouseEnter={() => setHeaderSearchHighlightIndex(index)}
+                          onClick={() => openHeaderSearchResult(result)}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-sm font-medium truncate">{result.title}</span>
+                            <span className="text-[11px] uppercase tracking-wide text-sidebar-foreground/50">{resolveResultTypeLabel(result.type)}</span>
+                          </div>
+                          <div className="text-xs text-sidebar-foreground/55 truncate">{result.subtitle}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
 

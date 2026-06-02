@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'wouter';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Pencil, Trash2, Search, Building2, MapPin, Users, ChevronLeft, ChevronRight, LayoutGrid, List, ArrowUp, ArrowDown } from 'lucide-react';
 import { Layout } from '@/components/Layout';
@@ -112,6 +113,7 @@ const REQUIRED_FIELDS: Array<{ key: keyof typeof emptyFormData; label: string; t
 export default function Clients() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [location] = useLocation();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
@@ -126,6 +128,35 @@ export default function Clients() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
   const [deleteConfirmClientInput, setDeleteConfirmClientInput] = useState('');
+
+  useEffect(() => {
+    const queryStringFromLocation = location.includes('?') ? location.split('?')[1] ?? '' : '';
+    const queryStringFromWindow = typeof window !== 'undefined'
+      ? window.location.search.replace(/^\?/, '')
+      : '';
+    const queryString = queryStringFromLocation || queryStringFromWindow;
+    const params = new URLSearchParams(queryString);
+    setSearch(params.get('search') ?? '');
+    setCurrentPage(1);
+  }, [location]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const nextSearch = search.trim();
+
+    params.delete('search');
+    if (nextSearch) params.set('search', nextSearch);
+
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
+  }, [search]);
 
   useEffect(() => {
     const savedViewMode = localStorage.getItem('clientsViewMode') as ViewMode;

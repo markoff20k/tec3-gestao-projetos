@@ -248,11 +248,45 @@ function extractLegacyProposals(sqlContent: string): LegacyProposalRow[] {
 function parseLegacyDate(value: string | null): Date | null {
   const text = normalizeText(value);
   if (!text) return null;
-  if (text === '0000-00-00' || text === '0000-00-00 00:00:00' || text === '1969-12-31') return null;
+  if (
+    text === '0000-00-00' ||
+    text === '0000-00-00 00:00:00' ||
+    text === '1969-12-31' ||
+    text.startsWith('0000-00-00')
+  ) {
+    return null;
+  }
+
+  const normalized = text.replace(' ', 'T');
+
+  const isoDateTime = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
+  const isoDateTimeMatch = normalized.match(isoDateTime);
+  if (isoDateTimeMatch) {
+    const [, y, m, d, hh, mm, ss] = isoDateTimeMatch;
+    const date = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss ?? '0')));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
 
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
   if (dateOnly.test(text)) {
     const date = new Date(`${text}T00:00:00.000Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const brDateTime = /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/;
+  const brDateTimeMatch = text.match(brDateTime);
+  if (brDateTimeMatch) {
+    const [, d, m, y, hh, mm, ss] = brDateTimeMatch;
+    const date = new Date(
+      Date.UTC(
+        Number(y),
+        Number(m) - 1,
+        Number(d),
+        Number(hh ?? '0'),
+        Number(mm ?? '0'),
+        Number(ss ?? '0'),
+      ),
+    );
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
@@ -282,6 +316,19 @@ function mapLegacyProposalStatus(value: string | null): string {
   if (text === 'cancelada') return 'cancelada';
   if (text === 'declinio') return 'nao_sucesso';
   return 'em_elaboracao';
+}
+
+function inferCreatedAtFromProposalCode(code: string | null): Date | null {
+  const text = normalizeText(code);
+  if (!text) return null;
+
+  const match = text.match(/^[A-Za-z](\d{2})\d{3,}$/);
+  if (!match) return null;
+
+  const year = 2000 + Number(match[1]);
+  if (!Number.isFinite(year) || year < 2000 || year > 2099) return null;
+
+  return new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
 }
 
 async function main() {
@@ -369,7 +416,13 @@ async function main() {
 
     const revision = parseInteger(legacy.revisao);
 
-    const data = {
+    const sentDate = parseLegacyDate(legacy.dataEmissao);
+    const createdAt =
+      parseLegacyDate(legacy.dataSolicitacao) ??
+      sentDate ??
+      inferCreatedAtFromProposalCode(code);
+
+    const data: Record<string, unknown> = {
       title,
       description: normalizeText(legacy.observacao),
       clientId: resolvedClientId,
@@ -378,9 +431,12 @@ async function main() {
       status: mapLegacyProposalStatus(legacy.situacao),
       totalValue: parseDecimal(legacy.valorSubcontratacao),
       estimatedHours: 0,
-      sentDate: parseLegacyDate(legacy.dataEmissao),
-      createdAt: parseLegacyDate(legacy.dataSolicitacao) ?? parseLegacyDate(legacy.dataEmissao) ?? new Date(),
+      sentDate,
     };
+
+    if (createdAt) {
+      data.createdAt = createdAt;
+    }
 
     const existing = await prisma.proposal.findFirst({
       where: { code, revision },

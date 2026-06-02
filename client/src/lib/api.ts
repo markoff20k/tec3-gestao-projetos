@@ -46,25 +46,83 @@ async function getToken(): Promise<string | null> {
   return localStorage.getItem('token');
 }
 
+type ApiRequestOptions = RequestInit & {
+  timeoutMs?: number;
+};
+
+function createAbortSignal(params: {
+  timeoutMs?: number;
+  externalSignal?: AbortSignal;
+}): { signal?: AbortSignal; clear: () => void } {
+  const { timeoutMs, externalSignal } = params;
+  if (!timeoutMs && !externalSignal) {
+    return { signal: externalSignal, clear: () => {} };
+  }
+
+  const controller = new AbortController();
+  let timeoutId: number | null = null;
+
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort);
+    }
+  }
+
+  if (timeoutMs && timeoutMs > 0) {
+    timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  return {
+    signal: controller.signal,
+    clear: () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
+    },
+  };
+}
+
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: ApiRequestOptions = {}
 ): Promise<T> {
   const token = await getToken();
+  const { timeoutMs, signal: externalSignal, ...requestOptions } = options;
+  const abort = createAbortSignal({ timeoutMs, externalSignal: externalSignal ?? undefined });
 
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...requestOptions.headers,
   };
 
   if (token) {
     (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, {
+      ...requestOptions,
+      headers,
+      signal: abort.signal,
+    });
+  } catch (error) {
+    abort.clear();
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('A operação excedeu o tempo limite. Tente novamente.');
+    }
+    throw error;
+  }
+
+  abort.clear();
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Request failed' }));
@@ -92,8 +150,59 @@ async function request<T>(
   return response.json();
 }
 
+async function requestBlob(endpoint: string, options: RequestInit = {}): Promise<Blob> {
+  const token = await getToken();
+  const { timeoutMs, signal: externalSignal, ...requestOptions } = options as ApiRequestOptions;
+  const abort = createAbortSignal({ timeoutMs, externalSignal: externalSignal ?? undefined });
+  const headers: HeadersInit = {
+    ...requestOptions.headers,
+  };
+
+  if (token) {
+    (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, {
+      ...requestOptions,
+      headers,
+      signal: abort.signal,
+    });
+  } catch (error) {
+    abort.clear();
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('A operação excedeu o tempo limite. Tente novamente.');
+    }
+    throw error;
+  }
+
+  abort.clear();
+
+  if (!response.ok) {
+    const jsonError = await response.json().catch(() => null as any);
+    const message = jsonError?.message || 'Request failed';
+
+    if (
+      shouldHandleSessionExpiration({
+        endpoint,
+        status: response.status,
+        message,
+        hasToken: Boolean(token),
+      })
+    ) {
+      redirectToLoginWithSessionExpiredReason();
+    }
+
+    throw new Error(message);
+  }
+
+  return response.blob();
+}
+
 export const api = {
-  get: <T>(endpoint: string) => request<T>(endpoint, { method: 'GET' }),
+  get: <T>(endpoint: string, options?: ApiRequestOptions) => request<T>(endpoint, { ...options, method: 'GET' }),
+  getBlob: (endpoint: string, options?: ApiRequestOptions) => requestBlob(endpoint, { ...options, method: 'GET' }),
   post: <T>(endpoint: string, data?: unknown) =>
     request<T>(endpoint, { method: 'POST', body: JSON.stringify(data) }),
   put: <T>(endpoint: string, data?: unknown) =>
@@ -370,6 +479,13 @@ export interface ProposalTapDraft {
   premises: string;
   exclusions: string;
   stakeholders: string;
+  reimbursableByClient?: 'sim' | 'nao';
+  mobilityForecast?: 'sim' | 'nao';
+  mobilityForecastDetails?: string;
+  reimbursableExpensesForecast?: 'sim' | 'nao';
+  reimbursableExpensesForecastDetails?: string;
+  subcontractForecast?: 'sim' | 'nao';
+  subcontractForecastDetails?: string;
   notes: string;
   startDate?: string | null;
   endDate?: string | null;
@@ -653,6 +769,11 @@ export const clientsApi = {
   delete: (id: string) => api.delete(`/clients/${id}`),
 };
 
+const TAP_PREVIEW_TIMEOUT_MS = 15000;
+const TAP_SAVE_TIMEOUT_MS = 20000;
+const TAP_GENERATE_TIMEOUT_MS = 45000;
+const TAP_RESEND_TIMEOUT_MS = 20000;
+
 export const proposalsApi = {
   getAll: () => api.get<Proposal[]>('/proposals'),
   getOne: (id: string) => api.get<Proposal>(`/proposals/${id}`),
@@ -660,9 +781,32 @@ export const proposalsApi = {
   update: (id: string, data: Partial<Proposal>) => api.put<Proposal>(`/proposals/${id}`, data),
   delete: (id: string) => api.delete(`/proposals/${id}`),
   convert: (proposalId: string) => api.post<Project>('/proposals/convert', { proposalId }),
-  saveTap: (proposalId: string, data: ProposalTapDraft) => api.put<Proposal>(`/proposals/${proposalId}/tap`, data),
-  generateTap: (proposalId: string, data: ProposalTapDraft) => api.post<ProposalTapGenerateResponse>(`/proposals/${proposalId}/tap/generate`, data),
-  resendTapEmail: (proposalId: string) => api.post<Proposal>(`/proposals/${proposalId}/tap/resend-email`, {}),
+  saveTap: (proposalId: string, data: ProposalTapDraft) =>
+    request<Proposal>(`/proposals/${proposalId}/tap`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+      timeoutMs: TAP_SAVE_TIMEOUT_MS,
+    }),
+  getTapHtml: (proposalId: string) => api.get<{ htmlContent: string }>(`/proposals/${proposalId}/tap/html`),
+  previewTapHtml: (proposalId: string, data: ProposalTapDraft) =>
+    request<{ htmlContent: string }>(`/proposals/${proposalId}/tap/preview-html`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+      timeoutMs: TAP_PREVIEW_TIMEOUT_MS,
+    }),
+  getTapPdfBlob: (proposalId: string) => api.getBlob(`/proposals/${proposalId}/tap/pdf`),
+  generateTap: (proposalId: string, data: ProposalTapDraft) =>
+    request<ProposalTapGenerateResponse>(`/proposals/${proposalId}/tap/generate`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+      timeoutMs: TAP_GENERATE_TIMEOUT_MS,
+    }),
+  resendTapEmail: (proposalId: string) =>
+    request<Proposal>(`/proposals/${proposalId}/tap/resend-email`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+      timeoutMs: TAP_RESEND_TIMEOUT_MS,
+    }),
   createRevision: (id: string) => api.post<Proposal>(`/proposals/${id}/revision`, {}),
 };
 
