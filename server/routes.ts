@@ -3131,11 +3131,32 @@ export async function registerRoutes(
 
   app.get('/api/projects/:id/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const entries = await storage.getTimeEntriesByProject(req.params.id);
-    res.json(entries);
+    const collaboratorIds = Array.from(new Set(entries.map((entry) => entry.collaboratorId).filter(Boolean)));
+
+    const collaborators = await Promise.all(
+      collaboratorIds.map(async (collaboratorId) => ({
+        id: collaboratorId,
+        name: (await storage.getUser(collaboratorId))?.name ?? null,
+      }))
+    );
+
+    const collaboratorNameById = new Map(collaborators.map((collaborator) => [collaborator.id, collaborator.name]));
+
+    res.json(
+      entries.map((entry) => ({
+        ...entry,
+        collaboratorName: collaboratorNameById.get(entry.collaboratorId) ?? null,
+      }))
+    );
   });
 
   app.post('/api/projects/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
-    const { projectId, collaboratorId, costCenterId, entryDate, hours, description, attachments } = req.body;
+    const { projectId, costCenterId, entryDate, hours, description, attachments } = req.body;
+    const collaboratorId = (req as any).user?.sub as string | undefined;
+
+    if (!collaboratorId) {
+      return res.status(401).json({ message: 'Usuário autenticado inválido' });
+    }
 
     const normalizedAttachments = Array.isArray(attachments)
       ? attachments
@@ -3179,9 +3200,53 @@ export async function registerRoutes(
       hours: String(hours),
       description,
       attachments: normalizedAttachments,
+      status: project.requiresApproval ? 'pending' : 'approved',
+      approvedById: project.requiresApproval ? null : collaboratorId,
+      approvedAt: project.requiresApproval ? null : new Date(),
+      rejectionReason: null,
     });
 
     res.status(201).json(entry);
+  });
+
+  app.patch('/api/projects/time-entries/:id/status', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const entry = await storage.getTimeEntry(req.params.id);
+    if (!entry) {
+      return res.status(404).json({ message: 'Lançamento não encontrado' });
+    }
+
+    const project = await storage.getProject(entry.projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto não encontrado para este lançamento' });
+    }
+
+    const actorId = (req as any).user?.sub as string | undefined;
+    const actorRole = (req as any).user?.role as Role | undefined;
+    const isAdmin = actorRole === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+
+    if (!isAdmin && !isCoordinator) {
+      return res.status(403).json({ message: 'Apenas o coordenador do projeto pode aprovar ou rejeitar horas' });
+    }
+
+    const nextStatus = String(req.body?.status || '').trim().toLowerCase();
+    if (nextStatus !== 'approved' && nextStatus !== 'rejected') {
+      return res.status(400).json({ message: 'Status inválido. Use approved ou rejected' });
+    }
+
+    const rawRejectionReason = typeof req.body?.rejectionReason === 'string' ? req.body.rejectionReason.trim() : '';
+    const updatedEntry = await storage.updateTimeEntry(entry.id, {
+      status: nextStatus,
+      approvedById: actorId ?? null,
+      approvedAt: new Date(),
+      rejectionReason: nextStatus === 'rejected' ? (rawRejectionReason || null) : null,
+    } as Partial<any>);
+
+    if (!updatedEntry) {
+      return res.status(500).json({ message: 'Não foi possível atualizar o lançamento' });
+    }
+
+    return res.json(updatedEntry);
   });
 
   // Admin-only consolidated dashboard (used by admin profile)

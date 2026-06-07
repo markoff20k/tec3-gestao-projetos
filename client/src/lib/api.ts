@@ -637,6 +637,7 @@ export interface TimeEntry {
   id: string;
   projectId: string;
   collaboratorId: string;
+  collaboratorName?: string | null;
   costCenterId?: string | null;
   entryDate: string;
   hours: number;
@@ -644,6 +645,9 @@ export interface TimeEntry {
   attachments?: TimeEntryAttachment[] | null;
   costCenter?: CostCenter | null;
   status: string;
+  approvedById?: string | null;
+  approvedAt?: string | null;
+  rejectionReason?: string | null;
 }
 
 export interface TimeEntryAttachment {
@@ -825,6 +829,8 @@ export const projectsApi = {
   getStats: (id: string) => api.get<any>(`/projects/${id}/stats`),
   getTimeEntries: (id: string) => api.get<TimeEntry[]>(`/projects/${id}/time-entries`),
   createTimeEntry: (data: Partial<TimeEntry>) => api.post<TimeEntry>('/projects/time-entries', data),
+  updateTimeEntryStatus: (id: string, data: { status: 'approved' | 'rejected'; rejectionReason?: string | null }) =>
+    api.patch<TimeEntry>(`/projects/time-entries/${id}/status`, data),
 };
 
 export const reportsApi = {

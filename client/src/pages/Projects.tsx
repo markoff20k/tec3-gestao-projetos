@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles } from 'lucide-react';
+import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -48,6 +48,11 @@ import {
 } from '@/components/ui/collapsible';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { projectsApi, clientsApi, usersApi, Project, Client, ProjectTap, UserOption } from '@/lib/api';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
@@ -124,19 +129,21 @@ export default function Projects() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [clientFilter, setClientFilter] = useState('');
+  const [onboardingOriginFilter, setOnboardingOriginFilter] = useState<'all' | 'native' | 'legacy'>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [valueMin, setValueMin] = useState('');
   const [valueMax, setValueMax] = useState('');
   const [hoursMin, setHoursMin] = useState('');
-  const lastSetupProjectIdRef = useRef<string | null>(null);
   const [hoursMax, setHoursMax] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [deleteConfirmProjectInput, setDeleteConfirmProjectInput] = useState('');
   const [tapPreviewOpen, setTapPreviewOpen] = useState(false);
-  const [setupStep, setSetupStep] = useState(0);
+  const [tapDetailsOpen, setTapDetailsOpen] = useState(false);
+  const [detailsInitialSection, setDetailsInitialSection] = useState<'overview' | 'config'>('overview');
+  const configurationSectionRef = useRef<HTMLDivElement | null>(null);
   const [setupForm, setSetupForm] = useState({
     coordinatorId: '',
     dailyLimitHours: '8',
@@ -163,15 +170,21 @@ export default function Projects() {
     const statusSingle = parseQueryList(params.get('status'));
     const nextStatusFilters = Array.from(new Set([...statusFromList, ...statusSingle]));
     const nextClientFilter = (params.get('clientId') ?? params.get('client') ?? '').trim();
+    const nextOnboardingOrigin = normalizeFilterValue(params.get('onboardingOrigin') ?? 'all');
     const nextProjectId = (params.get('projectId') ?? '').trim();
 
     setSearch(params.get('search') ?? '');
     setStatusFilters(nextStatusFilters);
     setClientFilter(nextClientFilter);
+    setOnboardingOriginFilter(
+      nextOnboardingOrigin === 'legacy' || nextOnboardingOrigin === 'native'
+        ? (nextOnboardingOrigin as 'legacy' | 'native')
+        : 'all'
+    );
     setSelectedProjectId(nextProjectId || null);
     setDetailsOpen(Boolean(nextProjectId));
 
-    if (nextStatusFilters.length > 0 || nextClientFilter) {
+    if (nextStatusFilters.length > 0 || nextClientFilter || nextOnboardingOrigin === 'legacy' || nextOnboardingOrigin === 'native') {
       setFiltersOpen(true);
     }
 
@@ -188,13 +201,14 @@ export default function Projects() {
     const nextSearch = search.trim();
     const nextClient = clientFilter.trim();
 
-    ['search', 'statuses', 'status', 'clientId', 'client'].forEach((key) => {
+    ['search', 'statuses', 'status', 'clientId', 'client', 'onboardingOrigin'].forEach((key) => {
       params.delete(key);
     });
 
     if (nextSearch) params.set('search', nextSearch);
     if (normalizedStatuses.length) params.set('statuses', normalizedStatuses.join(','));
     if (nextClient) params.set('clientId', nextClient);
+    if (onboardingOriginFilter !== 'all') params.set('onboardingOrigin', onboardingOriginFilter);
 
     const nextQuery = params.toString();
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
@@ -203,7 +217,7 @@ export default function Projects() {
     if (nextUrl !== currentUrl) {
       window.history.replaceState(window.history.state, '', nextUrl);
     }
-  }, [search, statusFilters, clientFilter]);
+  }, [search, statusFilters, clientFilter, onboardingOriginFilter]);
 
   useEffect(() => {
     const savedViewMode = localStorage.getItem('projectsViewMode') as ViewMode;
@@ -322,8 +336,6 @@ export default function Projects() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId] });
-      setSetupStep((current) => Math.min(2, current + 1));
-      toast({ title: 'Setup atualizado com sucesso', variant: 'success' });
     },
     onError: (error) => {
       toast({ title: 'Erro ao atualizar setup', description: error.message, variant: 'destructive' });
@@ -335,7 +347,6 @@ export default function Projects() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId] });
-      toast({ title: 'Setup concluído com sucesso', variant: 'success' });
     },
     onError: (error) => {
       toast({ title: 'Erro ao concluir setup', description: error.message, variant: 'destructive' });
@@ -386,9 +397,10 @@ export default function Projects() {
     return date.toLocaleDateString('pt-BR');
   };
 
-  const openDetailsDialog = (projectId: string) => {
+  const openDetailsDialog = (projectId: string, initialSection: 'overview' | 'config' = 'overview') => {
     setSelectedProjectId(projectId);
     setShowFullColumnsMobile(false);
+    setDetailsInitialSection(initialSection);
     setDetailsOpen(true);
   };
 
@@ -396,28 +408,34 @@ export default function Projects() {
     setLocation(`/time-entries?projectId=${projectId}`);
   };
 
+  const openProjectTimeApprovals = (projectId: string) => {
+    setLocation(`/time-approvals?projectId=${projectId}`);
+  };
+
   useEffect(() => {
     if (!selectedProject) return;
-
-    const derivedStep = !selectedProject.coordinatorId
-      ? 0
-      : selectedProject.setupStatus !== 'completed'
-        ? 1
-        : 2;
 
     setSetupForm({
       coordinatorId: selectedProject.coordinatorId ?? '',
       dailyLimitHours: String(selectedProject.dailyLimitHours ?? 8),
       requiresApproval: String(selectedProject.requiresApproval ?? true),
     });
-
-    if (lastSetupProjectIdRef.current !== selectedProject.id) {
-      lastSetupProjectIdRef.current = selectedProject.id;
-      setSetupStep(derivedStep);
-    } else {
-      setSetupStep((current) => Math.max(current, derivedStep));
-    }
   }, [selectedProject]);
+
+  useEffect(() => {
+    setTapDetailsOpen(false);
+  }, [selectedProjectId, detailsOpen]);
+
+  useEffect(() => {
+    if (!detailsOpen || !selectedProject || detailsInitialSection !== 'config') return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      configurationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setDetailsInitialSection('overview');
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [detailsOpen, selectedProject, detailsInitialSection]);
 
   const getConsumedHours = (project: Project) => Number(project.consumedHours || 0);
   const getBudgetHours = (project: Project) => Number(project.budgetHours || 0);
@@ -440,6 +458,52 @@ export default function Projects() {
   const hasProjectExecutionStarted = (project: Project) =>
     project.status !== 'planning' || Number(project.timeSummary?.entriesCount || 0) > 0;
 
+  const hasProjectTapReady = (project: Project) =>
+    Boolean((project.tapStatus && project.tapStatus !== 'not_generated') || project.tapGeneratedAt);
+
+  const isLegacyCompatibilityProject = (project: Project) =>
+    hasProjectExecutionStarted(project) && !hasProjectTapReady(project);
+
+  const isProjectExecutionStarted = selectedProject ? hasProjectExecutionStarted(selectedProject) : false;
+
+  const isSetupCompletedEffective = Boolean(
+    selectedProject && (selectedProject.setupStatus === 'completed' || isProjectExecutionStarted)
+  );
+
+  const isTapReadyEffective = Boolean(
+    selectedProject && (
+      (selectedProject.tapStatus && selectedProject.tapStatus !== 'not_generated') ||
+      selectedProject.tapGeneratedAt ||
+      selectedProjectTap?.htmlContent
+    )
+  );
+
+  const isLegacyOnboardingInferred = Boolean(
+    selectedProject && selectedProject.setupStatus !== 'completed' && isProjectExecutionStarted
+  );
+
+  const isLegacyTapMissingInExecution = Boolean(
+    selectedProject && isProjectExecutionStarted && !isTapReadyEffective
+  );
+
+  const setupStatusPresentationLabel = selectedProject
+    ? (isLegacyOnboardingInferred
+      ? 'Concluído'
+      : (setupStatusLabels[selectedProject.setupStatus || 'pending'] || selectedProject.setupStatus || '-'))
+    : '-';
+
+  const tapStatusPresentationLabel = selectedProject
+    ? (isLegacyTapMissingInExecution
+      ? 'Histórico sem TAP'
+      : (tapStatusLabels[selectedProject.tapStatus || 'not_generated'] || selectedProject.tapStatus || '-'))
+    : '-';
+
+  const onboardingHeadline = isProjectExecutionStarted
+    ? 'Projeto em execução com onboarding consolidado'
+    : 'Projeto em planejamento com TAP e setup operacional';
+
+  const onboardingStatusBadgeClassName = 'h-6 min-w-[150px] px-2.5 inline-flex items-center justify-center whitespace-nowrap text-[11px] font-medium tracking-wide dark:border-white/10 dark:bg-[#214273] dark:text-blue-50';
+
   const toggleStatusFilter = (status: string) => {
     setStatusFilters((prev) =>
       prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
@@ -451,6 +515,7 @@ export default function Projects() {
     setSearch('');
     setStatusFilters([]);
     setClientFilter('');
+    setOnboardingOriginFilter('all');
     setDateFrom('');
     setDateTo('');
     setValueMin('');
@@ -463,6 +528,7 @@ export default function Projects() {
   const activeFilterCount =
     statusFilters.length +
     (clientFilter ? 1 : 0) +
+    (onboardingOriginFilter !== 'all' ? 1 : 0) +
     (dateFrom ? 1 : 0) +
     (dateTo ? 1 : 0) +
     (valueMin ? 1 : 0) +
@@ -480,6 +546,9 @@ export default function Projects() {
       const normalizedStatusFilters = statusFilters.map(normalizeFilterValue);
       const statusMatch = normalizedStatusFilters.length === 0 || normalizedStatusFilters.includes(projectStatus);
       const clientMatch = !clientFilter || p.clientId === clientFilter;
+      const onboardingOriginMatch =
+        onboardingOriginFilter === 'all' ||
+        (onboardingOriginFilter === 'legacy' ? isLegacyCompatibilityProject(p) : !isLegacyCompatibilityProject(p));
 
       const dateMatch = (() => {
         if (!dateFrom && !dateTo) return true;
@@ -504,7 +573,7 @@ export default function Projects() {
         return true;
       })();
 
-      return searchMatch && statusMatch && clientMatch && dateMatch && valueMatch && hoursMatch;
+      return searchMatch && statusMatch && clientMatch && onboardingOriginMatch && dateMatch && valueMatch && hoursMatch;
     });
 
     return filtered.sort((a, b) => {
@@ -526,7 +595,7 @@ export default function Projects() {
       return dateB - dateA;
     });
 
-  }, [projects, search, statusFilters, clientFilter, dateFrom, dateTo, valueMin, valueMax, hoursMin, hoursMax, sortOrder]);
+  }, [projects, search, statusFilters, clientFilter, onboardingOriginFilter, dateFrom, dateTo, valueMin, valueMax, hoursMin, hoursMax, sortOrder]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProjects.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -548,13 +617,25 @@ export default function Projects() {
     setCurrentPage(1);
   };
 
-  const handleSetupSubmit = (event: React.FormEvent) => {
+  const handleSetupSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    updateSetupMutation.mutate({
-      coordinatorId: setupForm.coordinatorId || null,
-      dailyLimitHours: Number.parseInt(setupForm.dailyLimitHours, 10) || 8,
-      requiresApproval: setupForm.requiresApproval === 'true',
-    });
+
+    try {
+      await updateSetupMutation.mutateAsync({
+        coordinatorId: setupForm.coordinatorId || null,
+        dailyLimitHours: Number.parseInt(setupForm.dailyLimitHours, 10) || 8,
+        requiresApproval: setupForm.requiresApproval === 'true',
+      });
+
+      if (canCompleteSetup) {
+        await completeSetupMutation.mutateAsync();
+        toast({ title: 'Setup concluído com sucesso', variant: 'success' });
+      } else {
+        toast({ title: 'Configuração salva com sucesso', variant: 'success' });
+      }
+    } catch {
+      // erros já tratados nos onError das mutations
+    }
   };
 
   const normalizedSelectedProjectTapHtml = useMemo(
@@ -592,38 +673,45 @@ export default function Projects() {
   const onboardingItems = selectedProject ? [
     {
       title: 'TAP gerado',
-      description: selectedProject.tapStatus && selectedProject.tapStatus !== 'not_generated'
+      description: isTapReadyEffective
         ? 'Documento inicial disponível para consulta e exportação.'
-        : 'Aguardando geração do termo de abertura.',
-      complete: Boolean(selectedProject.tapStatus && selectedProject.tapStatus !== 'not_generated'),
+        : isLegacyTapMissingInExecution
+          ? 'Projeto já em execução sem TAP histórico registrado no sistema atual.'
+          : 'Aguardando geração do termo de abertura.',
+      complete: isTapReadyEffective || isLegacyTapMissingInExecution,
       icon: FileText,
     },
     {
       title: 'Setup operacional',
-      description: selectedProject.setupStatus === 'completed'
+      description: isSetupCompletedEffective
         ? 'Regras e responsáveis definidos para início da execução.'
+        : isLegacyOnboardingInferred
+          ? 'Setup consolidado pelo histórico de execução já iniciado.'
         : 'Defina coordenador, limite diário e aprovação de horas.',
-      complete: selectedProject.setupStatus === 'completed',
+      complete: isSetupCompletedEffective,
       icon: ClipboardCheck,
     },
     {
       title: 'Pronto para execução',
-      description: ['active', 'in_progress'].includes(selectedProject.status)
+      description: isProjectExecutionStarted
         ? 'Projeto já liberado para operação.'
         : 'Ative o projeto após concluir o onboarding.',
-      complete: ['active', 'in_progress'].includes(selectedProject.status),
+      complete: isProjectExecutionStarted,
       icon: ArrowRightCircle,
     },
   ] : [];
 
-  const onboardingProgress = onboardingItems.length
-    ? (onboardingItems.filter((item) => item.complete).length / onboardingItems.length) * 100
+  const currentOnboardingStepIndex = onboardingItems.length
+    ? (() => {
+      const firstPendingStepIndex = onboardingItems.findIndex((item) => !item.complete);
+      return firstPendingStepIndex === -1 ? onboardingItems.length - 1 : firstPendingStepIndex;
+    })()
     : 0;
 
   const canCompleteSetup = Boolean(
     selectedProject &&
-    selectedProject.tapStatus &&
-    selectedProject.tapStatus !== 'not_generated' &&
+    !isSetupCompletedEffective &&
+    isTapReadyEffective &&
     setupForm.coordinatorId &&
     (Number.parseInt(setupForm.dailyLimitHours, 10) || 0) > 0
   );
@@ -951,6 +1039,28 @@ export default function Projects() {
                         </SelectContent>
                       </Select>
                     </div>
+
+                    <div className="space-y-2">
+                      <Label className="font-medium">Origem do onboarding</Label>
+                      <Select
+                        value={onboardingOriginFilter}
+                        onValueChange={(value) => {
+                          setOnboardingOriginFilter(
+                            value === 'legacy' || value === 'native' ? value : 'all'
+                          );
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger data-testid="filter-project-onboarding-origin">
+                          <SelectValue placeholder="Todos" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos</SelectItem>
+                          <SelectItem value="native">Nativo</SelectItem>
+                          <SelectItem value="legacy">Contexto histórico</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </CollapsibleContent>
               </Collapsible>
@@ -1032,6 +1142,17 @@ export default function Projects() {
                             <Eye className="h-3 w-3 mr-1" />
                             Ver
                           </Button>
+                          {project.status === 'planning' ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              data-testid={`button-configure-project-table-${project.id}`}
+                              onClick={() => openDetailsDialog(project.id, 'config')}
+                            >
+                              <SlidersHorizontal className="h-3 w-3 mr-1" />
+                              Configurar
+                            </Button>
+                          ) : null}
                           <Button
                             size="sm"
                             variant="outline"
@@ -1040,6 +1161,15 @@ export default function Projects() {
                           >
                             <Clock className="h-3 w-3 mr-1" />
                             Horas
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            data-testid={`button-time-approvals-table-${project.id}`}
+                            onClick={() => openProjectTimeApprovals(project.id)}
+                          >
+                            <ClipboardCheck className="h-3 w-3 mr-1" />
+                            Aprovações
                           </Button>
                           <Button
                             size="sm"
@@ -1102,6 +1232,17 @@ export default function Projects() {
                         <Eye className="h-3 w-3 mr-1" />
                         Ver
                       </Button>
+                      {project.status === 'planning' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid={`button-configure-project-${project.id}`}
+                          onClick={() => openDetailsDialog(project.id, 'config')}
+                        >
+                          <SlidersHorizontal className="h-3 w-3 mr-1" />
+                          Configurar
+                        </Button>
+                      ) : null}
                       <Button
                         size="sm"
                         variant="outline"
@@ -1110,6 +1251,15 @@ export default function Projects() {
                       >
                         <Clock className="h-3 w-3 mr-1" />
                         Horas
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid={`button-time-approvals-${project.id}`}
+                        onClick={() => openProjectTimeApprovals(project.id)}
+                      >
+                        <ClipboardCheck className="h-3 w-3 mr-1" />
+                        Aprovações
                       </Button>
                       <Button
                         size="sm"
@@ -1247,7 +1397,12 @@ export default function Projects() {
           </div>
         )}
 
-        <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <Dialog open={detailsOpen} onOpenChange={(open) => {
+          setDetailsOpen(open);
+          if (!open) {
+            setDetailsInitialSection('overview');
+          }
+        }}>
           <DialogContent className="flex w-[calc(100vw-1rem)] max-h-[90vh] flex-col overflow-hidden p-0 sm:w-[calc(100vw-2rem)] max-w-5xl dark:bg-[#102452] dark:border-white/10">
             <DialogHeader className="shrink-0 border-b px-4 py-4 pr-12 sm:px-6 dark:border-white/10 dark:bg-[#163266]">
               <DialogTitle>Detalhes do Projeto</DialogTitle>
@@ -1293,184 +1448,225 @@ export default function Projects() {
                           Onboarding do Projeto
                         </div>
                         <div>
-                          <p className="text-lg font-semibold">Projeto em planejamento com TAP e setup operacional</p>
+                          <p className="text-lg font-semibold">{onboardingHeadline}</p>
                           <p className="text-sm text-muted-foreground">
-                            Estruture o projeto em etapas, valide o TAP e conclua o setup antes da execução.
+                            {isLegacyTapMissingInExecution
+                              ? 'Projeto já em execução com contexto histórico sem TAP registrado no sistema atual.'
+                              : isLegacyOnboardingInferred
+                                ? 'Projeto já em execução. O onboarding foi consolidado com base no histórico operacional.'
+                              : 'Estruture o projeto em etapas, valide o TAP e conclua o setup antes da execução.'}
                           </p>
+                          {isLegacyTapMissingInExecution ? (
+                            <div className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                              <span>Contexto histórico</span>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center justify-center rounded-full p-0.5 text-muted-foreground hover:bg-muted"
+                                    aria-label="Entenda o contexto histórico"
+                                  >
+                                    <Info className="h-3.5 w-3.5" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-[320px] text-xs leading-relaxed">
+                                  Este projeto já estava em execução quando o onboarding passou a ser rastreado no sistema. Por isso o TAP histórico pode não estar disponível, sem impacto na operação atual.
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Badge variant="outline" className="dark:border-white/10 dark:bg-[#214273] dark:text-blue-50">TAP: {tapStatusLabels[selectedProject.tapStatus || 'not_generated'] || selectedProject.tapStatus || '-'}</Badge>
-                        <Badge variant="outline" className="dark:border-white/10 dark:bg-[#214273] dark:text-blue-50">Setup: {setupStatusLabels[selectedProject.setupStatus || 'pending'] || selectedProject.setupStatus || '-'}</Badge>
+                      <div className="flex flex-wrap items-center gap-2 lg:max-w-[320px] lg:justify-end">
+                        <Badge variant="outline" className={onboardingStatusBadgeClassName}>TAP: {tapStatusPresentationLabel}</Badge>
+                        <Badge variant="outline" className={onboardingStatusBadgeClassName}>Setup: {setupStatusPresentationLabel}</Badge>
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs uppercase tracking-wide text-muted-foreground">
-                        <span>Prontidão operacional</span>
-                        <span>{Math.round(onboardingProgress)}%</span>
+                    <div className="rounded-xl border border-primary/15 bg-background/70 px-3 py-3 dark:border-white/10 dark:bg-[#112a57]">
+                      <div className="mb-3 flex flex-col gap-1 text-xs uppercase tracking-wide text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                        <span>Fluxo de etapas</span>
+                        <span>Etapa atual {currentOnboardingStepIndex + 1} de {onboardingItems.length || 3}</span>
                       </div>
-                      <Progress value={onboardingProgress} className="h-2.5" />
-                    </div>
+                      <div className="-mx-1 overflow-x-auto px-1 pb-1 [scrollbar-width:thin]">
+                        <div className="flex min-w-[560px] items-center sm:min-w-0">
+                        {onboardingItems.map((item, index) => {
+                          const isCurrent = index === currentOnboardingStepIndex;
+                          const isComplete = item.complete;
+                          const isPending = !isComplete && !isCurrent;
 
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                      {onboardingItems.map((item, index) => {
-                        const Icon = item.icon;
-                        const isCurrent = setupStep === index || (index === 2 && selectedProject.setupStatus === 'completed');
-
-                        return (
-                          <button
-                            key={item.title}
-                            type="button"
-                            onClick={() => setSetupStep(index)}
-                            className={`rounded-xl border p-4 text-left transition-colors ${item.complete ? 'border-emerald-200 bg-emerald-50/80 dark:border-emerald-400/30 dark:bg-[#183f44]' : isCurrent ? 'border-primary/40 bg-background dark:border-blue-300/35 dark:bg-[#1f4277]' : 'border-border bg-background/80 dark:border-white/10 dark:bg-[#122a57]'}`}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="space-y-2">
-                                <div className="flex items-center gap-2">
-                                  <div className={`flex h-8 w-8 items-center justify-center rounded-full ${item.complete ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-300/18 dark:text-emerald-100' : 'bg-primary/10 text-primary dark:bg-blue-300/18 dark:text-blue-100'}`}>
-                                    <Icon className="h-4 w-4" />
-                                  </div>
-                                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Etapa {index + 1}</span>
-                                </div>
-                                <p className="text-sm font-semibold leading-tight">{item.title}</p>
-                                <p className="text-sm text-muted-foreground">{item.description}</p>
+                          return (
+                            <div key={`stepper-${item.title}`} className="flex min-w-[170px] flex-1 items-center sm:min-w-0">
+                              <div className="group inline-flex min-w-0 items-center gap-2 text-left">
+                                <span
+                                  className={`inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border text-[11px] font-semibold ${isComplete
+                                    ? 'border-emerald-600 bg-emerald-600 text-white'
+                                    : isCurrent
+                                      ? 'border-primary bg-primary text-primary-foreground'
+                                      : 'border-border bg-background text-muted-foreground dark:border-white/20 dark:bg-[#173467]'
+                                  }`}
+                                >
+                                  {index + 1}
+                                </span>
+                                <span className={`truncate text-[11px] font-medium sm:text-xs ${isPending ? 'text-muted-foreground' : 'text-foreground'}`}>
+                                  <span className="sm:hidden">Etapa {index + 1}</span>
+                                  <span className="hidden sm:inline">{item.title}</span>
+                                </span>
+                                <span className="sr-only">
+                                  {item.title}
+                                </span>
                               </div>
-                              <Badge variant={item.complete ? 'default' : 'outline'} className={item.complete ? 'bg-emerald-600 text-white hover:bg-emerald-600' : 'dark:border-white/10 dark:bg-[#214273] dark:text-blue-50'}>
-                                {item.complete ? 'Concluído' : 'Pendente'}
-                              </Badge>
+
+                              {index < onboardingItems.length - 1 ? (
+                                <span
+                                  className={`mx-2 h-[2px] flex-1 rounded-full ${index < currentOnboardingStepIndex
+                                    ? 'bg-emerald-500/70'
+                                    : 'bg-border dark:bg-white/15'
+                                  }`}
+                                />
+                              ) : null}
                             </div>
-                          </button>
-                        );
-                      })}
+                          );
+                        })}
+                        </div>
+                      </div>
                     </div>
+
                   </div>
 
                   <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-                    <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 dark:bg-[#183767] dark:border-white/10">
+                    <div ref={configurationSectionRef} className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 dark:bg-[#183767] dark:border-white/10">
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="text-sm font-semibold">Setup guiado</p>
                           <p className="text-sm text-muted-foreground">
-                            Preencha cada etapa para transformar o projeto em operacional.
+                            Preencha os campos para transformar o projeto em operacional.
                           </p>
                         </div>
-                        <Badge variant="outline">Passo {Math.min(setupStep + 1, 3)} de 3</Badge>
                       </div>
 
                       <form onSubmit={handleSetupSubmit} className="space-y-4">
-                        {setupStep === 0 ? (
-                          <div className="space-y-4 rounded-xl border p-4 dark:border-white/10 dark:bg-[#102247]">
-                            <div className="space-y-1">
-                              <p className="text-base font-semibold">Definir responsável operacional</p>
-                              <p className="text-sm text-muted-foreground">
-                                Escolha o coordenador que ficará responsável pela condução do projeto.
-                              </p>
+                        <div className="space-y-4 rounded-xl border p-4 dark:border-white/10 dark:bg-[#102247]">
+                          <div className="space-y-1">
+                            <p className="text-base font-semibold">Configuração operacional</p>
+                            <p className="text-sm text-muted-foreground">
+                              Defina responsável, limite diário e aprovação de horas em uma única tela.
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label>Coordenador do Projeto</Label>
+                            <Select value={setupForm.coordinatorId || '__none__'} onValueChange={(value) => setSetupForm((current) => ({ ...current, coordinatorId: value === '__none__' ? '' : value }))}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione um coordenador" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Não definido</SelectItem>
+                                {users.filter((user) => user.isActive).map((user) => (
+                                  <SelectItem key={user.id} value={user.id}>
+                                    {user.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label htmlFor="setup-daily-limit">Limite Diário (h)</Label>
+                              <Input
+                                id="setup-daily-limit"
+                                type="number"
+                                value={setupForm.dailyLimitHours}
+                                onChange={(event) => setSetupForm((current) => ({ ...current, dailyLimitHours: event.target.value }))}
+                              />
                             </div>
                             <div className="space-y-2">
-                              <Label>Coordenador do Projeto</Label>
-                              <Select value={setupForm.coordinatorId || '__none__'} onValueChange={(value) => setSetupForm((current) => ({ ...current, coordinatorId: value === '__none__' ? '' : value }))}>
+                              <Label>Exige Aprovação</Label>
+                              <Select value={setupForm.requiresApproval} onValueChange={(value) => setSetupForm((current) => ({ ...current, requiresApproval: value }))}>
                                 <SelectTrigger>
-                                  <SelectValue placeholder="Selecione um coordenador" />
+                                  <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="__none__">Não definido</SelectItem>
-                                  {users.filter((user) => user.isActive).map((user) => (
-                                    <SelectItem key={user.id} value={user.id}>
-                                      {user.name}
-                                    </SelectItem>
-                                  ))}
+                                  <SelectItem value="true">Sim</SelectItem>
+                                  <SelectItem value="false">Não</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>
                           </div>
-                        ) : null}
-
-                        {setupStep === 1 ? (
-                          <div className="space-y-4 rounded-xl border p-4 dark:border-white/10 dark:bg-[#102247]">
-                            <div className="space-y-1">
-                              <p className="text-base font-semibold">Configurar regras do projeto</p>
-                              <p className="text-sm text-muted-foreground">
-                                Defina as premissas de operação e controle de apontamento de horas.
-                              </p>
-                            </div>
-                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                              <div className="space-y-2">
-                                <Label htmlFor="setup-daily-limit">Limite Diário (h)</Label>
-                                <Input
-                                  id="setup-daily-limit"
-                                  type="number"
-                                  value={setupForm.dailyLimitHours}
-                                  onChange={(event) => setSetupForm((current) => ({ ...current, dailyLimitHours: event.target.value }))}
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label>Exige Aprovação</Label>
-                                <Select value={setupForm.requiresApproval} onValueChange={(value) => setSetupForm((current) => ({ ...current, requiresApproval: value }))}>
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="true">Sim</SelectItem>
-                                    <SelectItem value="false">Não</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
-
-                        {setupStep === 2 ? (
-                          <div className="space-y-4 rounded-xl border p-4 dark:border-white/10 dark:bg-[#102247]">
-                            <div className="space-y-1">
-                              <p className="text-base font-semibold">Revisão final</p>
-                              <p className="text-sm text-muted-foreground">
-                                Revise o resumo do TAP e confirme se o projeto já está pronto para iniciar.
-                              </p>
-                            </div>
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                              <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
-                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Coordenador</p>
-                                <p className="mt-1 text-sm font-semibold">{selectedProject.coordinator?.name || 'Não definido'}</p>
-                              </div>
-                              <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
-                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Limite diário</p>
-                                <p className="mt-1 text-sm font-semibold">{setupForm.dailyLimitHours || '-'} h</p>
-                              </div>
-                              <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
-                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Aprovação</p>
-                                <p className="mt-1 text-sm font-semibold">{setupForm.requiresApproval === 'true' ? 'Obrigatória' : 'Dispensada'}</p>
-                              </div>
-                              <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
-                                <p className="text-xs uppercase tracking-wide text-muted-foreground">TAP</p>
-                                <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.title || 'Ainda não disponível'}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
-
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="flex gap-2">
-                            <Button type="button" variant="outline" disabled={setupStep === 0} onClick={() => setSetupStep((current) => Math.max(0, current - 1))}>
-                              Anterior
-                            </Button>
-                            <Button type="button" variant="outline" disabled={setupStep === 2} onClick={() => setSetupStep((current) => Math.min(2, current + 1))}>
-                              Próximo
-                            </Button>
-                          </div>
-                          <Button type="submit" disabled={updateSetupMutation.isPending}>
-                            {updateSetupMutation.isPending ? 'Salvando...' : 'Salvar etapa'}
-                          </Button>
                         </div>
+
+                        <div className="space-y-4 rounded-xl border p-4 dark:border-white/10 dark:bg-[#102247]">
+                          <div className="space-y-1">
+                            <p className="text-base font-semibold">Revisão</p>
+                            <p className="text-sm text-muted-foreground">
+                              Confira os dados atuais antes de concluir o setup.
+                            </p>
+                          </div>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Coordenador</p>
+                              <p className="mt-1 text-sm font-semibold">{selectedProject.coordinator?.name || 'Não definido'}</p>
+                            </div>
+                            <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Limite diário</p>
+                              <p className="mt-1 text-sm font-semibold">{setupForm.dailyLimitHours || '-'} h</p>
+                            </div>
+                            <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Aprovação</p>
+                              <p className="mt-1 text-sm font-semibold">{setupForm.requiresApproval === 'true' ? 'Obrigatória' : 'Dispensada'}</p>
+                            </div>
+                            <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">TAP</p>
+                              <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.title || 'Ainda não disponível'}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {!isSetupCompletedEffective ? (
+                          <div className="flex justify-end pt-1">
+                            <Button
+                              type="submit"
+                              className="w-full sm:w-auto sm:min-w-[210px]"
+                              disabled={updateSetupMutation.isPending || completeSetupMutation.isPending}
+                            >
+                              {updateSetupMutation.isPending || completeSetupMutation.isPending
+                                ? 'Salvando...'
+                                : canCompleteSetup
+                                  ? 'Salvar e concluir setup'
+                                  : 'Salvar configuração'}
+                            </Button>
+                          </div>
+                        ) : null}
                       </form>
 
-                      <div className="flex flex-col gap-2 border-t pt-4 sm:flex-row sm:items-center sm:justify-end">
-                        <Button type="button" variant="outline" disabled={completeSetupMutation.isPending || !canCompleteSetup} onClick={() => completeSetupMutation.mutate()}>
-                          {completeSetupMutation.isPending ? 'Concluindo...' : 'Concluir setup'}
-                        </Button>
-                        <Button type="button" disabled={activateProjectMutation.isPending || selectedProject.setupStatus !== 'completed'} onClick={() => activateProjectMutation.mutate()}>
-                          {activateProjectMutation.isPending ? 'Iniciando...' : 'Iniciar projeto'}
-                        </Button>
+                      <div className="flex flex-col gap-3 border-t pt-4">
+                        {isSetupCompletedEffective ? (
+                          <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-400/30 dark:bg-[#183f44] dark:text-emerald-100">
+                            {isLegacyOnboardingInferred
+                              ? 'Setup consolidado automaticamente com base no histórico de execução já iniciado.'
+                              : 'Setup concluído. O projeto está pronto para operação.'}
+                          </div>
+                        ) : null}
+
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                          <Button
+                            type="button"
+                            className="w-full sm:w-auto sm:min-w-[210px]"
+                            disabled={
+                              activateProjectMutation.isPending ||
+                              isProjectExecutionStarted ||
+                              !isSetupCompletedEffective
+                            }
+                            onClick={() => activateProjectMutation.mutate()}
+                          >
+                            {activateProjectMutation.isPending
+                              ? 'Iniciando...'
+                              : isProjectExecutionStarted
+                                ? 'Projeto já iniciado'
+                                : 'Iniciar projeto'}
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
@@ -1479,7 +1675,7 @@ export default function Projects() {
                         <div>
                           <p className="text-sm font-semibold">TAP do projeto</p>
                           <p className="text-sm text-muted-foreground">
-                            Visualize, imprima ou exporte o termo de abertura com o snapshot comercial do projeto.
+                            Visualize, imprima ou exporte o termo de abertura do projeto.
                           </p>
                         </div>
                         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary dark:bg-blue-300/18 dark:text-blue-100">
@@ -1494,37 +1690,51 @@ export default function Projects() {
                         </div>
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
                           <div>
-                            <p className="text-muted-foreground">Gerado em</p>
-                            <p className="font-medium">{selectedProject.tapGeneratedAt ? formatDate(selectedProject.tapGeneratedAt) : '-'}</p>
+                            <p className="text-muted-foreground">Status</p>
+                            <p className="font-medium">{tapStatusPresentationLabel}</p>
                           </div>
                           <div>
                             <p className="text-muted-foreground">Enviado em</p>
                             <p className="font-medium">{selectedProject.tapSentAt ? formatDate(selectedProject.tapSentAt) : '-'}</p>
                           </div>
                         </div>
-                        <p className="text-sm text-muted-foreground break-words">
-                          {selectedProject.tapLastEmailError || 'Nenhum erro de envio registrado até o momento.'}
-                        </p>
                       </div>
 
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Cliente</p>
-                          <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.payload?.client?.razaoSocial || selectedProject.client?.razaoSocial || '-'}</p>
-                        </div>
-                        <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Proposta origem</p>
-                          <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.payload?.proposal?.code || '-'}</p>
-                        </div>
-                        <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Horas previstas</p>
-                          <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.payload?.project?.budgetHours ?? selectedProject.budgetHours ?? 0} h</p>
-                        </div>
-                        <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Valor previsto</p>
-                          <p className="mt-1 text-sm font-semibold">{formatCurrency(Number(selectedProjectTap?.payload?.project?.budgetValue ?? selectedProject.budgetValue ?? 0))}</p>
-                        </div>
-                      </div>
+                      <Collapsible open={tapDetailsOpen} onOpenChange={setTapDetailsOpen}>
+                        <CollapsibleTrigger asChild>
+                          <Button type="button" variant="outline" className="w-full justify-between">
+                            {tapDetailsOpen ? 'Ocultar detalhes do TAP' : 'Mostrar detalhes do TAP'}
+                            {tapDetailsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                          </Button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="space-y-3 pt-3">
+                          <div className="rounded-xl border p-3 text-sm text-muted-foreground break-words dark:border-white/10 dark:bg-[#102247]">
+                            {selectedProject.tapLastEmailError || 'Nenhum erro de envio registrado até o momento.'}
+                          </div>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Gerado em</p>
+                              <p className="mt-1 text-sm font-semibold">{selectedProject.tapGeneratedAt ? formatDate(selectedProject.tapGeneratedAt) : '-'}</p>
+                            </div>
+                            <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Cliente</p>
+                              <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.payload?.client?.razaoSocial || selectedProject.client?.razaoSocial || '-'}</p>
+                            </div>
+                            <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Proposta origem</p>
+                              <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.payload?.proposal?.code || '-'}</p>
+                            </div>
+                            <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Horas previstas</p>
+                              <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.payload?.project?.budgetHours ?? selectedProject.budgetHours ?? 0} h</p>
+                            </div>
+                            <div className="rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247] sm:col-span-2">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Valor previsto</p>
+                              <p className="mt-1 text-sm font-semibold">{formatCurrency(Number(selectedProjectTap?.payload?.project?.budgetValue ?? selectedProject.budgetValue ?? 0))}</p>
+                            </div>
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
 
                       <div className="flex flex-col gap-2 sm:flex-row">
                         <Button type="button" className="flex-1" variant="outline" onClick={() => setTapPreviewOpen(true)} disabled={!selectedProjectTap?.htmlContent}>

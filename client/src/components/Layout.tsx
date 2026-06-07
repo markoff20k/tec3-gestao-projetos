@@ -293,15 +293,24 @@ export function Layout({ children }: LayoutProps) {
     setLocation(result.targetPath);
   };
 
-  const filteredMainItems = mainMenuItems.filter(
-    (item) => item.roles.length === 0 || hasRole(item.roles)
-  );
+  const hasAccess = (item: NavigationItem) => item.roles.length === 0 || hasRole(item.roles);
+
+  const filteredMainItems = mainMenuItems
+    .map((item) => ({
+      ...item,
+      children: item.children?.filter((child) => hasAccess(child)) || [],
+    }))
+    .filter((item) => hasAccess(item) || item.children.length > 0);
 
   const filteredAdminItems = adminMenuItems.filter(
     (item) => item.roles.length === 0 || hasRole(item.roles)
   );
 
-  const allItems = [...mainMenuItems, ...adminMenuItems, settingsNavigationItem];
+  const allItems = [
+    ...mainMenuItems.flatMap((item) => [item, ...(item.children ?? [])]),
+    ...adminMenuItems,
+    settingsNavigationItem,
+  ];
   const currentPage = allItems.find(item => item.path === location)?.label || 'Dashboard';
   const currentDescription = pageDescriptions[location] || 'Bem-vindo ao sistema';
 
@@ -310,7 +319,10 @@ export function Layout({ children }: LayoutProps) {
 
   const renderMenuItem = (item: NavigationItem) => {
     const Icon = item.icon;
-    const isActive = location === item.path;
+    const childItems = item.children ?? [];
+    const hasActiveChild = childItems.some((child) => child.path === location);
+    const isDirectActive = location === item.path;
+    const isActive = isDirectActive || hasActiveChild;
 
     const menuLink = (
       <Link
@@ -319,8 +331,10 @@ export function Layout({ children }: LayoutProps) {
         data-testid={`nav-${item.path.replace('/', '') || 'dashboard'}`}
         className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200
           ${sidebarCollapsed ? 'justify-center' : ''}
-          ${isActive
+          ${isDirectActive
             ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md shadow-black/20 dark:shadow-[0_18px_34px_-22px_rgba(2,10,38,0.9)]'
+            : hasActiveChild
+              ? 'text-sidebar-foreground bg-sidebar-accent/55'
             : 'text-sidebar-foreground/72 hover:text-sidebar-foreground hover:bg-sidebar-accent/90'
           }`}
         onClick={() => setSidebarOpen(false)}
@@ -332,7 +346,7 @@ export function Layout({ children }: LayoutProps) {
       </Link>
     );
 
-    if (sidebarCollapsed) {
+    if (sidebarCollapsed || childItems.length === 0) {
       return (
         <Tooltip key={item.path}>
           <TooltipTrigger asChild>{menuLink}</TooltipTrigger>
@@ -341,7 +355,37 @@ export function Layout({ children }: LayoutProps) {
       );
     }
 
-    return menuLink;
+    return (
+      <div key={item.path} className="space-y-1">
+        {menuLink}
+        <div className="ml-7 space-y-0.5 border-l border-sidebar-border/60 pl-3">
+          {childItems.map((child) => {
+            const isChildActive = location === child.path;
+
+            return (
+              <Link
+                key={child.path}
+                href={child.path}
+                data-testid={`nav-${child.path.replace('/', '')}`}
+                className={`group flex items-center gap-2 px-2.5 py-1.5 rounded-md text-sm transition-all duration-200
+                  ${isChildActive
+                    ? 'bg-sidebar-primary/16 text-sidebar-foreground'
+                    : 'text-sidebar-foreground/62 hover:text-sidebar-foreground hover:bg-sidebar-accent/55'
+                  }`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full transition-colors ${
+                    isChildActive ? 'bg-sidebar-foreground' : 'bg-sidebar-foreground/35 group-hover:bg-sidebar-foreground/55'
+                  }`}
+                />
+                <span className={`font-medium ${isChildActive ? '' : 'font-normal'}`}>{child.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    );
   };
 
   return (

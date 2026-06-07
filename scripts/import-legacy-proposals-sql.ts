@@ -29,6 +29,11 @@ interface LegacyProposalRow {
   revisao: string | null;
 }
 
+interface LegacyUserRow {
+  userUsuario: string | null;
+  nome: string | null;
+}
+
 function normalizeText(value: string | null): string | null {
   if (value === null) return null;
   const trimmed = value.trim();
@@ -245,6 +250,28 @@ function extractLegacyProposals(sqlContent: string): LegacyProposalRow[] {
   return proposals;
 }
 
+function extractLegacyUsers(sqlContent: string): LegacyUserRow[] {
+  const users: LegacyUserRow[] = [];
+
+  for (const block of extractInsertBlocks(sqlContent, 'Usuario')) {
+    const columns = (block.columns ?? '')
+      .split(',')
+      .map((column) => column.replace(/`/g, '').trim())
+      .filter(Boolean);
+
+    const parsedRows = parseValuesSection(block.values ?? '');
+    for (const parsed of parsedRows) {
+      const row = mapRow(columns, parsed);
+      users.push({
+        userUsuario: row.userUsuario ?? null,
+        nome: row.nome ?? null,
+      });
+    }
+  }
+
+  return users;
+}
+
 function parseLegacyDate(value: string | null): Date | null {
   const text = normalizeText(value);
   if (!text) return null;
@@ -349,6 +376,7 @@ async function main() {
   const sqlContent = fs.readFileSync(resolvedPath, 'utf-8');
   const legacyClients = extractLegacyClients(sqlContent);
   const legacyProposals = extractLegacyProposals(sqlContent);
+  const legacyUsers = extractLegacyUsers(sqlContent);
 
   if (legacyClients.length === 0) {
     throw new Error('Nenhum cliente legado foi encontrado no arquivo informado.');
@@ -363,6 +391,16 @@ async function main() {
     const id = parseInteger(client.idCliente);
     if (!id) continue;
     legacyClientById.set(id, client);
+  }
+
+  const legacyUserFullNameByLogin = new Map<string, string>();
+  for (const legacyUser of legacyUsers) {
+    const loginKey = normalizeKey(legacyUser.userUsuario);
+    const fullName = normalizeText(legacyUser.nome);
+    if (!loginKey || !fullName) continue;
+    if (!legacyUserFullNameByLogin.has(loginKey)) {
+      legacyUserFullNameByLogin.set(loginKey, fullName);
+    }
   }
 
   const existingClients = await prisma.client.findMany({
@@ -422,11 +460,16 @@ async function main() {
       sentDate ??
       inferCreatedAtFromProposalCode(code);
 
+    const coordinatorLogin = normalizeText(legacy.userUsuarioResponsavel);
+    const coordinatorName =
+      legacyUserFullNameByLogin.get(normalizeKey(coordinatorLogin) ?? '') ??
+      coordinatorLogin;
+
     const data: Record<string, unknown> = {
       title,
       description: normalizeText(legacy.observacao),
       clientId: resolvedClientId,
-      coordinatorName: normalizeText(legacy.userUsuarioResponsavel),
+      coordinatorName,
       type: mapLegacyProposalType(legacy.tipoContrato),
       status: mapLegacyProposalStatus(legacy.situacao),
       totalValue: parseDecimal(legacy.valorSubcontratacao),

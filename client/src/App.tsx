@@ -21,7 +21,9 @@ import Dashboard from "@/pages/Dashboard";
 import Clients from "@/pages/Clients";
 import Proposals from "@/pages/Proposals";
 import Projects from "@/pages/Projects";
+import ProjectIndicators from "@/pages/ProjectIndicators";
 import TimeEntries from "@/pages/TimeEntries";
+import TimeApprovals from "@/pages/TimeApprovals";
 import Reports from "@/pages/Reports";
 import Users from "@/pages/Users";
 import Settings from "@/pages/Settings";
@@ -62,8 +64,14 @@ function Router() {
       <Route path="/projects">
         <ProtectedRoute component={Projects} />
       </Route>
+      <Route path="/projects/indicators">
+        <ProtectedRoute component={ProjectIndicators} />
+      </Route>
       <Route path="/time-entries">
         <ProtectedRoute component={TimeEntries} />
+      </Route>
+      <Route path="/time-approvals">
+        <ProtectedRoute component={TimeApprovals} />
       </Route>
       <Route path="/reports">
         <ProtectedRoute component={Reports} />

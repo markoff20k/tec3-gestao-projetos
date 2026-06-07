@@ -1687,6 +1687,14 @@ export default function Proposals() {
     return new Map(users.map((u) => [u.id, u.name] as const));
   }, [users]);
 
+  const getCoordinatorDisplayName = useCallback((proposal: Proposal | null | undefined) => {
+    if (!proposal) return '-';
+    const resolved = userNameById.get(proposal.coordinatorId || '')?.trim();
+    if (resolved) return resolved;
+    const fallback = (proposal.coordinatorName || '').trim();
+    return fallback || '-';
+  }, [userNameById]);
+
   const validateEditForm = (data: EditFormData) => {
     const errors: Partial<Record<EditFormField, string>> = {};
 
@@ -2557,7 +2565,7 @@ export default function Proposals() {
       case 'totalValue':
         return <span className={tableValueClassName}>{formatCurrency(getProposalTotalValue(proposal))}</span>;
       case 'coordinatorName':
-        return proposal.coordinatorName || '-';
+        return getCoordinatorDisplayName(proposal);
       case 'specialist':
         return proposal.specialist || '-';
       case 'sentByName':
@@ -4206,7 +4214,7 @@ export default function Proposals() {
                               </div>
                               <div className="space-y-2">
                                 <Label>Coordenador</Label>
-                                <Input value={tapProposal.coordinatorName || '-'} disabled />
+                                <Input value={getCoordinatorDisplayName(tapProposal)} disabled />
                               </div>
                               <div className="space-y-2">
                                 <Label>Tipo de contrato</Label>
@@ -4479,7 +4487,7 @@ export default function Proposals() {
                               </div>
                               <div className="rounded-lg border bg-muted/20 p-3">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Responsável</p>
-                                <p className="mt-1 font-semibold">{tapProposal.coordinatorName || '-'}</p>
+                                <p className="mt-1 font-semibold">{getCoordinatorDisplayName(tapProposal)}</p>
                               </div>
                               <div className="rounded-lg border bg-muted/20 p-3">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Tipo do contrato</p>
@@ -4731,7 +4739,7 @@ export default function Proposals() {
                         </div>
                         <div>
                           <Label className="text-xs text-muted-foreground">Responsável pela proposta</Label>
-                          <p>{selectedProposal.coordinatorName || '-'}</p>
+                          <p>{getCoordinatorDisplayName(selectedProposal)}</p>
                         </div>
                         <div>
                           <Label className="text-xs text-muted-foreground">Coordenador do projeto</Label>
@@ -4859,7 +4867,7 @@ export default function Proposals() {
                       <div className="grid grid-cols-2 gap-4 pt-2">
                         <div>
                           <Label className="text-xs text-muted-foreground">Responsável pela proposta</Label>
-                          <p>{selectedProposal.coordinatorName || '-'}</p>
+                          <p>{getCoordinatorDisplayName(selectedProposal)}</p>
                         </div>
                         <div>
                           <Label className="text-xs text-muted-foreground">Coordenador do projeto</Label>
@@ -4973,7 +4981,7 @@ export default function Proposals() {
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground">Responsável pela proposta</Label>
-                            <p>{selectedProposal.coordinatorName || '-'}</p>
+                            <p>{getCoordinatorDisplayName(selectedProposal)}</p>
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground">Coordenador do projeto</Label>

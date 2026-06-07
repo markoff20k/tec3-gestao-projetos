@@ -69,7 +69,10 @@ export type InsertUser = Omit<Prisma.UserCreateInput, 'id'>;
 export type InsertClient = Omit<Prisma.ClientCreateInput, 'id' | 'proposals' | 'projects'>;
 export type InsertProposal = Omit<Prisma.ProposalCreateInput, 'id' | 'code' | 'client'> & { clientId: string };
 export type InsertProject = Omit<Prisma.ProjectCreateInput, 'id' | 'code' | 'createdAt' | 'client' | 'timeEntries'> & { clientId: string };
-export type InsertTimeEntry = Omit<Prisma.TimeEntryCreateInput, 'id' | 'status' | 'approvedById' | 'approvedAt' | 'rejectionReason' | 'createdAt' | 'project' | 'costCenter'> & { projectId: string; costCenterId?: string | null };
+export type InsertTimeEntry = Omit<Prisma.TimeEntryCreateInput, 'id' | 'createdAt' | 'project' | 'costCenter'> & {
+  projectId: string;
+  costCenterId?: string | null;
+};
 export type TimeEntryWithCostCenter = TimeEntry & { costCenter: CostCenter | null };
 export type InsertCostCenter = { code: string; name: string; isActive?: boolean };
 export type InsertProposalCategory = { code?: string; name: string; isActive?: boolean };
@@ -182,6 +185,7 @@ export interface IStorage {
   deleteCostCenter(id: string): Promise<boolean>;
   
   getTimeEntriesByProject(projectId: string): Promise<TimeEntryWithCostCenter[]>;
+  getTimeEntry(id: string): Promise<TimeEntry | null>;
   getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string): Promise<TimeEntry[]>;
   getAllTimeEntries(): Promise<TimeEntry[]>;
   createTimeEntry(entry: InsertTimeEntry): Promise<TimeEntryWithCostCenter>;
@@ -1484,6 +1488,10 @@ export class PrismaStorage implements IStorage {
     });
   }
 
+  async getTimeEntry(id: string): Promise<TimeEntry | null> {
+    return prisma.timeEntry.findUnique({ where: { id } });
+  }
+
   async getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string): Promise<TimeEntry[]> {
     return prisma.timeEntry.findMany({
       where: {
@@ -1509,7 +1517,10 @@ export class PrismaStorage implements IStorage {
         ...(insertEntry.attachments !== undefined
           ? { attachments: insertEntry.attachments as Prisma.InputJsonValue }
           : {}),
-        status: TimeEntryStatus.PENDING,
+        status: insertEntry.status ?? TimeEntryStatus.PENDING,
+        approvedById: insertEntry.approvedById ?? null,
+        approvedAt: insertEntry.approvedAt ?? null,
+        rejectionReason: insertEntry.rejectionReason ?? null,
       },
       include: { costCenter: true },
     });

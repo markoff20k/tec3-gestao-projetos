@@ -71,6 +71,7 @@ const statusBadgeClass: Record<string, string> = {
 
 type ViewMode = 'week' | 'month';
 type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected';
+const PROJECT_COST_CENTER_OPTION = 'project';
 
 function dateKey(date: Date) {
   return format(date, 'yyyy-MM-dd');
@@ -78,6 +79,14 @@ function dateKey(date: Date) {
 
 function getEntryDate(entry: TimeEntry) {
   return parseISO(entry.entryDate);
+}
+
+function getEntryDateKey(entry: TimeEntry) {
+  const parsedDate = getEntryDate(entry);
+  if (!Number.isNaN(parsedDate.getTime())) {
+    return dateKey(parsedDate);
+  }
+  return String(entry.entryDate || '').slice(0, 10);
 }
 
 function buildDaySummary(entries: TimeEntry[]) {
@@ -93,6 +102,20 @@ function buildDaySummary(entries: TimeEntry[]) {
     pendingCount,
     entriesCount: entries.length,
   };
+}
+
+function normalizeProjectStatus(value: string | null | undefined) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '_');
+}
+
+function isProjectLaunchable(project: Project) {
+  const status = normalizeProjectStatus(project.status);
+  return status === 'in_progress' || status === 'active' || status === 'em_andamento';
 }
 
 export default function TimeEntries() {
@@ -126,7 +149,7 @@ export default function TimeEntries() {
     if (!queryString) return;
 
     const params = new URLSearchParams(queryString);
-    const projectIdFromQuery = params.get('projectId');
+    const projectIdFromQuery = params.get('projectId') || params.get('projectid');
     if (projectIdFromQuery) {
       setSelectedProjectId(projectIdFromQuery);
     }
@@ -143,13 +166,17 @@ export default function TimeEntries() {
     [projects, selectedProjectId]
   );
 
-  const canLaunchHours =
-    !!selectedProject && (selectedProject.status === 'in_progress' || selectedProject.status === 'active');
+  const canLaunchHours = !!selectedProject && isProjectLaunchable(selectedProject);
+  const hasHoursValue = (Number.parseFloat(hoursValue) || 0) > 0;
+  const hasDescriptionValue = descriptionValue.trim().length > 0;
+  const shouldHighlightHoursField = Boolean(selectedProject && canLaunchHours && !hasHoursValue);
+  const shouldHighlightDescriptionField = Boolean(selectedProject && canLaunchHours && !hasDescriptionValue);
+  const pendingRequiredFieldsCount = Number(shouldHighlightHoursField) + Number(shouldHighlightDescriptionField);
 
   const sortedProjects = useMemo(() => {
     return [...projects].sort((projectA, projectB) => {
-      const isProjectAActive = projectA.status === 'in_progress' || projectA.status === 'active';
-      const isProjectBActive = projectB.status === 'in_progress' || projectB.status === 'active';
+      const isProjectAActive = isProjectLaunchable(projectA);
+      const isProjectBActive = isProjectLaunchable(projectB);
 
       if (isProjectAActive !== isProjectBActive) {
         return isProjectAActive ? -1 : 1;
@@ -160,7 +187,7 @@ export default function TimeEntries() {
   }, [projects]);
 
   const launchableProjects = useMemo(
-    () => sortedProjects.filter((project) => project.status === 'in_progress' || project.status === 'active'),
+    () => sortedProjects.filter((project) => isProjectLaunchable(project)),
     [sortedProjects]
   );
 
@@ -171,9 +198,9 @@ export default function TimeEntries() {
 
   useEffect(() => {
     if (!selectedProjectId) return;
-    if (launchableProjects.some((project) => project.id === selectedProjectId)) return;
+    if (projects.some((project) => project.id === selectedProjectId)) return;
     setSelectedProjectId('');
-  }, [launchableProjects, selectedProjectId]);
+  }, [projects, selectedProjectId]);
 
   useEffect(() => {
     if (!selectedCostCenterId) return;
@@ -189,7 +216,7 @@ export default function TimeEntries() {
   const entriesByDate = useMemo(() => {
     const map = new Map<string, TimeEntry[]>();
     filteredEntries.forEach((entry) => {
-      const key = entry.entryDate;
+      const key = getEntryDateKey(entry);
       map.set(key, [...(map.get(key) ?? []), entry]);
     });
     return map;
@@ -198,7 +225,7 @@ export default function TimeEntries() {
   const allEntriesByDate = useMemo(() => {
     const map = new Map<string, TimeEntry[]>();
     timeEntries.forEach((entry) => {
-      const key = entry.entryDate;
+      const key = getEntryDateKey(entry);
       map.set(key, [...(map.get(key) ?? []), entry]);
     });
     return map;
@@ -317,7 +344,7 @@ export default function TimeEntries() {
       return;
     }
 
-    if (!(selectedProject.status === 'in_progress' || selectedProject.status === 'active')) {
+    if (!isProjectLaunchable(selectedProject)) {
       toast({
         title: 'Projeto não permite lançamento',
         description: 'Somente projetos ativos permitem lançamento de horas.',
@@ -414,7 +441,10 @@ export default function TimeEntries() {
                           role="combobox"
                           aria-expanded={projectFilterOpen}
                           data-testid="select-filter-project"
-                          className="h-11 w-full justify-between"
+                          className={cn(
+                            'h-11 w-full justify-between',
+                            !selectedProject && 'border-primary/50 bg-primary/5 text-primary ring-2 ring-primary/15'
+                          )}
                         >
                           <span className="truncate text-left">
                             {selectedProject
@@ -464,36 +494,47 @@ export default function TimeEntries() {
                     <p className="text-xs text-muted-foreground">
                       Apenas projetos ativos ou em andamento aparecem para apontamento de horas.
                     </p>
+
+                    {!selectedProject ? (
+                      <div className="rounded-xl border border-primary/35 bg-primary/5 p-4">
+                        <p className="text-sm font-semibold text-primary">Selecione um projeto para começar o apontamento</p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Depois de selecionar o projeto, os indicadores e o formulário de lançamento serão liberados.
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <Card className="border-border/60 bg-muted/20 shadow-none">
-                      <CardContent className="p-4">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Período</p>
-                        <p className="mt-2 text-xl font-semibold">{periodSummary.totalHours.toFixed(1)}h</p>
-                      </CardContent>
-                    </Card>
-                    <Card className="border-border/60 bg-muted/20 shadow-none">
-                      <CardContent className="p-4">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Aprovadas</p>
-                        <p className="mt-2 text-xl font-semibold">{periodSummary.approvedHours.toFixed(1)}h</p>
-                      </CardContent>
-                    </Card>
-                    <Card className="border-border/60 bg-muted/20 shadow-none">
-                      <CardContent className="p-4">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Pendentes</p>
-                        <p className="mt-2 text-xl font-semibold">{periodSummary.pendingCount}</p>
-                      </CardContent>
-                    </Card>
-                    <Card className="border-border/60 bg-muted/20 shadow-none">
-                      <CardContent className="p-4">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Status</p>
-                        <p className="mt-2 text-sm font-semibold text-foreground">
-                          {canLaunchHours ? 'Lançamento permitido' : 'Projeto bloqueado'}
-                        </p>
-                      </CardContent>
-                    </Card>
-                  </div>
+                  {selectedProject ? (
+                    <div className="grid gap-3 md:grid-cols-4">
+                      <Card className="border-border/60 bg-muted/20 shadow-none">
+                        <CardContent className="p-4">
+                          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Período</p>
+                          <p className="mt-2 text-2xl font-semibold text-foreground">{periodSummary.totalHours.toFixed(1)}h</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-border/60 bg-muted/20 shadow-none">
+                        <CardContent className="p-4">
+                          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Aprovadas</p>
+                          <p className="mt-2 text-2xl font-semibold text-foreground">{periodSummary.approvedHours.toFixed(1)}h</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-border/60 bg-muted/20 shadow-none">
+                        <CardContent className="p-4">
+                          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Pendentes</p>
+                          <p className="mt-2 text-2xl font-semibold text-foreground">{periodSummary.pendingCount}</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-border/60 bg-muted/20 shadow-none">
+                        <CardContent className="p-4">
+                          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Status</p>
+                          <p className={cn('mt-2 text-base font-semibold', canLaunchHours ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300')}>
+                            {canLaunchHours ? 'Lançamento permitido' : 'Projeto bloqueado'}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  ) : null}
                 </div>
 
                 <Card className="overflow-hidden border-border/60 bg-muted/10 shadow-none">
@@ -518,36 +559,49 @@ export default function TimeEntries() {
               <CardTitle className="text-base">Apontamento do dia</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="rounded-xl border border-border bg-muted/20 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Dia selecionado</p>
-                    <h2 className="mt-1 text-lg font-semibold text-foreground">
-                      {format(selectedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
-                    </h2>
+              {selectedProject ? (
+                <>
+                  <div className="rounded-xl border border-border bg-muted/20 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Dia selecionado</p>
+                        <h2 className="mt-1 text-lg font-semibold text-foreground">
+                          {format(selectedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
+                        </h2>
+                      </div>
+                      {isToday(selectedDate) && <Badge variant="secondary">Hoje</Badge>}
+                    </div>
+                    <div className="mt-4 grid grid-cols-3 gap-3">
+                      <div className="rounded-lg border border-border bg-background px-3 py-2">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Lançadas</p>
+                        <p className="mt-1 text-lg font-semibold text-foreground">{selectedDateSummary.totalHours.toFixed(1)}h</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-background px-3 py-2">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Entradas</p>
+                        <p className="mt-1 text-lg font-semibold text-foreground">{selectedDateSummary.entriesCount}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-background px-3 py-2">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Limite</p>
+                        <p className="mt-1 text-lg font-semibold text-foreground">{selectedProject.dailyLimitHours ? `${selectedProject.dailyLimitHours}h` : 'Livre'}</p>
+                      </div>
+                    </div>
                   </div>
-                  {isToday(selectedDate) && <Badge variant="secondary">Hoje</Badge>}
-                </div>
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  <div className="rounded-lg border border-border bg-background px-3 py-2">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Lançadas</p>
-                    <p className="mt-1 text-base font-semibold">{selectedDateSummary.totalHours.toFixed(1)}h</p>
-                  </div>
-                  <div className="rounded-lg border border-border bg-background px-3 py-2">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Entradas</p>
-                    <p className="mt-1 text-base font-semibold">{selectedDateSummary.entriesCount}</p>
-                  </div>
-                  <div className="rounded-lg border border-border bg-background px-3 py-2">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Limite</p>
-                    <p className="mt-1 text-base font-semibold">{selectedProject?.dailyLimitHours ? `${selectedProject.dailyLimitHours}h` : 'Livre'}</p>
-                  </div>
-                </div>
-              </div>
 
-              <form onSubmit={handleSubmit} className="space-y-4">
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                {pendingRequiredFieldsCount > 0 ? (
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary">
+                    {pendingRequiredFieldsCount === 2
+                      ? 'Preencha os campos obrigatórios destacados: Horas e Descrição das atividades.'
+                      : shouldHighlightHoursField
+                        ? 'Falta preencher o campo obrigatório: Horas.'
+                        : 'Falta preencher o campo obrigatório: Descrição das atividades.'}
+                  </div>
+                ) : null}
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div className="space-y-2">
-                    <Label htmlFor="time-entry-hours">Horas</Label>
+                    <Label htmlFor="time-entry-hours" className={cn(shouldHighlightHoursField && 'font-semibold text-primary')}>
+                      Horas *
+                    </Label>
                     <Input
                       id="time-entry-hours"
                       type="number"
@@ -558,6 +612,7 @@ export default function TimeEntries() {
                       onChange={(event) => setHoursValue(event.target.value)}
                       data-testid="input-time-entry-hours"
                       placeholder="Ex.: 4"
+                      className={cn(shouldHighlightHoursField && 'border-primary/40 bg-primary/5 focus-visible:ring-primary/30')}
                       disabled={!selectedProjectId || !canLaunchHours}
                       required
                     />
@@ -565,15 +620,19 @@ export default function TimeEntries() {
                   <div className="space-y-2">
                     <Label>Centro de custo</Label>
                     <Select
-                      value={selectedCostCenterId || 'none'}
-                      onValueChange={(value) => setSelectedCostCenterId(value === 'none' ? '' : value)}
+                      value={selectedCostCenterId || PROJECT_COST_CENTER_OPTION}
+                      onValueChange={(value) =>
+                        setSelectedCostCenterId(value === PROJECT_COST_CENTER_OPTION ? '' : value)
+                      }
                       disabled={!selectedProjectId || !canLaunchHours}
                     >
                       <SelectTrigger data-testid="select-time-entry-cost-center">
-                        <SelectValue placeholder="Opcional" />
+                        <SelectValue placeholder="Projeto (centro de custo próprio)" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">Sem centro de custo</SelectItem>
+                        <SelectItem value={PROJECT_COST_CENTER_OPTION}>
+                          {selectedProject ? `Projeto (${selectedProject.code})` : 'Projeto (centro de custo próprio)'}
+                        </SelectItem>
                         {availableCostCenters.map((costCenter) => (
                           <SelectItem key={costCenter.id} value={costCenter.id}>
                             {costCenter.code} · {costCenter.name}
@@ -591,13 +650,16 @@ export default function TimeEntries() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="time-entry-description">Descrição das atividades</Label>
+                  <Label htmlFor="time-entry-description" className={cn(shouldHighlightDescriptionField && 'font-semibold text-primary')}>
+                    Descrição das atividades *
+                  </Label>
                   <Textarea
                     id="time-entry-description"
                     value={descriptionValue}
                     onChange={(event) => setDescriptionValue(event.target.value)}
                     data-testid="input-time-entry-description"
                     placeholder="Descreva o que foi realizado nesse dia..."
+                    className={cn(shouldHighlightDescriptionField && 'border-primary/40 bg-primary/5 focus-visible:ring-primary/30')}
                     disabled={!selectedProjectId || !canLaunchHours}
                   />
                 </div>
@@ -680,7 +742,18 @@ export default function TimeEntries() {
                     {createMutation.isPending ? 'Salvando...' : 'Apontar horas'}
                   </Button>
                 </div>
-              </form>
+                  </form>
+
+                </>
+              ) : (
+                <div className="rounded-xl border border-primary/35 bg-primary/5 p-5">
+                  <p className="text-sm font-semibold uppercase tracking-[0.08em] text-primary">Projeto obrigatório</p>
+                  <p className="mt-2 text-base font-semibold text-foreground">Selecione um projeto para liberar o apontamento</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    O formulário de horas, anexos e status do fluxo será exibido após a seleção do projeto.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -689,7 +762,7 @@ export default function TimeEntries() {
           <CardHeader className="gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="space-y-1">
               <CardTitle className="text-base">Planner de horas</CardTitle>
-              <p className="text-sm text-muted-foreground">Visualização inspirada em planejamento operacional, com foco no período e no dia selecionado.</p>
+              <p className="text-sm text-muted-foreground">Visualização do período selecionado para acompanhamento e aprovação.</p>
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -735,6 +808,8 @@ export default function TimeEntries() {
                   const daySummary = buildDaySummary(dayEntries);
                   const isWeekend = isSaturday(date) || isSunday(date);
                   const isSundayDate = isSunday(date);
+                  const isSelectedDay = isSameDay(date, selectedDate);
+                  const isTodayDay = isToday(date);
 
                   return (
                     <button
@@ -742,8 +817,10 @@ export default function TimeEntries() {
                       type="button"
                       className={cn(
                         'flex min-h-[240px] flex-col rounded-2xl border p-4 text-left transition-all',
-                        isSameDay(date, selectedDate)
-                          ? 'border-primary bg-primary/5 shadow-md'
+                        isSelectedDay
+                          ? 'border-primary bg-primary/10 shadow-md ring-1 ring-primary/20'
+                          : isTodayDay
+                            ? 'border-amber-200 bg-amber-50/60 hover:border-amber-300 hover:bg-amber-50/80'
                           : isWeekend
                             ? 'border-sky-100 bg-sky-50/70 hover:border-sky-300 hover:bg-sky-100/70'
                             : 'border-border bg-card hover:border-primary/40 hover:bg-muted/20'
@@ -753,18 +830,25 @@ export default function TimeEntries() {
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className={cn('text-xs uppercase tracking-wide text-muted-foreground', isWeekend && 'text-sky-700')}>
+                          <p className={cn('text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground', isWeekend && 'text-sky-700')}>
                             {format(date, 'EEE', { locale: ptBR })}
                           </p>
                           <p className={cn('mt-1 text-xl font-semibold text-foreground', isSundayDate && 'text-sky-800')}>
                             {format(date, 'dd')}
                           </p>
                         </div>
-                        {isToday(date) && <Badge variant="secondary">Hoje</Badge>}
+                        {isTodayDay && (
+                          <Badge
+                            variant={isSelectedDay ? 'secondary' : 'outline'}
+                            className={cn(!isSelectedDay && 'border-amber-300 bg-amber-50 text-amber-700')}
+                          >
+                            Hoje
+                          </Badge>
+                        )}
                       </div>
 
                       <div className={cn('mt-4 rounded-xl bg-muted/30 p-3', isWeekend && 'bg-white/70')}>
-                        <p className={cn('text-xs uppercase tracking-wide text-muted-foreground', isWeekend && 'text-sky-700')}>Total</p>
+                        <p className={cn('text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground', isWeekend && 'text-sky-700')}>Total</p>
                         <p className="mt-1 text-lg font-semibold">{daySummary.totalHours.toFixed(1)}h</p>
                       </div>
 
@@ -805,7 +889,7 @@ export default function TimeEntries() {
             ) : (
               <div className="grid grid-cols-7 gap-3">
                 {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((label) => (
-                  <div key={label} className={cn('px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground', (label === 'Sáb' || label === 'Dom') && 'text-sky-700')}>
+                  <div key={label} className={cn('px-2 py-1 text-center text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground', (label === 'Sáb' || label === 'Dom') && 'text-sky-700')}>
                     {label}
                   </div>
                 ))}
@@ -815,6 +899,8 @@ export default function TimeEntries() {
                   const daySummary = buildDaySummary(dayEntries);
                   const isWeekend = isSaturday(date) || isSunday(date);
                   const isSundayDate = isSunday(date);
+                  const isSelectedDay = isSameDay(date, selectedDate);
+                  const isTodayDay = isToday(date);
 
                   return (
                     <button
@@ -822,8 +908,10 @@ export default function TimeEntries() {
                       type="button"
                       className={cn(
                         'min-h-[140px] rounded-2xl border p-3 text-left transition-all',
-                        isSameDay(date, selectedDate)
-                          ? 'border-primary bg-primary/5 shadow-md'
+                        isSelectedDay
+                          ? 'border-primary bg-primary/10 shadow-md ring-1 ring-primary/20'
+                          : isTodayDay
+                            ? 'border-amber-200 bg-amber-50/60 hover:border-amber-300 hover:bg-amber-50/80'
                           : isWeekend
                             ? 'border-sky-100 bg-sky-50/70 hover:border-sky-300 hover:bg-sky-100/70'
                             : 'border-border bg-card hover:border-primary/35 hover:bg-muted/20',
@@ -833,7 +921,7 @@ export default function TimeEntries() {
                       data-testid={`planner-month-day-${key}`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <span className={cn('text-sm font-semibold', isToday(date) ? 'text-primary' : isSundayDate ? 'text-sky-800' : isWeekend ? 'text-sky-700' : 'text-foreground')}>
+                        <span className={cn('text-sm font-semibold', isSelectedDay ? 'text-primary' : isTodayDay ? 'text-amber-700' : isSundayDate ? 'text-sky-800' : isWeekend ? 'text-sky-700' : 'text-foreground')}>
                           {format(date, 'dd')}
                         </span>
                         {dayEntries.length > 0 && (
@@ -889,20 +977,27 @@ export default function TimeEntries() {
                             <Clock3 className="h-4 w-4" />
                           </div>
                           <div>
-                            <p className="text-base font-semibold text-foreground">{entry.hours}h</p>
-                            <p className="text-xs text-muted-foreground">{format(getEntryDate(entry), 'dd/MM/yyyy')}</p>
+                            <p className="text-lg font-semibold text-foreground">{entry.hours}h</p>
+                            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">{format(getEntryDate(entry), 'dd/MM/yyyy')}</p>
                           </div>
                         </div>
                         <Badge className={cn('border', statusBadgeClass[entry.status] ?? 'border-border bg-muted text-foreground')}>
                           {statusLabels[entry.status] ?? entry.status}
                         </Badge>
                       </div>
-                      {entry.costCenter && (
-                        <div className="mt-4 inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-                          {entry.costCenter.code} · {entry.costCenter.name}
-                        </div>
-                      )}
+                      <div className="mt-4 inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                        {entry.costCenter
+                          ? `${entry.costCenter.code} · ${entry.costCenter.name}`
+                          : selectedProject
+                            ? `Projeto · ${selectedProject.code}`
+                            : 'Projeto'}
+                      </div>
                       <p className="mt-4 text-sm leading-6 text-muted-foreground">{entry.description || 'Sem descrição informada.'}</p>
+                      {entry.status === 'rejected' && entry.rejectionReason ? (
+                        <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          Motivo da rejeição: {entry.rejectionReason}
+                        </div>
+                      ) : null}
                       {entry.attachments && entry.attachments.length > 0 && (
                         <div className="mt-4 flex flex-wrap gap-2">
                           {entry.attachments.map((attachment) => (
