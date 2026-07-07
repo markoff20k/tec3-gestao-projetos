@@ -4,7 +4,7 @@ import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, Prop
 import { Prisma } from "../generated/prisma/client.ts";
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed';
 
 export interface CreateUserActivityInput {
   category: UserActivityCategory;

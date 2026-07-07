@@ -122,6 +122,9 @@ export function NotificationBell() {
     notification.metadata?.action === 'resend_project_tap_email' &&
     typeof notification.metadata?.projectId === 'string';
 
+  const isProjectSetupCompletedNotification = (notification: UserNotification) =>
+    notification.type === 'project_setup_completed';
+
   const handleResendTapEmail = async (notification: UserNotification) => {
     const projectId = String(notification.metadata?.projectId || '');
     if (!projectId) return;
@@ -285,6 +288,11 @@ export function NotificationBell() {
                                       Reenviar e-mail
                                     </Button>
                                   )}
+                                  {isProjectSetupCompletedNotification(notification) && (
+                                    <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                                      Alocar equipe
+                                    </Badge>
+                                  )}
                                   {dueBadge && (
                                     <Badge variant="outline" className={dueBadge.className}>
                                       {dueBadge.label}
@@ -346,6 +354,11 @@ export function NotificationBell() {
                                       {resendTapEmailMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
                                       Reenviar e-mail
                                     </Button>
+                                  )}
+                                  {isProjectSetupCompletedNotification(notification) && (
+                                    <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                                      Alocar equipe
+                                    </Badge>
                                   )}
                                   {dueBadge && (
                                     <Badge variant="outline" className={dueBadge.className}>

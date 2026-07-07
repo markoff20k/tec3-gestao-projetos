@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Pencil, Trash2, Search } from 'lucide-react';
 import { Layout } from '@/components/Layout';
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
   DialogContent,
@@ -17,12 +18,42 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { clientsApi, Client } from '@/lib/api';
 
+function ClientsListSkeleton() {
+  return (
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <Card key={`skeleton-client-${index}`}>
+          <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
+            <div className="space-y-2">
+              <Skeleton className="h-5 w-36" />
+              <Skeleton className="h-4 w-24" />
+            </div>
+            <Skeleton className="h-5 w-14" />
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-4 w-36" />
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Skeleton className="h-8 w-20" />
+              <Skeleton className="h-8 w-20" />
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 export default function Clients() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [contentVisible, setContentVisible] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     tradeName: '',
@@ -36,6 +67,16 @@ export default function Clients() {
     queryKey: ['/api/clients'],
     queryFn: () => clientsApi.getAll(),
   });
+
+  useEffect(() => {
+    if (isLoading) {
+      setContentVisible(false);
+      return;
+    }
+
+    const frameId = requestAnimationFrame(() => setContentVisible(true));
+    return () => cancelAnimationFrame(frameId);
+  }, [isLoading]);
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<Client>) => clientsApi.create(data),
@@ -219,59 +260,67 @@ export default function Clients() {
         </div>
 
         {isLoading ? (
-          <div className="text-center py-8 text-muted-foreground">Carregando...</div>
-        ) : filteredClients.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            Nenhum cliente encontrado
-          </div>
+          <ClientsListSkeleton />
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredClients.map((client) => (
-              <Card key={client.id} data-testid={`card-client-${client.id}`}>
-                <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
-                  <div>
-                    <CardTitle className="text-lg">{client.name}</CardTitle>
-                    {client.tradeName && (
-                      <p className="text-sm text-muted-foreground">{client.tradeName}</p>
-                    )}
-                  </div>
-                  <Badge variant={client.isActive ? 'default' : 'secondary'} className="text-xs">
-                    {client.isActive ? 'Ativo' : 'Inativo'}
-                  </Badge>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-1 text-sm">
-                    {client.segment && <p>Segmento: {client.segment}</p>}
-                    {client.email && <p>E-mail: {client.email}</p>}
-                    {client.phone && <p>Telefone: {client.phone}</p>}
-                  </div>
-                  <div className="flex gap-2 mt-4">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      data-testid={`button-edit-client-${client.id}`}
-                      onClick={() => openEditDialog(client)}
-                    >
-                      <Pencil className="h-3 w-3 mr-1" />
-                      Editar
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      data-testid={`button-delete-client-${client.id}`}
-                      onClick={() => {
-                        if (confirm('Deseja excluir este cliente?')) {
-                          deleteMutation.mutate(client.id);
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3 mr-1" />
-                      Excluir
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+          <div
+            className={`transition-all duration-500 ease-out ${
+              contentVisible ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
+            }`}
+          >
+            {filteredClients.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                Nenhum cliente encontrado
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {filteredClients.map((client) => (
+                  <Card key={client.id} data-testid={`card-client-${client.id}`}>
+                    <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
+                      <div>
+                        <CardTitle className="text-lg">{client.name}</CardTitle>
+                        {client.tradeName && (
+                          <p className="text-sm text-muted-foreground">{client.tradeName}</p>
+                        )}
+                      </div>
+                      <Badge variant={client.isActive ? 'default' : 'secondary'} className="text-xs">
+                        {client.isActive ? 'Ativo' : 'Inativo'}
+                      </Badge>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-1 text-sm">
+                        {client.segment && <p>Segmento: {client.segment}</p>}
+                        {client.email && <p>E-mail: {client.email}</p>}
+                        {client.phone && <p>Telefone: {client.phone}</p>}
+                      </div>
+                      <div className="flex gap-2 mt-4">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid={`button-edit-client-${client.id}`}
+                          onClick={() => openEditDialog(client)}
+                        >
+                          <Pencil className="h-3 w-3 mr-1" />
+                          Editar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid={`button-delete-client-${client.id}`}
+                          onClick={() => {
+                            if (confirm('Deseja excluir este cliente?')) {
+                              deleteMutation.mutate(client.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3 mr-1" />
+                          Excluir
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

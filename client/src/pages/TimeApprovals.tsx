@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -40,6 +41,28 @@ type PendingProjectRowProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
 };
+
+function TimeApprovalsListSkeleton() {
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div key={`time-approvals-project-skeleton-${index}`} className="rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <Skeleton className="h-5 w-64" />
+              <Skeleton className="h-3 w-44" />
+            </div>
+            <div className="flex gap-2">
+              <Skeleton className="h-6 w-24" />
+              <Skeleton className="h-6 w-24" />
+              <Skeleton className="h-8 w-28" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function PendingProjectRow({ project, canManageApprovals, isOpen, onOpenChange }: PendingProjectRowProps) {
   const queryClient = useQueryClient();
@@ -188,8 +211,16 @@ function PendingProjectRow({ project, canManageApprovals, isOpen, onOpenChange }
                 Você não tem permissão para aprovar este projeto.
               </div>
             ) : isLoadingProjectEntries ? (
-              <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
-                Carregando pendências do projeto...
+              <div className="space-y-3 rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div key={`pending-entry-skeleton-${index}`} className="rounded-lg border border-border bg-background px-3 py-3">
+                    <div className="space-y-2">
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-3 w-56" />
+                      <Skeleton className="h-3 w-full" />
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : pendingEntries.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
@@ -280,7 +311,7 @@ export default function TimeApprovals() {
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [openProjects, setOpenProjects] = useState<Record<string, boolean>>({});
 
-  const { data: projects = [] } = useQuery<Project[]>({
+  const { data: projects = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
     queryKey: ['/api/projects'],
     queryFn: () => projectsApi.getAll(),
   });
@@ -371,21 +402,25 @@ export default function TimeApprovals() {
             <Card className="border-border/60 bg-muted/20 shadow-none">
               <CardContent className="p-4">
                 <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Projetos com pendência</p>
-                <p className="mt-2 text-2xl font-semibold text-foreground">{totalPendingProjects}</p>
+                {isLoadingProjects ? <Skeleton className="mt-2 h-8 w-14" /> : <p className="mt-2 text-2xl font-semibold text-foreground">{totalPendingProjects}</p>}
               </CardContent>
             </Card>
             <Card className="border-border/60 bg-muted/20 shadow-none">
               <CardContent className="p-4">
                 <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Horas pendentes</p>
-                <p className="mt-2 text-2xl font-semibold text-foreground">{totalPendingHours.toFixed(1)}h</p>
+                {isLoadingProjects ? <Skeleton className="mt-2 h-8 w-20" /> : <p className="mt-2 text-2xl font-semibold text-foreground">{totalPendingHours.toFixed(1)}h</p>}
               </CardContent>
             </Card>
             <Card className="border-border/60 bg-muted/20 shadow-none">
               <CardContent className="p-4">
                 <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Escopo</p>
-                <p className="mt-2 text-sm font-semibold text-foreground">
-                  {isAdmin ? 'Todos os projetos com pendência' : 'Apenas projetos em que você coordena'}
-                </p>
+                {isLoadingProjects ? (
+                  <Skeleton className="mt-2 h-4 w-56" />
+                ) : (
+                  <p className="mt-2 text-sm font-semibold text-foreground">
+                    {isAdmin ? 'Todos os projetos com pendência' : 'Apenas projetos em que você coordena'}
+                  </p>
+                )}
               </CardContent>
             </Card>
           </CardContent>
@@ -416,7 +451,9 @@ export default function TimeApprovals() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {totalPendingProjects === 0 ? (
+            {isLoadingProjects ? (
+              <TimeApprovalsListSkeleton />
+            ) : totalPendingProjects === 0 ? (
               <div className="rounded-xl border border-dashed border-border bg-muted/20 py-16 text-center text-muted-foreground">
                 Não há projetos com pendências de aprovação no seu escopo.
               </div>
@@ -489,6 +526,15 @@ export default function TimeApprovals() {
             )}
           </CardContent>
         </Card>
+
+        {isLoadingProjects && (
+          <div className="fixed bottom-5 right-5 z-50 rounded-full bg-primary px-3 py-2 text-xs text-primary-foreground shadow-lg">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Carregando aprovações
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   );

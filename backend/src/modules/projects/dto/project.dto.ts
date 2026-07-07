@@ -90,6 +90,20 @@ export class UpdateProjectDto {
   dailyLimitHours?: number;
 }
 
+export class UpdateProjectSetupDto {
+  @IsUUID()
+  @IsOptional()
+  coordinatorId?: string | null;
+
+  @IsInt()
+  @IsOptional()
+  dailyLimitHours?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  requiresApproval?: boolean;
+}
+
 export class CreateTimeEntryDto {
   @IsUUID()
   @IsNotEmpty()

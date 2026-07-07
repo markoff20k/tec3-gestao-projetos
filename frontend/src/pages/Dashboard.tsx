@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   FileText,
@@ -8,6 +9,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { reportsApi, DashboardMetrics } from '@/lib/api';
 import { Layout } from '@/components/Layout';
 
@@ -38,18 +40,69 @@ function StatCard({
   );
 }
 
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-4 w-72" />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Card key={`skeleton-stat-${index}`}>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-4 w-4 rounded-full" />
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Skeleton className="h-8 w-20" />
+              <Skeleton className="h-3 w-32" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, index) => (
+          <Card key={`skeleton-detail-${index}`}>
+            <CardHeader>
+              <Skeleton className="h-6 w-52" />
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Skeleton className="h-6 w-40" />
+              <Skeleton className="h-4 w-56" />
+              <Skeleton className="h-4 w-44" />
+              <Skeleton className="h-4 w-48" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { data: metrics, isLoading, error } = useQuery<DashboardMetrics>({
     queryKey: ['/api/reports/dashboard'],
     queryFn: () => reportsApi.getDashboard(),
   });
+  const [contentVisible, setContentVisible] = useState(false);
+
+  useEffect(() => {
+    if (isLoading) {
+      setContentVisible(false);
+      return;
+    }
+
+    const frameId = requestAnimationFrame(() => setContentVisible(true));
+    return () => cancelAnimationFrame(frameId);
+  }, [isLoading]);
 
   if (isLoading) {
     return (
       <Layout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-muted-foreground">Carregando...</div>
-        </div>
+        <DashboardSkeleton />
       </Layout>
     );
   }
@@ -75,7 +128,11 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <div className="space-y-6">
+      <div
+        className={`space-y-6 transition-all duration-500 ease-out ${
+          contentVisible ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
+        }`}
+      >
         <div>
           <h1 className="text-2xl font-semibold">Dashboard</h1>
           <p className="text-muted-foreground">

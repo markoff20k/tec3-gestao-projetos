@@ -85,6 +85,7 @@ const trendPalette = {
   silver: '#a8b3c2',
   blue: '#0b76c5',
   blueDeep: '#0a4f8a',
+  axisBlue: '#0077B6',
 };
 
 const statusLabelMap: Record<string, string> = {
@@ -146,8 +147,8 @@ const baseChartOptions: ChartOptions<'bar' | 'line' | 'doughnut'> = {
       capBezierPoints: true,
     },
     point: {
-      radius: 2,
-      hoverRadius: 4,
+      radius: 4,
+      hoverRadius: 5,
       hitRadius: 10,
     },
     arc: {
@@ -156,12 +157,12 @@ const baseChartOptions: ChartOptions<'bar' | 'line' | 'doughnut'> = {
   },
   scales: {
     x: {
-      ticks: { color: 'rgb(100, 116, 139)' },
-      grid: { color: 'rgba(148, 163, 184, 0.12)' },
+      ticks: { color: '#666', font: { size: 12 } },
+      grid: { color: 'rgba(204, 204, 204, 0.30)', borderDash: [3, 3] },
     },
     y: {
-      ticks: { color: 'rgb(100, 116, 139)' },
-      grid: { color: 'rgba(148, 163, 184, 0.12)' },
+      ticks: { color: '#666', font: { size: 10 } },
+      grid: { color: 'rgba(204, 204, 204, 0.30)', borderDash: [3, 3] },
       beginAtZero: true,
     },
   },
@@ -508,27 +509,29 @@ export default function ProjectIndicators() {
         {
           label: 'Consumo acumulado',
           data: consumedSeries,
-          borderColor: trendPalette.blue,
+          borderColor: trendPalette.axisBlue,
           backgroundColor: ({ chart }) =>
-            buildGradient(chart, { from: 'rgba(168, 179, 194, 0.40)', to: 'rgba(11, 118, 197, 0.05)' }, 'rgba(11, 118, 197, 0.25)'),
+            buildGradient(chart, { from: 'rgba(0, 119, 182, 0.80)', to: 'rgba(0, 119, 182, 0.10)' }, 'rgba(0, 119, 182, 0.45)'),
           fill: true,
-          pointBackgroundColor: '#ffffff',
-          pointBorderColor: trendPalette.blue,
+          pointBackgroundColor: trendPalette.axisBlue,
+          pointBorderColor: trendPalette.axisBlue,
           pointBorderWidth: 2,
-          pointRadius: 2.5,
+          pointRadius: 4,
+          cubicInterpolationMode: 'monotone',
         },
         {
           label: 'Orçamento acumulado',
           data: budgetSeries,
-          borderColor: trendPalette.blueDeep,
+          borderColor: trendPalette.silver,
           backgroundColor: ({ chart }) =>
-            buildGradient(chart, { from: 'rgba(168, 179, 194, 0.22)', to: 'rgba(10, 79, 138, 0.06)' }, 'rgba(10, 79, 138, 0.12)'),
+            buildGradient(chart, { from: 'rgba(168, 179, 194, 0.30)', to: 'rgba(168, 179, 194, 0.04)' }, 'rgba(168, 179, 194, 0.14)'),
           borderDash: [5, 4],
-          fill: true,
-          pointBackgroundColor: '#ffffff',
-          pointBorderColor: trendPalette.blueDeep,
+          fill: false,
+          pointBackgroundColor: trendPalette.silver,
+          pointBorderColor: trendPalette.silver,
           pointBorderWidth: 1.5,
-          pointRadius: 2,
+          pointRadius: 3,
+          cubicInterpolationMode: 'monotone',
         },
       ],
     };
@@ -576,13 +579,29 @@ export default function ProjectIndicators() {
   }, [filteredProjects]);
 
   const ceoExecutive = useMemo(() => {
+    const financialBase = filteredProjects.reduce(
+      (acc, project) => {
+        const budgetValue = safeNumber(project.budgetValue);
+        const budgetHours = safeNumber(project.budgetHours);
+        if (budgetValue > 0 && budgetHours > 0) {
+          acc.totalValue += budgetValue;
+          acc.totalHours += budgetHours;
+        }
+        return acc;
+      },
+      { totalValue: 0, totalHours: 0 }
+    );
+
+    const fallbackHourRate = financialBase.totalHours > 0 ? financialBase.totalValue / financialBase.totalHours : 1;
+
     const projects = filteredProjects
       .map((project) => {
-        const budgetValue = safeNumber(project.budgetValue);
+        const budgetValueRaw = safeNumber(project.budgetValue);
         const budgetHours = safeNumber(project.budgetHours);
         const consumedHours = safeNumber(project.consumedHours);
         const pendingHours = safeNumber(project.pendingHours);
-        const hourRate = budgetHours > 0 ? budgetValue / budgetHours : 0;
+        const hourRate = budgetHours > 0 && budgetValueRaw > 0 ? budgetValueRaw / budgetHours : fallbackHourRate;
+        const budgetValue = budgetValueRaw > 0 ? budgetValueRaw : budgetHours * hourRate;
         const actualEstimated = consumedHours * hourRate;
         const pendingEstimated = pendingHours * hourRate;
         const eac = Math.max(budgetValue, actualEstimated + pendingEstimated);
@@ -601,7 +620,7 @@ export default function ProjectIndicators() {
           status,
         };
       })
-      .filter((project) => project.budgetValue > 0);
+      .filter((project) => project.budgetValue > 0 || project.actualEstimated > 0 || project.eac > 0);
 
     const totalBudget = projects.reduce((sum, project) => sum + project.budgetValue, 0);
     const totalActual = projects.reduce((sum, project) => sum + project.actualEstimated, 0);
@@ -610,7 +629,11 @@ export default function ProjectIndicators() {
     const totalVariancePct = totalBudget > 0 ? (totalVariance / totalBudget) * 100 : 0;
 
     const highlighted = [...projects]
-      .sort((a, b) => Math.abs(b.variancePct) - Math.abs(a.variancePct))
+      .sort((a, b) => {
+        const scoreA = Math.abs(a.variancePct) > 0 ? Math.abs(a.variancePct) : Math.abs(a.varianceValue);
+        const scoreB = Math.abs(b.variancePct) > 0 ? Math.abs(b.variancePct) : Math.abs(b.varianceValue);
+        return scoreB - scoreA;
+      })
       .slice(0, 10);
 
     const varianceChartData: ChartData<'bar'> = {
@@ -983,7 +1006,7 @@ export default function ProjectIndicators() {
                 onDragOver={(event) => handleWidgetDragOver(event, widget.id)}
                 onDrop={(event) => handleWidgetDrop(event, widget.id)}
               >
-                <CardHeader className="pb-2">
+                <CardHeader className="pb-2 border-b border-[#e3e9f1]">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <CardTitle className="text-base">{title}</CardTitle>
                     <div className="flex items-center gap-1">
@@ -1101,7 +1124,7 @@ export default function ProjectIndicators() {
 
                   {widget.type === 'status' ? (
                     <div
-                      className="h-full rounded-md border border-[#dbe4ef] bg-[#f9fbfe] p-2"
+                      className="h-full rounded-md border border-[#f1f5f9] bg-[#ffffff] shadow-sm p-2"
                       style={{ height: Math.max(widget.height - 60, 230) }}
                       ref={(element) => {
                         chartContainerRefs.current[widget.id] = element;
@@ -1156,7 +1179,7 @@ export default function ProjectIndicators() {
 
                   {widget.type === 'budget' ? (
                     <div
-                      className="h-full rounded-md border border-[#dbe4ef] bg-[#f9fbfe] p-2"
+                      className="h-full rounded-md border border-[#f1f5f9] bg-[#ffffff] shadow-sm p-2"
                       style={{ height: Math.max(widget.height - 60, 240) }}
                       ref={(element) => {
                         chartContainerRefs.current[widget.id] = element;
@@ -1219,7 +1242,7 @@ export default function ProjectIndicators() {
 
                   {widget.type === 'burn' ? (
                     <div
-                      className="h-full rounded-md border border-[#dbe4ef] bg-[#f9fbfe] p-2"
+                      className="h-full rounded-md border border-[#f1f5f9] bg-[#ffffff] shadow-sm p-2"
                       style={{ height: Math.max(widget.height - 60, 240) }}
                       ref={(element) => {
                         chartContainerRefs.current[widget.id] = element;
@@ -1284,7 +1307,7 @@ export default function ProjectIndicators() {
 
                   {widget.type === 'risk' ? (
                     <div
-                      className="h-full rounded-md border border-[#dbe4ef] bg-[#f9fbfe] p-2"
+                      className="h-full rounded-md border border-[#f1f5f9] bg-[#ffffff] shadow-sm p-2"
                       style={{ height: Math.max(widget.height - 60, 240) }}
                       ref={(element) => {
                         chartContainerRefs.current[widget.id] = element;
@@ -1350,7 +1373,7 @@ export default function ProjectIndicators() {
                   ) : null}
                   {widget.type === 'ceo' ? (
                     <div
-                      className="h-full rounded-md border border-[#dbe4ef] bg-[#f9fbfe] p-2"
+                      className="h-full rounded-md border border-[#f1f5f9] bg-[#ffffff] shadow-sm p-2"
                       style={{ height: Math.max(widget.height - 60, 290) }}
                       ref={(element) => {
                         chartContainerRefs.current[widget.id] = element;

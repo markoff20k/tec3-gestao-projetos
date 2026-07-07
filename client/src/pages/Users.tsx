@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Search } from 'lucide-react';
+import { Loader2, Search } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -32,6 +33,32 @@ const EMAIL_GROUP_OPTIONS = [
   { value: 'Escritório de projetos', label: 'Escritório de projetos' },
   { value: 'SSMA', label: 'SSMA' },
 ];
+
+function UsersTableSkeleton({ showFullColumnsMobile }: { showFullColumnsMobile: boolean }) {
+  return (
+    <TableBody>
+      {Array.from({ length: 10 }).map((_, index) => (
+        <TableRow key={`user-skeleton-${index}`}>
+          <TableCell className="w-[280px]">
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-44" />
+              <Skeleton className="h-3 w-56" />
+            </div>
+          </TableCell>
+          <TableCell className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[520px]`}>
+            <Skeleton className="h-9 w-full" />
+          </TableCell>
+          <TableCell className={`${showFullColumnsMobile ? '' : 'hidden md:table-cell'} w-[360px]`}>
+            <Skeleton className="h-9 w-full" />
+          </TableCell>
+          <TableCell className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} w-[180px]`}>
+            <Skeleton className="h-9 w-full" />
+          </TableCell>
+        </TableRow>
+      ))}
+    </TableBody>
+  );
+}
 
 export default function Users() {
   const queryClient = useQueryClient();
@@ -116,16 +143,6 @@ export default function Users() {
     );
   }
 
-  if (isLoading) {
-    return (
-      <Layout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-muted-foreground">Carregando...</div>
-        </div>
-      </Layout>
-    );
-  }
-
   return (
     <Layout>
       <div className="flex flex-col h-full">
@@ -135,7 +152,7 @@ export default function Users() {
               Profissionais da Tec3
             </h1>
             <p className="text-sm text-muted-foreground">
-              {filteredProfessionals.length} profissionais encontrados
+              {isLoading ? 'Carregando profissionais...' : `${filteredProfessionals.length} profissionais encontrados`}
             </p>
           </div>
         </div>
@@ -177,105 +194,118 @@ export default function Users() {
                   <TableHead className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} w-[180px] text-xs font-medium`}>Recebe e-mails?</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
-                {filteredProfessionals.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={showFullColumnsMobile ? 4 : 1} className="text-muted-foreground">
-                      Nenhum profissional encontrado
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredProfessionals.map((user) => {
-                    const isSaving = savingUserId === user.id && updateProfessionalMutation.isPending;
+              {isLoading ? (
+                <UsersTableSkeleton showFullColumnsMobile={showFullColumnsMobile} />
+              ) : (
+                <TableBody>
+                  {filteredProfessionals.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={showFullColumnsMobile ? 4 : 1} className="text-muted-foreground">
+                        Nenhum profissional encontrado
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredProfessionals.map((user) => {
+                      const isSaving = savingUserId === user.id && updateProfessionalMutation.isPending;
 
-                    return (
-                      <TableRow key={user.id} data-testid={`row-user-${user.id}`}>
-                        <TableCell className="font-medium w-[280px]">
-                          <div className="leading-tight">
-                            <div>{user.name}</div>
-                            <div className="text-xs text-muted-foreground">{user.email}</div>
-                          </div>
-                        </TableCell>
+                      return (
+                        <TableRow key={user.id} data-testid={`row-user-${user.id}`}>
+                          <TableCell className="font-medium w-[280px]">
+                            <div className="leading-tight">
+                              <div>{user.name}</div>
+                              <div className="text-xs text-muted-foreground">{user.email}</div>
+                            </div>
+                          </TableCell>
 
-                        <TableCell className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[520px] min-w-0`}>
-                          <Select
-                            value={user.professionalCategoryId || ''}
-                            disabled={isSaving}
-                            onValueChange={(value) => {
-                              setSavingUserId(user.id);
-                              updateProfessionalMutation.mutate({
-                                userId: user.id,
-                                data: { professionalCategoryId: value || null },
-                              });
-                            }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecione" />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-72">
-                              {sortedCategories.map((c) => (
-                                <SelectItem key={c.id} value={c.id}>
-                                  {c.name}{!c.isActive ? ' (inativa)' : ''}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </TableCell>
+                          <TableCell className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[520px] min-w-0`}>
+                            <Select
+                              value={user.professionalCategoryId || ''}
+                              disabled={isSaving}
+                              onValueChange={(value) => {
+                                setSavingUserId(user.id);
+                                updateProfessionalMutation.mutate({
+                                  userId: user.id,
+                                  data: { professionalCategoryId: value || null },
+                                });
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione" />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-72">
+                                {sortedCategories.map((c) => (
+                                  <SelectItem key={c.id} value={c.id}>
+                                    {c.name}{!c.isActive ? ' (inativa)' : ''}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
 
-                        <TableCell className={`${showFullColumnsMobile ? '' : 'hidden md:table-cell'} w-[360px] min-w-0`}>
-                          <Select
-                            value={user.emailGroup || ''}
-                            disabled={isSaving}
-                            onValueChange={(value) => {
-                              setSavingUserId(user.id);
-                              updateProfessionalMutation.mutate({
-                                userId: user.id,
-                                data: { emailGroup: value || null },
-                              });
-                            }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecione" />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-72">
-                              {EMAIL_GROUP_OPTIONS.map((opt) => (
-                                <SelectItem key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </TableCell>
+                          <TableCell className={`${showFullColumnsMobile ? '' : 'hidden md:table-cell'} w-[360px] min-w-0`}>
+                            <Select
+                              value={user.emailGroup || ''}
+                              disabled={isSaving}
+                              onValueChange={(value) => {
+                                setSavingUserId(user.id);
+                                updateProfessionalMutation.mutate({
+                                  userId: user.id,
+                                  data: { emailGroup: value || null },
+                                });
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione" />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-72">
+                                {EMAIL_GROUP_OPTIONS.map((opt) => (
+                                  <SelectItem key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
 
-                        <TableCell className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} w-[180px] min-w-0`}>
-                          <Select
-                            value={String(Boolean(user.receivesEmails))}
-                            disabled={isSaving}
-                            onValueChange={(value) => {
-                              setSavingUserId(user.id);
-                              updateProfessionalMutation.mutate({
-                                userId: user.id,
-                                data: { receivesEmails: value === 'true' },
-                              });
-                            }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecione" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="true">Sim</SelectItem>
-                              <SelectItem value="false">Não</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
+                          <TableCell className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} w-[180px] min-w-0`}>
+                            <Select
+                              value={String(Boolean(user.receivesEmails))}
+                              disabled={isSaving}
+                              onValueChange={(value) => {
+                                setSavingUserId(user.id);
+                                updateProfessionalMutation.mutate({
+                                  userId: user.id,
+                                  data: { receivesEmails: value === 'true' },
+                                });
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="true">Sim</SelectItem>
+                                <SelectItem value="false">Não</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              )}
             </Table>
           </div>
         </Card>
+
+        {isLoading && (
+          <div className="fixed bottom-5 right-5 z-50 rounded-full bg-primary px-3 py-2 text-xs text-primary-foreground shadow-lg">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Carregando profissionais
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   );

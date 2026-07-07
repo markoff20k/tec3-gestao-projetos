@@ -1,7 +1,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { type Server } from "http";
 import { prisma } from "./db";
-import { storage } from "./storage";
+import { storage, type NotificationType } from "./storage";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
@@ -201,6 +201,18 @@ const PROPOSAL_FUNNEL_STATUS = {
   ganho: APPROVED_PROPOSAL_STATUSES,
   perdido: new Set(['nao_sucesso', 'rejected', 'cancelada', 'cancelled', 'declinio']),
 };
+
+function isProjectMembersTableMissing(error: unknown): boolean {
+  const code = (error as any)?.code;
+  const originalCode = (error as any)?.meta?.driverAdapterError?.cause?.originalCode;
+  const message = String((error as any)?.message || '').toLowerCase();
+
+  if (code === 'P2010' && originalCode === '42P01') {
+    return true;
+  }
+
+  return message.includes('project_members') && message.includes('does not exist');
+}
 
 function normalizeStatus(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
@@ -982,7 +994,7 @@ function renderProjectTapHtml(
                     <td colspan="3" style="padding:10px 12px;border:1px solid #d1d5db;background:#ffffff;">${tapAttachmentsHtml}</td>
                   </tr>
                 </table>
-                ${projectUrl ? `<div style="padding-top:16px;text-align:center;"><a href="${escapeProjectTapEmailHtml(projectUrl)}" style="display:inline-block;padding:12px 22px;border-radius:999px;background:#0d4f89;color:#ffffff;font-size:13px;font-weight:700;text-decoration:none;">Abrir projeto no sistema</a></div>` : ''}
+
                 <div style="padding-top:14px;font-size:12px;line-height:1.7;color:#475569;text-align:right;">Gerado em: ${generatedAt}</div>
               </td>
             </tr>
@@ -2773,11 +2785,31 @@ export async function registerRoutes(
     }
   });
 
-  app.get('/api/projects', authenticateToken, requireRoles(['projects']), async (_req, res) => {
+  app.get('/api/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
     const timeEntries = await storage.getAllTimeEntries();
     const clientMap = new Map(clients.map(c => [c.id, c]));
+    const requesterId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+
+    const memberRows = requesterId
+      ? await (async () => {
+          try {
+            return await prisma.$queryRaw<Array<{ projectId: string }>>`
+              SELECT pm.project_id AS "projectId"
+              FROM project_members pm
+              WHERE pm.user_id = ${requesterId}
+                AND pm.is_active = true
+            `;
+          } catch (error) {
+            if (isProjectMembersTableMissing(error)) {
+              return [];
+            }
+            throw error;
+          }
+        })()
+      : [];
+    const allocatedProjectIds = new Set(memberRows.map((row) => row.projectId));
 
     const approvedHoursByProject = new Map<string, number>();
     const pendingHoursByProject = new Map<string, number>();
@@ -2804,6 +2836,7 @@ export async function registerRoutes(
       client: clientMap.get(p.clientId),
       consumedHours: approvedHoursByProject.get(p.id) || 0,
       pendingHours: pendingHoursByProject.get(p.id) || 0,
+      isCurrentUserAllocated: requesterId ? allocatedProjectIds.has(p.id) : false,
     }));
     res.json(enriched);
   });
@@ -2968,6 +3001,11 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
 
+    const requesterRole = (req as any).user?.role;
+    if (existingProject.setupStatus === PROJECT_SETUP_STATUS.COMPLETED && requesterRole !== 'admin') {
+      return res.status(403).json({ message: 'Apenas administradores podem alterar setup concluído' });
+    }
+
     const updates: Record<string, unknown> = {};
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'coordinatorId')) {
@@ -3004,6 +3042,29 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
 
+    const coordinatorChanged = existingProject.coordinatorId !== project.coordinatorId;
+    if (
+      coordinatorChanged &&
+      project.coordinatorId &&
+      String(project.setupStatus) === PROJECT_SETUP_STATUS.COMPLETED
+    ) {
+      await storage.createNotification({
+        userId: project.coordinatorId,
+        type: 'project_setup_completed',
+        title: 'Você foi definido como coordenador',
+        message: `Você foi definido como coordenador do projeto ${project.code} · ${project.name}. Faça a alocação dos colaboradores.`,
+        link: `/projects?projectId=${project.id}&action=allocateTeam`,
+        sourceKey: `project_setup_completed:${project.id}:${project.coordinatorId}`,
+        metadata: {
+          projectId: project.id,
+          projectCode: project.code,
+          projectName: project.name,
+          action: 'allocate_project_members',
+          trigger: 'coordinator_assigned_after_setup',
+        },
+      });
+    }
+
     const userId = (req as any).user?.sub;
     if (typeof userId === 'string') {
       await safeCreateUserActivity(req, userId, {
@@ -3020,6 +3081,138 @@ export async function registerRoutes(
     }
 
     res.json(project);
+  });
+
+  app.get('/api/projects/:id/members', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    let members: Array<{
+      id: string;
+      userId: string;
+      name: string;
+      email: string;
+      role: string;
+      isActive: boolean;
+      createdAt: Date;
+    }> = [];
+
+    try {
+      members = await prisma.$queryRaw<Array<{
+        id: string;
+        userId: string;
+        name: string;
+        email: string;
+        role: string;
+        isActive: boolean;
+        createdAt: Date;
+      }>>`
+        SELECT
+          pm.id AS "id",
+          pm.user_id AS "userId",
+          u.name AS "name",
+          u.email AS "email",
+          u.role::text AS "role",
+          pm.is_active AS "isActive",
+          pm.created_at AS "createdAt"
+        FROM project_members pm
+        INNER JOIN users u ON u.id = pm.user_id
+        WHERE pm.project_id = ${project.id}
+          AND pm.is_active = true
+          AND u.is_active = true
+        ORDER BY u.name ASC
+      `;
+    } catch (error) {
+      if (isProjectMembersTableMissing(error)) {
+        return res.status(503).json({ message: 'Tabela de alocação não disponível. Execute as migrations pendentes.' });
+      }
+      throw error;
+    }
+
+    res.json(members);
+  });
+
+  app.put('/api/projects/:id/members', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const requesterId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    const requesterRole = (req as any).user?.role as Role | undefined;
+    const isAdmin = requesterRole === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === requesterId;
+
+    if (!isAdmin && !isCoordinator) {
+      return res.status(403).json({ message: 'Somente administrador ou coordenador do projeto pode alocar equipe' });
+    }
+
+    const inputUserIds: unknown[] = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+    const normalizedUserIds: string[] = Array.from(new Set(
+      inputUserIds
+        .filter((value: unknown) => typeof value === 'string')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    ));
+
+    const users = await Promise.all(normalizedUserIds.map((userId) => storage.getUser(userId)));
+    const invalidUserId = users.findIndex((user) => !user || !user.isActive);
+    if (invalidUserId >= 0) {
+      return res.status(400).json({ message: 'Usuário inválido na alocação da equipe' });
+    }
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`
+          UPDATE project_members
+          SET is_active = false
+          WHERE project_id = ${project.id}
+        `;
+
+        for (const userId of normalizedUserIds) {
+          await tx.$executeRaw`
+            INSERT INTO project_members (id, project_id, user_id, created_by_id, is_active, created_at)
+            VALUES (${crypto.randomUUID()}, ${project.id}, ${userId}, ${requesterId}, true, NOW())
+            ON CONFLICT (project_id, user_id)
+            DO UPDATE SET is_active = true
+          `;
+        }
+      });
+    } catch (error) {
+      if (isProjectMembersTableMissing(error)) {
+        return res.status(503).json({ message: 'Tabela de alocação não disponível. Execute as migrations pendentes.' });
+      }
+      throw error;
+    }
+
+    const members = await prisma.$queryRaw<Array<{
+      id: string;
+      userId: string;
+      name: string;
+      email: string;
+      role: string;
+      isActive: boolean;
+      createdAt: Date;
+    }>>`
+      SELECT
+        pm.id AS "id",
+        pm.user_id AS "userId",
+        u.name AS "name",
+        u.email AS "email",
+        u.role::text AS "role",
+        pm.is_active AS "isActive",
+        pm.created_at AS "createdAt"
+      FROM project_members pm
+      INNER JOIN users u ON u.id = pm.user_id
+      WHERE pm.project_id = ${project.id}
+        AND pm.is_active = true
+        AND u.is_active = true
+      ORDER BY u.name ASC
+    `;
+
+    res.json(members);
   });
 
   app.put('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
@@ -3061,6 +3254,23 @@ export async function registerRoutes(
         action: 'PROJECT_SETUP_COMPLETED',
         title: `Setup concluído — ${project.code}`,
         metadata: { projectId: project.id },
+      });
+    }
+
+    if (project.coordinatorId) {
+      await storage.createNotification({
+        userId: project.coordinatorId,
+        type: 'project_setup_completed',
+        title: 'Projeto configurado — alocar colaboradores',
+        message: `O projeto ${project.code} · ${project.name} foi configurado e aguarda a alocação dos colaboradores.`,
+        link: `/projects?projectId=${project.id}&action=allocateTeam`,
+        sourceKey: `project_setup_completed:${project.id}:${project.coordinatorId}`,
+        metadata: {
+          projectId: project.id,
+          projectCode: project.code,
+          projectName: project.name,
+          action: 'allocate_project_members',
+        },
       });
     }
 
@@ -3173,6 +3383,27 @@ export async function registerRoutes(
     const project = await storage.getProject(projectId);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    let allocatedCount = 0;
+    try {
+      const isAllocated = await prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*)::bigint AS "count"
+        FROM project_members pm
+        WHERE pm.project_id = ${project.id}
+          AND pm.user_id = ${collaboratorId}
+          AND pm.is_active = true
+      `;
+      allocatedCount = Number(isAllocated[0]?.count ?? 0);
+    } catch (error) {
+      if (!isProjectMembersTableMissing(error)) {
+        throw error;
+      }
+      allocatedCount = 1;
+    }
+
+    if (allocatedCount <= 0) {
+      return res.status(403).json({ message: 'Você não está alocado neste projeto' });
     }
 
     const normalizedCostCenterId = typeof costCenterId === 'string' && costCenterId.trim() ? costCenterId.trim() : null;

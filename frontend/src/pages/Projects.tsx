@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Eye, Clock } from 'lucide-react';
 import { Layout } from '@/components/Layout';
@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
   DialogContent,
@@ -42,11 +43,46 @@ const statusLabels: Record<string, string> = {
   cancelled: 'Cancelado',
 };
 
+function ProjectsListSkeleton() {
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <Card key={`skeleton-project-${index}`}>
+          <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
+            <div className="space-y-2">
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-4 w-28" />
+            </div>
+            <Skeleton className="h-5 w-20" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="h-4 w-16" />
+              </div>
+              <Skeleton className="h-2 w-full" />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <Skeleton className="h-4 w-24" />
+              <div className="flex gap-2">
+                <Skeleton className="h-8 w-16" />
+                <Skeleton className="h-8 w-16" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 export default function Projects() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [contentVisible, setContentVisible] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -60,6 +96,16 @@ export default function Projects() {
     queryKey: ['/api/projects'],
     queryFn: () => projectsApi.getAll(),
   });
+
+  useEffect(() => {
+    if (isLoading) {
+      setContentVisible(false);
+      return;
+    }
+
+    const frameId = requestAnimationFrame(() => setContentVisible(true));
+    return () => cancelAnimationFrame(frameId);
+  }, [isLoading]);
 
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ['/api/clients'],
@@ -225,54 +271,62 @@ export default function Projects() {
         </div>
 
         {isLoading ? (
-          <div className="text-center py-8 text-muted-foreground">Carregando...</div>
-        ) : filteredProjects.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">Nenhum projeto encontrado</div>
+          <ProjectsListSkeleton />
         ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {filteredProjects.map((project) => (
-              <Card key={project.id} data-testid={`card-project-${project.id}`}>
-                <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <CardTitle className="text-lg">{project.name}</CardTitle>
-                      <Badge variant="outline" className="text-xs">
-                        {project.code}
+          <div
+            className={`transition-all duration-500 ease-out ${
+              contentVisible ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
+            }`}
+          >
+            {filteredProjects.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">Nenhum projeto encontrado</div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2">
+                {filteredProjects.map((project) => (
+                  <Card key={project.id} data-testid={`card-project-${project.id}`}>
+                    <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-lg">{project.name}</CardTitle>
+                          <Badge variant="outline" className="text-xs">
+                            {project.code}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">{project.client?.name}</p>
+                      </div>
+                      <Badge className={`text-xs text-white ${statusColors[project.status]}`}>
+                        {statusLabels[project.status] || project.status}
                       </Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground">{project.client?.name}</p>
-                  </div>
-                  <Badge className={`text-xs text-white ${statusColors[project.status]}`}>
-                    {statusLabels[project.status] || project.status}
-                  </Badge>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Progresso</span>
-                      <span>0 / {project.budgetHours}h</span>
-                    </div>
-                    <Progress value={0} className="h-2" />
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-4">
-                    <div className="text-sm">
-                      <span className="text-muted-foreground">Valor:</span>{' '}
-                      <span className="font-medium">{formatCurrency(project.budgetValue)}</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" data-testid={`button-view-project-${project.id}`}>
-                        <Eye className="h-3 w-3 mr-1" />
-                        Ver
-                      </Button>
-                      <Button size="sm" variant="outline" data-testid={`button-time-entries-${project.id}`}>
-                        <Clock className="h-3 w-3 mr-1" />
-                        Horas
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span>Progresso</span>
+                          <span>0 / {project.budgetHours}h</span>
+                        </div>
+                        <Progress value={0} className="h-2" />
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="text-sm">
+                          <span className="text-muted-foreground">Valor:</span>{' '}
+                          <span className="font-medium">{formatCurrency(project.budgetValue)}</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" data-testid={`button-view-project-${project.id}`}>
+                            <Eye className="h-3 w-3 mr-1" />
+                            Ver
+                          </Button>
+                          <Button size="sm" variant="outline" data-testid={`button-time-entries-${project.id}`}>
+                            <Clock className="h-3 w-3 mr-1" />
+                            Horas
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Search } from 'lucide-react';
+import { Loader2, Search } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -38,6 +39,30 @@ type CategoryFormState = {
   name: string;
   isActive: boolean;
 };
+
+function CategoriesTableSkeleton({ showFullColumnsMobile }: { showFullColumnsMobile: boolean }) {
+  return (
+    <>
+      {Array.from({ length: 10 }).map((_, index) => (
+        <TableRow key={`category-skeleton-${index}`}>
+          <TableCell>
+            <Skeleton className="h-4 w-52" />
+          </TableCell>
+          <TableCell className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} text-center`}>
+            <div className="flex justify-center">
+              <Skeleton className="h-6 w-14" />
+            </div>
+          </TableCell>
+          <TableCell className="text-right">
+            <div className="flex justify-end">
+              <Skeleton className="h-8 w-16" />
+            </div>
+          </TableCell>
+        </TableRow>
+      ))}
+    </>
+  );
+}
 
 export default function Categories() {
   const { hasRole } = useAuth();
@@ -152,7 +177,7 @@ export default function Categories() {
           <div>
             <h1 className="text-2xl font-semibold">Categorias</h1>
             <p className="text-sm text-muted-foreground">
-              {filtered.length} categorias encontradas
+              {isLoading ? 'Carregando categorias...' : `${filtered.length} categorias encontradas`}
             </p>
           </div>
 
@@ -242,9 +267,7 @@ export default function Categories() {
               </TableHeader>
               <TableBody>
                 {isLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={showFullColumnsMobile ? 3 : 2} className="text-muted-foreground">Carregando...</TableCell>
-                  </TableRow>
+                  <CategoriesTableSkeleton showFullColumnsMobile={showFullColumnsMobile} />
                 ) : filtered.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={showFullColumnsMobile ? 3 : 2} className="text-muted-foreground">
@@ -281,6 +304,15 @@ export default function Categories() {
             </Table>
           </div>
         </Card>
+
+        {isLoading && (
+          <div className="fixed bottom-5 right-5 z-50 rounded-full bg-primary px-3 py-2 text-xs text-primary-foreground shadow-lg">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Carregando categorias
+            </div>
+          </div>
+        )}
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-md">

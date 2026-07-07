@@ -17,6 +17,7 @@ import {
   UpdateTimeEntryDto,
   ApproveTimeEntryDto,
   CreateProjectAssignmentDto,
+  UpdateProjectSetupDto,
 } from '../dto/project.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -53,6 +54,18 @@ export class ProjectController {
   @Roles(UserRole.ADMIN, UserRole.COORDINATOR)
   update(@Param('id') id: string, @Body() dto: UpdateProjectDto) {
     return this.projectService.update(id, dto);
+  }
+
+  @Put(':id/setup')
+  @Roles(UserRole.ADMIN, UserRole.COORDINATOR)
+  updateSetup(@Param('id') id: string, @Body() dto: UpdateProjectSetupDto) {
+    return this.projectService.updateSetup(id, dto);
+  }
+
+  @Post(':id/setup/complete')
+  @Roles(UserRole.ADMIN, UserRole.COORDINATOR)
+  completeSetup(@Param('id') id: string, @Request() req) {
+    return this.projectService.completeSetup(id, req.user.id);
   }
 
   @Delete(':id')

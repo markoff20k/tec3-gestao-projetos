@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Eye, ArrowRight } from 'lucide-react';
 import { Layout } from '@/components/Layout';
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
   DialogContent,
@@ -55,11 +56,42 @@ const typeLabels: Record<string, string> = {
   additive: 'Aditivo',
 };
 
+function ProposalsListSkeleton() {
+  return (
+    <div className="space-y-4">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <Card key={`skeleton-proposal-${index}`}>
+          <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
+            <div className="space-y-2">
+              <Skeleton className="h-5 w-44" />
+              <Skeleton className="h-4 w-60" />
+            </div>
+            <Skeleton className="h-5 w-20" />
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex gap-6">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-20" />
+              </div>
+              <div className="flex gap-2">
+                <Skeleton className="h-8 w-16" />
+                <Skeleton className="h-8 w-36" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 export default function Proposals() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [contentVisible, setContentVisible] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -73,6 +105,16 @@ export default function Proposals() {
     queryKey: ['/api/proposals'],
     queryFn: () => proposalsApi.getAll(),
   });
+
+  useEffect(() => {
+    if (isLoading) {
+      setContentVisible(false);
+      return;
+    }
+
+    const frameId = requestAnimationFrame(() => setContentVisible(true));
+    return () => cancelAnimationFrame(frameId);
+  }, [isLoading]);
 
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ['/api/clients'],
@@ -258,62 +300,70 @@ export default function Proposals() {
         </div>
 
         {isLoading ? (
-          <div className="text-center py-8 text-muted-foreground">Carregando...</div>
-        ) : filteredProposals.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">Nenhuma proposta encontrada</div>
+          <ProposalsListSkeleton />
         ) : (
-          <div className="space-y-4">
-            {filteredProposals.map((proposal) => (
-              <Card key={proposal.id} data-testid={`card-proposal-${proposal.id}`}>
-                <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <CardTitle className="text-lg">{proposal.title}</CardTitle>
-                      <Badge variant="outline" className="text-xs">
-                        {proposal.code}
+          <div
+            className={`transition-all duration-500 ease-out ${
+              contentVisible ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
+            }`}
+          >
+            {filteredProposals.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">Nenhuma proposta encontrada</div>
+            ) : (
+              <div className="space-y-4">
+                {filteredProposals.map((proposal) => (
+                  <Card key={proposal.id} data-testid={`card-proposal-${proposal.id}`}>
+                    <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-lg">{proposal.title}</CardTitle>
+                          <Badge variant="outline" className="text-xs">
+                            {proposal.code}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {proposal.client?.name} | {typeLabels[proposal.type] || proposal.type}
+                        </p>
+                      </div>
+                      <Badge className={`text-xs text-white ${statusColors[proposal.status]}`}>
+                        {statusLabels[proposal.status] || proposal.status}
                       </Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      {proposal.client?.name} | {typeLabels[proposal.type] || proposal.type}
-                    </p>
-                  </div>
-                  <Badge className={`text-xs text-white ${statusColors[proposal.status]}`}>
-                    {statusLabels[proposal.status] || proposal.status}
-                  </Badge>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-wrap items-center justify-between gap-4">
-                    <div className="flex gap-6 text-sm">
-                      <div>
-                        <span className="text-muted-foreground">Valor:</span>{' '}
-                        <span className="font-medium">{formatCurrency(proposal.totalValue)}</span>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex gap-6 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">Valor:</span>{' '}
+                            <span className="font-medium">{formatCurrency(proposal.totalValue)}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Horas:</span>{' '}
+                            <span className="font-medium">{proposal.estimatedHours}h</span>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" data-testid={`button-view-proposal-${proposal.id}`}>
+                            <Eye className="h-3 w-3 mr-1" />
+                            Ver
+                          </Button>
+                          {proposal.status === 'approved' && (
+                            <Button
+                              size="sm"
+                              data-testid={`button-convert-proposal-${proposal.id}`}
+                              onClick={() => convertMutation.mutate(proposal.id)}
+                              disabled={convertMutation.isPending}
+                            >
+                              <ArrowRight className="h-3 w-3 mr-1" />
+                              Converter em Projeto
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <span className="text-muted-foreground">Horas:</span>{' '}
-                        <span className="font-medium">{proposal.estimatedHours}h</span>
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" data-testid={`button-view-proposal-${proposal.id}`}>
-                        <Eye className="h-3 w-3 mr-1" />
-                        Ver
-                      </Button>
-                      {proposal.status === 'approved' && (
-                        <Button
-                          size="sm"
-                          data-testid={`button-convert-proposal-${proposal.id}`}
-                          onClick={() => convertMutation.mutate(proposal.id)}
-                          disabled={convertMutation.isPending}
-                        >
-                          <ArrowRight className="h-3 w-3 mr-1" />
-                          Converter em Projeto
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

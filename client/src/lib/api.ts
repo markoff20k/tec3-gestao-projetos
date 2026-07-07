@@ -270,7 +270,7 @@ export const usersApi = {
 };
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed';
 
 export interface UserActivity {
   id: string;
@@ -619,6 +619,7 @@ export interface Project {
     rejectedHours: number;
     entriesCount: number;
   }>;
+  isCurrentUserAllocated?: boolean;
   createdAt: string;
 }
 
@@ -630,6 +631,16 @@ export interface ProjectTap {
   payload: any;
   htmlContent?: string | null;
   generatedById?: string | null;
+  createdAt: string;
+}
+
+export interface ProjectMember {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: User['role'];
+  isActive: boolean;
   createdAt: string;
 }
 
@@ -824,6 +835,9 @@ export const projectsApi = {
   resendTapEmail: (id: string) => api.post<Project>(`/projects/${id}/tap/resend-email`, {}),
   updateSetup: (id: string, data: { coordinatorId?: string | null; dailyLimitHours?: number; requiresApproval?: boolean }) =>
     api.put<Project>(`/projects/${id}/setup`, data),
+  getMembers: (id: string) => api.get<ProjectMember[]>(`/projects/${id}/members`),
+  setMembers: (id: string, userIds: string[]) =>
+    api.put<ProjectMember[]>(`/projects/${id}/members`, { userIds }),
   completeSetup: (id: string) => api.post<Project>(`/projects/${id}/setup/complete`),
   activate: (id: string) => api.post<Project>(`/projects/${id}/activate`),
   getStats: (id: string) => api.get<any>(`/projects/${id}/stats`),

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Calendar, Clock } from 'lucide-react';
 import { Layout } from '@/components/Layout';
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
   DialogContent,
@@ -37,11 +38,33 @@ const statusColors: Record<string, string> = {
   rejected: 'bg-red-500',
 };
 
+function TimeEntriesListSkeleton() {
+  return (
+    <div className="space-y-4">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <Card key={`skeleton-time-entry-${index}`}>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <div className="flex items-center gap-4">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-4 w-14" />
+            </div>
+            <Skeleton className="h-5 w-20" />
+          </CardHeader>
+          <CardContent>
+            <Skeleton className="h-4 w-72" />
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 export default function TimeEntries() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [contentVisible, setContentVisible] = useState(false);
   const [formData, setFormData] = useState({
     projectId: '',
     collaboratorId: '',
@@ -60,6 +83,16 @@ export default function TimeEntries() {
     queryFn: () => projectsApi.getTimeEntries(selectedProjectId),
     enabled: !!selectedProjectId,
   });
+
+  useEffect(() => {
+    if (isLoading) {
+      setContentVisible(false);
+      return;
+    }
+
+    const frameId = requestAnimationFrame(() => setContentVisible(true));
+    return () => cancelAnimationFrame(frameId);
+  }, [isLoading]);
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<TimeEntry>) => projectsApi.createTimeEntry(data),
@@ -207,37 +240,45 @@ export default function TimeEntries() {
             Selecione um projeto para visualizar os lançamentos
           </div>
         ) : isLoading ? (
-          <div className="text-center py-8 text-muted-foreground">Carregando...</div>
-        ) : timeEntries.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            Nenhum lançamento encontrado para este projeto
-          </div>
+          <TimeEntriesListSkeleton />
         ) : (
-          <div className="space-y-4">
-            {timeEntries.map((entry) => (
-              <Card key={entry.id} data-testid={`card-time-entry-${entry.id}`}>
-                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Calendar className="h-4 w-4 text-muted-foreground" />
-                      {formatDate(entry.entryDate)}
+          <div
+            className={`transition-all duration-500 ease-out ${
+              contentVisible ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
+            }`}
+          >
+            {timeEntries.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                Nenhum lançamento encontrado para este projeto
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {timeEntries.map((entry) => (
+                  <Card key={entry.id} data-testid={`card-time-entry-${entry.id}`}>
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2 text-sm">
+                          <Calendar className="h-4 w-4 text-muted-foreground" />
+                          {formatDate(entry.entryDate)}
+                        </div>
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Clock className="h-4 w-4 text-muted-foreground" />
+                          {entry.hours}h
+                        </div>
+                      </div>
+                      <Badge className={`text-xs text-white ${statusColors[entry.status]}`}>
+                        {statusLabels[entry.status]}
+                      </Badge>
                     </div>
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <Clock className="h-4 w-4 text-muted-foreground" />
-                      {entry.hours}h
-                    </div>
-                  </div>
-                  <Badge className={`text-xs text-white ${statusColors[entry.status]}`}>
-                    {statusLabels[entry.status]}
-                  </Badge>
-                </CardHeader>
-                {entry.description && (
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">{entry.description}</p>
-                  </CardContent>
-                )}
-              </Card>
-            ))}
+                    {entry.description && (
+                      <CardContent>
+                        <p className="text-sm text-muted-foreground">{entry.description}</p>
+                      </CardContent>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

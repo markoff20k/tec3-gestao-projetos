@@ -5,10 +5,12 @@ import { TimeEntry } from './entities/time-entry.entity';
 import { ProjectAssignment } from './entities/project-assignment.entity';
 import { ProjectService } from './services/project.service';
 import { ProjectController } from './controllers/project.controller';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Project, TimeEntry, ProjectAssignment]),
+    AuthModule,
   ],
   controllers: [ProjectController],
   providers: [ProjectService],

@@ -7,6 +7,8 @@ import {
   Param,
   UseGuards,
   Request,
+  Put,
+  Query,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto, UpdateUserDto } from './dto/auth.dto';
@@ -61,5 +63,26 @@ export class AuthController {
   @Roles(UserRole.OWNER)
   async updateUser(@Param('id') id: string, @Body() updateDto: UpdateUserDto) {
     return this.authService.updateUser(id, updateDto);
+  }
+
+  @Get('notifications')
+  @UseGuards(JwtAuthGuard)
+  async getNotifications(@Request() req, @Query() query: Record<string, string>) {
+    return this.authService.getNotifications(req.user.id, {
+      limit: query.limit ? Number(query.limit) : undefined,
+      unreadOnly: query.unreadOnly === 'true',
+    });
+  }
+
+  @Put('notifications/:id/read')
+  @UseGuards(JwtAuthGuard)
+  async markNotificationRead(@Request() req, @Param('id') id: string) {
+    return this.authService.markNotificationRead(req.user.id, id);
+  }
+
+  @Put('notifications/read-all')
+  @UseGuards(JwtAuthGuard)
+  async markAllNotificationsRead(@Request() req) {
+    return this.authService.markAllNotificationsRead(req.user.id);
   }
 }

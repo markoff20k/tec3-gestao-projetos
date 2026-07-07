@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { Project } from '../entities/project.entity';
+import { Project, ProjectSetupStatus } from '../entities/project.entity';
 import { TimeEntry, TimeEntryStatus } from '../entities/time-entry.entity';
 import { ProjectAssignment } from '../entities/project-assignment.entity';
 import {
@@ -11,7 +11,10 @@ import {
   UpdateTimeEntryDto,
   ApproveTimeEntryDto,
   CreateProjectAssignmentDto,
+  UpdateProjectSetupDto,
 } from '../dto/project.dto';
+import { AuthService } from '../../auth/auth.service';
+import { UserNotificationType } from '../../auth/entities/user-notification.entity';
 
 @Injectable()
 export class ProjectService {
@@ -22,6 +25,7 @@ export class ProjectService {
     private timeEntryRepository: Repository<TimeEntry>,
     @InjectRepository(ProjectAssignment)
     private assignmentRepository: Repository<ProjectAssignment>,
+    private authService: AuthService,
   ) {}
 
   private generateCode(): string {
@@ -60,6 +64,65 @@ export class ProjectService {
     await this.findOne(id);
     await this.projectRepository.update(id, dto);
     return this.findOne(id);
+  }
+
+  async updateSetup(id: string, dto: UpdateProjectSetupDto): Promise<Project> {
+    await this.findOne(id);
+
+    const updateData: Partial<Project> = {
+      setupStatus: ProjectSetupStatus.IN_PROGRESS,
+    };
+
+    if (dto.coordinatorId !== undefined) {
+      updateData.coordinatorId = dto.coordinatorId || null;
+    }
+
+    if (dto.dailyLimitHours !== undefined) {
+      updateData.dailyLimitHours = dto.dailyLimitHours;
+    }
+
+    if (dto.requiresApproval !== undefined) {
+      updateData.requiresApproval = dto.requiresApproval;
+    }
+
+    await this.projectRepository.update(id, updateData);
+    return this.findOne(id);
+  }
+
+  async completeSetup(id: string, userId?: string): Promise<Project> {
+    const project = await this.findOne(id);
+
+    if (!project.coordinatorId) {
+      throw new BadRequestException('Defina um coordenador antes de concluir o setup');
+    }
+
+    if (project.setupStatus === ProjectSetupStatus.COMPLETED) {
+      return project;
+    }
+
+    await this.projectRepository.update(id, {
+      setupStatus: ProjectSetupStatus.COMPLETED,
+      setupCompletedAt: new Date(),
+      setupCompletedById: userId || null,
+    });
+
+    const updatedProject = await this.findOne(id);
+
+    await this.authService.createNotification({
+      userId: project.coordinatorId,
+      type: UserNotificationType.PROJECT_SETUP_COMPLETED,
+      title: 'Projeto configurado',
+      message: `O projeto ${project.code} · ${project.name} foi configurado e aguarda a alocação dos colaboradores.`,
+      link: `/projects?projectId=${project.id}`,
+      metadata: {
+        projectId: project.id,
+        projectCode: project.code,
+        projectName: project.name,
+        action: 'allocate_project_members',
+      },
+    });
+
+    return updatedProject;
   }
 
   async remove(id: string): Promise<void> {

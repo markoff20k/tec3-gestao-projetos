@@ -46,6 +46,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -54,7 +55,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
-import { projectsApi, clientsApi, usersApi, Project, Client, ProjectTap, UserOption } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { projectsApi, clientsApi, usersApi, Project, Client, ProjectTap, ProjectMember, UserOption } from '@/lib/api';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 import { DangerZoneConfirm } from '@/components/DangerZoneConfirm';
 
@@ -94,10 +96,19 @@ const PROJECT_TAP_PUBLIC_LOGO_URL = 'https://www.tec3engenharia.com.br/wp-conten
 function normalizeProjectTapHtml(htmlContent: string | null | undefined) {
   if (!htmlContent) return '';
 
-  return htmlContent.replace(
-    /src=(["'])(?:https?:\/\/[^"']*\/assets\/tec3-logo\.svg|\/assets\/tec3-logo\.svg)\1/gi,
-    `src=$1${PROJECT_TAP_PUBLIC_LOGO_URL}$1`
-  );
+  return htmlContent
+    .replace(
+      /src=(["'])(?:https?:\/\/[^"']*\/assets\/tec3-logo\.svg|\/assets\/tec3-logo\.svg)\1/gi,
+      `src=$1${PROJECT_TAP_PUBLIC_LOGO_URL}$1`
+    )
+    .replace(
+      /<a\b[^>]*>[\s\S]*?abrir\s+projeto\s+no\s+sistema[\s\S]*?<\/a>/gi,
+      ''
+    )
+    .replace(
+      /<button\b[^>]*>[\s\S]*?abrir\s+projeto\s+no\s+sistema[\s\S]*?<\/button>/gi,
+      ''
+    );
 }
 
 function parseQueryList(value: string | null): string[] {
@@ -118,6 +129,7 @@ type SortOrder = 'recent' | 'oldest' | 'name_asc' | 'value_desc';
 export default function Projects() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [location, setLocation] = useLocation();
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
@@ -142,13 +154,15 @@ export default function Projects() {
   const [deleteConfirmProjectInput, setDeleteConfirmProjectInput] = useState('');
   const [tapPreviewOpen, setTapPreviewOpen] = useState(false);
   const [tapDetailsOpen, setTapDetailsOpen] = useState(false);
-  const [detailsInitialSection, setDetailsInitialSection] = useState<'overview' | 'config'>('overview');
+  const [detailsInitialSection, setDetailsInitialSection] = useState<'overview' | 'config' | 'team'>('overview');
   const configurationSectionRef = useRef<HTMLDivElement | null>(null);
+  const teamSectionRef = useRef<HTMLDivElement | null>(null);
   const [setupForm, setSetupForm] = useState({
     coordinatorId: '',
     dailyLimitHours: '8',
     requiresApproval: 'true',
   });
+  const [selectedTeamMemberIds, setSelectedTeamMemberIds] = useState<string[]>([]);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -172,6 +186,7 @@ export default function Projects() {
     const nextClientFilter = (params.get('clientId') ?? params.get('client') ?? '').trim();
     const nextOnboardingOrigin = normalizeFilterValue(params.get('onboardingOrigin') ?? 'all');
     const nextProjectId = (params.get('projectId') ?? '').trim();
+    const nextAction = normalizeFilterValue(params.get('action') ?? '');
 
     setSearch(params.get('search') ?? '');
     setStatusFilters(nextStatusFilters);
@@ -183,6 +198,7 @@ export default function Projects() {
     );
     setSelectedProjectId(nextProjectId || null);
     setDetailsOpen(Boolean(nextProjectId));
+    setDetailsInitialSection(nextAction === 'allocateteam' ? 'team' : 'overview');
 
     if (nextStatusFilters.length > 0 || nextClientFilter || nextOnboardingOrigin === 'legacy' || nextOnboardingOrigin === 'native') {
       setFiltersOpen(true);
@@ -301,6 +317,12 @@ export default function Projects() {
     enabled: detailsOpen && !!selectedProjectId,
   });
 
+  const { data: selectedProjectMembers = [] } = useQuery<ProjectMember[]>({
+    queryKey: ['/api/projects', selectedProjectId, 'members'],
+    queryFn: () => projectsApi.getMembers(selectedProjectId as string),
+    enabled: detailsOpen && !!selectedProjectId,
+  });
+
   const createMutation = useMutation({
     mutationFn: (data: Partial<Project>) => projectsApi.create(data),
     onSuccess: () => {
@@ -365,6 +387,18 @@ export default function Projects() {
     },
   });
 
+  const updateMembersMutation = useMutation({
+    mutationFn: (memberIds: string[]) => projectsApi.setMembers(selectedProjectId as string, memberIds),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId, 'members'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      toast({ title: 'Equipe alocada com sucesso', variant: 'success' });
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao alocar equipe', description: error.message, variant: 'destructive' });
+    },
+  });
+
   const closeDialog = () => {
     setDialogOpen(false);
     setFormData({
@@ -397,7 +431,7 @@ export default function Projects() {
     return date.toLocaleDateString('pt-BR');
   };
 
-  const openDetailsDialog = (projectId: string, initialSection: 'overview' | 'config' = 'overview') => {
+  const openDetailsDialog = (projectId: string, initialSection: 'overview' | 'config' | 'team' = 'overview') => {
     setSelectedProjectId(projectId);
     setShowFullColumnsMobile(false);
     setDetailsInitialSection(initialSection);
@@ -423,14 +457,25 @@ export default function Projects() {
   }, [selectedProject]);
 
   useEffect(() => {
+    setSelectedTeamMemberIds(selectedProjectMembers.map((member) => member.userId));
+  }, [selectedProjectMembers, selectedProjectId]);
+
+  useEffect(() => {
     setTapDetailsOpen(false);
   }, [selectedProjectId, detailsOpen]);
 
   useEffect(() => {
-    if (!detailsOpen || !selectedProject || detailsInitialSection !== 'config') return;
+    if (!detailsOpen || !selectedProject) return;
 
     const frameId = window.requestAnimationFrame(() => {
-      configurationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (detailsInitialSection === 'config') {
+        configurationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
+      if (detailsInitialSection === 'team') {
+        teamSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
       setDetailsInitialSection('overview');
     });
 
@@ -470,6 +515,45 @@ export default function Projects() {
     selectedProject && (selectedProject.setupStatus === 'completed' || isProjectExecutionStarted)
   );
 
+  const isSetupMarkedCompleted = selectedProject?.setupStatus === 'completed';
+
+  const isAdmin = user?.role === 'admin';
+  const isCoordinatorOfSelectedProject = Boolean(
+    selectedProject && user?.id && selectedProject.coordinatorId === user.id
+  );
+  const canManageTeamAllocation = Boolean(selectedProject && (isAdmin || isCoordinatorOfSelectedProject));
+
+  const currentTeamMemberIds = useMemo(
+    () => selectedProjectMembers.map((member) => member.userId).sort(),
+    [selectedProjectMembers]
+  );
+
+  const normalizedSelectedTeamMemberIds = useMemo(
+    () => Array.from(new Set(selectedTeamMemberIds)).sort(),
+    [selectedTeamMemberIds]
+  );
+
+  const hasTeamAllocationChanges =
+    currentTeamMemberIds.join('|') !== normalizedSelectedTeamMemberIds.join('|');
+
+  const normalizedCurrentCoordinatorId = selectedProject?.coordinatorId ?? '';
+  const normalizedCurrentDailyLimitHours = Number.parseInt(String(selectedProject?.dailyLimitHours ?? 8), 10) || 8;
+  const normalizedCurrentRequiresApproval = String(Boolean(selectedProject?.requiresApproval ?? true));
+
+  const normalizedFormCoordinatorId = setupForm.coordinatorId || '';
+  const normalizedFormDailyLimitHours = Number.parseInt(setupForm.dailyLimitHours, 10) || 8;
+  const normalizedFormRequiresApproval = setupForm.requiresApproval;
+
+  const hasSetupChanges = Boolean(
+    selectedProject && (
+      normalizedFormCoordinatorId !== normalizedCurrentCoordinatorId ||
+      normalizedFormDailyLimitHours !== normalizedCurrentDailyLimitHours ||
+      normalizedFormRequiresApproval !== normalizedCurrentRequiresApproval
+    )
+  );
+
+  const canEditSetupAfterCompletion = !isSetupMarkedCompleted || isAdmin;
+
   const isTapReadyEffective = Boolean(
     selectedProject && (
       (selectedProject.tapStatus && selectedProject.tapStatus !== 'not_generated') ||
@@ -503,6 +587,24 @@ export default function Projects() {
     : 'Projeto em planejamento com TAP e setup operacional';
 
   const onboardingStatusBadgeClassName = 'h-6 min-w-[150px] px-2.5 inline-flex items-center justify-center whitespace-nowrap text-[11px] font-medium tracking-wide dark:border-white/10 dark:bg-[#214273] dark:text-blue-50';
+
+  const teamAllocationCandidates = useMemo(
+    () => users.filter((candidate) => candidate.isActive),
+    [users]
+  );
+
+  const toggleTeamMember = (userId: string) => {
+    setSelectedTeamMemberIds((current) => (
+      current.includes(userId)
+        ? current.filter((id) => id !== userId)
+        : [...current, userId]
+    ));
+  };
+
+  const handleSaveTeamAllocation = () => {
+    if (!canManageTeamAllocation || !selectedProjectId || !hasTeamAllocationChanges) return;
+    updateMembersMutation.mutate(normalizedSelectedTeamMemberIds);
+  };
 
   const toggleStatusFilter = (status: string) => {
     setStatusFilters((prev) =>
@@ -620,17 +722,30 @@ export default function Projects() {
   const handleSetupSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
+    if (!selectedProject) return;
+
+    if (isSetupMarkedCompleted && !isAdmin) {
+      toast({ title: 'Somente administradores podem alterar setup concluído', variant: 'destructive' });
+      return;
+    }
+
+    if (!hasSetupChanges && !canCompleteSetup) {
+      return;
+    }
+
     try {
-      await updateSetupMutation.mutateAsync({
-        coordinatorId: setupForm.coordinatorId || null,
-        dailyLimitHours: Number.parseInt(setupForm.dailyLimitHours, 10) || 8,
-        requiresApproval: setupForm.requiresApproval === 'true',
-      });
+      if (hasSetupChanges) {
+        await updateSetupMutation.mutateAsync({
+          coordinatorId: normalizedFormCoordinatorId || null,
+          dailyLimitHours: normalizedFormDailyLimitHours,
+          requiresApproval: normalizedFormRequiresApproval === 'true',
+        });
+      }
 
       if (canCompleteSetup) {
         await completeSetupMutation.mutateAsync();
         toast({ title: 'Setup concluído com sucesso', variant: 'success' });
-      } else {
+      } else if (hasSetupChanges) {
         toast({ title: 'Configuração salva com sucesso', variant: 'success' });
       }
     } catch {
@@ -714,6 +829,12 @@ export default function Projects() {
     isTapReadyEffective &&
     setupForm.coordinatorId &&
     (Number.parseInt(setupForm.dailyLimitHours, 10) || 0) > 0
+  );
+
+  const canSubmitSetup = Boolean(
+    selectedProject &&
+    canEditSetupAfterCompletion &&
+    (hasSetupChanges || canCompleteSetup)
   );
 
   return (
@@ -1405,7 +1526,7 @@ export default function Projects() {
         }}>
           <DialogContent className="flex w-[calc(100vw-1rem)] max-h-[90vh] flex-col overflow-hidden p-0 sm:w-[calc(100vw-2rem)] max-w-5xl dark:bg-[#102452] dark:border-white/10">
             <DialogHeader className="shrink-0 border-b px-4 py-4 pr-12 sm:px-6 dark:border-white/10 dark:bg-[#163266]">
-              <DialogTitle>Detalhes do Projeto</DialogTitle>
+              <DialogTitle className="text-xl font-semibold tracking-tight">Detalhes do Projeto</DialogTitle>
             </DialogHeader>
 
             {isLoadingSelectedProject ? (
@@ -1416,7 +1537,7 @@ export default function Projects() {
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div className="space-y-2 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-lg font-semibold leading-tight break-words">{selectedProject.name}</h3>
+                        <h3 className="text-xl font-semibold leading-tight break-words">{selectedProject.name}</h3>
                         <Badge variant="outline" className="text-xs">
                           {selectedProject.code}
                         </Badge>
@@ -1429,10 +1550,10 @@ export default function Projects() {
                   </div>
 
                   <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-3 dark:border-white/10 dark:bg-[#24457d]">
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Coordenador do Projeto</p>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Coordenador do Projeto</p>
                     <div className="mt-1 flex items-center gap-2">
                       <UserRound className="h-4 w-4 text-primary" />
-                      <p className="text-sm font-semibold leading-tight">
+                      <p className="text-base font-semibold leading-tight">
                         {selectedProject.coordinator?.name || 'Não definido'}
                       </p>
                     </div>
@@ -1538,8 +1659,8 @@ export default function Projects() {
                     <div ref={configurationSectionRef} className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 dark:bg-[#183767] dark:border-white/10">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold">Setup guiado</p>
-                          <p className="text-sm text-muted-foreground">
+                          <p className="text-base font-semibold">Setup guiado</p>
+                          <p className="text-xs text-muted-foreground">
                             Preencha os campos para transformar o projeto em operacional.
                           </p>
                         </div>
@@ -1556,7 +1677,11 @@ export default function Projects() {
 
                           <div className="space-y-2">
                             <Label>Coordenador do Projeto</Label>
-                            <Select value={setupForm.coordinatorId || '__none__'} onValueChange={(value) => setSetupForm((current) => ({ ...current, coordinatorId: value === '__none__' ? '' : value }))}>
+                            <Select
+                              value={setupForm.coordinatorId || '__none__'}
+                              onValueChange={(value) => setSetupForm((current) => ({ ...current, coordinatorId: value === '__none__' ? '' : value }))}
+                              disabled={!canEditSetupAfterCompletion}
+                            >
                               <SelectTrigger>
                                 <SelectValue placeholder="Selecione um coordenador" />
                               </SelectTrigger>
@@ -1579,11 +1704,16 @@ export default function Projects() {
                                 type="number"
                                 value={setupForm.dailyLimitHours}
                                 onChange={(event) => setSetupForm((current) => ({ ...current, dailyLimitHours: event.target.value }))}
+                                disabled={!canEditSetupAfterCompletion}
                               />
                             </div>
                             <div className="space-y-2">
                               <Label>Exige Aprovação</Label>
-                              <Select value={setupForm.requiresApproval} onValueChange={(value) => setSetupForm((current) => ({ ...current, requiresApproval: value }))}>
+                              <Select
+                                value={setupForm.requiresApproval}
+                                onValueChange={(value) => setSetupForm((current) => ({ ...current, requiresApproval: value }))}
+                                disabled={!canEditSetupAfterCompletion}
+                              >
                                 <SelectTrigger>
                                   <SelectValue />
                                 </SelectTrigger>
@@ -1605,36 +1735,44 @@ export default function Projects() {
                           </div>
                           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                             <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
-                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Coordenador</p>
+                              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Coordenador</p>
                               <p className="mt-1 text-sm font-semibold">{selectedProject.coordinator?.name || 'Não definido'}</p>
                             </div>
                             <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
-                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Limite diário</p>
+                              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Limite diário</p>
                               <p className="mt-1 text-sm font-semibold">{setupForm.dailyLimitHours || '-'} h</p>
                             </div>
                             <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
-                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Aprovação</p>
+                              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Aprovação</p>
                               <p className="mt-1 text-sm font-semibold">{setupForm.requiresApproval === 'true' ? 'Obrigatória' : 'Dispensada'}</p>
                             </div>
                             <div className="rounded-xl border bg-muted/30 p-3 dark:border-white/10 dark:bg-[#112a57]">
-                              <p className="text-xs uppercase tracking-wide text-muted-foreground">TAP</p>
+                              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">TAP</p>
                               <p className="mt-1 text-sm font-semibold">{selectedProjectTap?.title || 'Ainda não disponível'}</p>
                             </div>
                           </div>
                         </div>
 
-                        {!isSetupCompletedEffective ? (
+                        {canSubmitSetup ? (
                           <div className="flex justify-end pt-1">
                             <Button
                               type="submit"
                               className="w-full sm:w-auto sm:min-w-[210px]"
-                              disabled={updateSetupMutation.isPending || completeSetupMutation.isPending}
+                              disabled={
+                                updateSetupMutation.isPending ||
+                                completeSetupMutation.isPending ||
+                                !canSubmitSetup
+                              }
                             >
                               {updateSetupMutation.isPending || completeSetupMutation.isPending
                                 ? 'Salvando...'
-                                : canCompleteSetup
-                                  ? 'Salvar e concluir setup'
-                                  : 'Salvar configuração'}
+                                : isSetupCompletedEffective
+                                  ? 'Salvar alterações do setup'
+                                  : canCompleteSetup && !hasSetupChanges
+                                    ? 'Concluir setup'
+                                    : canCompleteSetup
+                                      ? 'Salvar e concluir setup'
+                                      : 'Salvar configuração'}
                             </Button>
                           </div>
                         ) : null}
@@ -1646,6 +1784,12 @@ export default function Projects() {
                             {isLegacyOnboardingInferred
                               ? 'Setup consolidado automaticamente com base no histórico de execução já iniciado.'
                               : 'Setup concluído. O projeto está pronto para operação.'}
+                          </div>
+                        ) : null}
+
+                        {isSetupMarkedCompleted ? (
+                          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-300/40 dark:bg-[#3a3018] dark:text-amber-100">
+                            Após a conclusão do setup, somente administradores podem alterar esta configuração.
                           </div>
                         ) : null}
 
@@ -1668,13 +1812,67 @@ export default function Projects() {
                           </Button>
                         </div>
                       </div>
+
+                      <div ref={teamSectionRef} className="space-y-4 border-t pt-4">
+                        <div>
+                          <p className="text-base font-semibold">Alocação da equipe</p>
+                          <p className="text-xs text-muted-foreground">
+                            Defina quais colaboradores estão autorizados a lançar horas neste projeto.
+                          </p>
+                        </div>
+
+                        {!canManageTeamAllocation ? (
+                          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-300/40 dark:bg-[#3a3018] dark:text-amber-100">
+                            Somente o coordenador do projeto ou administrador pode alterar a equipe alocada.
+                          </div>
+                        ) : null}
+
+                        <div className="max-h-[240px] space-y-2 overflow-y-auto rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
+                          {teamAllocationCandidates.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">Nenhum colaborador ativo disponível.</p>
+                          ) : (
+                            teamAllocationCandidates.map((candidate) => {
+                              const checked = selectedTeamMemberIds.includes(candidate.id);
+                              return (
+                                <label
+                                  key={candidate.id}
+                                  className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm dark:border-white/10"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="truncate font-medium">{candidate.name}</p>
+                                    <p className="truncate text-[11px] text-muted-foreground">{candidate.role}</p>
+                                  </div>
+                                  <Checkbox
+                                    checked={checked}
+                                    disabled={!canManageTeamAllocation || updateMembersMutation.isPending}
+                                    onCheckedChange={() => toggleTeamMember(candidate.id)}
+                                  />
+                                </label>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        {canManageTeamAllocation && hasTeamAllocationChanges ? (
+                          <div className="flex justify-end">
+                            <Button
+                              type="button"
+                              className="w-full sm:w-auto sm:min-w-[210px]"
+                              onClick={handleSaveTeamAllocation}
+                              disabled={updateMembersMutation.isPending}
+                            >
+                              {updateMembersMutation.isPending ? 'Salvando equipe...' : 'Salvar equipe alocada'}
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
 
                     <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 dark:bg-[#183767] dark:border-white/10">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold">TAP do projeto</p>
-                          <p className="text-sm text-muted-foreground">
+                          <p className="text-base font-semibold">TAP do projeto</p>
+                          <p className="text-xs text-muted-foreground">
                             Visualize, imprima ou exporte o termo de abertura do projeto.
                           </p>
                         </div>
@@ -1686,7 +1884,7 @@ export default function Projects() {
                       <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3 dark:border-white/10 dark:bg-[#112a57]">
                         <div className="flex items-center gap-2">
                           <MailCheck className="h-4 w-4 text-primary" />
-                          <p className="text-sm font-semibold">{selectedProjectTap?.title || 'TAP ainda não disponível'}</p>
+                          <p className="text-base font-semibold">{selectedProjectTap?.title || 'TAP ainda não disponível'}</p>
                         </div>
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
                           <div>
@@ -1754,16 +1952,21 @@ export default function Projects() {
                   </div>
 
                   <Dialog open={tapPreviewOpen} onOpenChange={setTapPreviewOpen}>
-                    <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-6xl h-[90vh] overflow-hidden p-0">
+                    <DialogContent className="flex h-[90vh] w-[calc(100vw-1rem)] max-w-6xl flex-col overflow-hidden p-0 sm:w-[calc(100vw-2rem)]">
                       <DialogHeader className="px-6 py-4 border-b">
                         <DialogTitle>Visualização do TAP</DialogTitle>
                         <DialogDescription>
                           Pré-visualização do termo de abertura gerado para o projeto {selectedProject.code}.
                         </DialogDescription>
                       </DialogHeader>
-                      <div className="h-full min-h-0 bg-slate-100">
+                      <div className="flex-1 min-h-0 bg-slate-100">
                         {normalizedSelectedProjectTapHtml ? (
-                          <iframe title="Pré-visualização do TAP" srcDoc={normalizedSelectedProjectTapHtml} className="h-full w-full border-0 bg-white" />
+                          <iframe
+                            key={`${selectedProject.id}-${selectedProjectTap?.id || 'tap'}-${tapPreviewOpen ? 'open' : 'closed'}`}
+                            title="Pré-visualização do TAP"
+                            srcDoc={normalizedSelectedProjectTapHtml}
+                            className="h-full w-full border-0 bg-white"
+                          />
                         ) : (
                           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                             TAP ainda não disponível para visualização.

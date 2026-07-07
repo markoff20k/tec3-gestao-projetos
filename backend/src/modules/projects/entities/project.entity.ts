@@ -21,6 +21,12 @@ export enum ProjectStatus {
   CANCELLED = 'cancelled',
 }
 
+export enum ProjectSetupStatus {
+  PENDING = 'pending',
+  IN_PROGRESS = 'in_progress',
+  COMPLETED = 'completed',
+}
+
 @Entity('projects')
 export class Project {
   @PrimaryGeneratedColumn('uuid')
@@ -73,6 +79,19 @@ export class Project {
 
   @Column({ type: 'int', default: 8 })
   dailyLimitHours: number;
+
+  @Column({
+    type: 'enum',
+    enum: ProjectSetupStatus,
+    default: ProjectSetupStatus.PENDING,
+  })
+  setupStatus: ProjectSetupStatus;
+
+  @Column({ type: 'timestamp', nullable: true })
+  setupCompletedAt: Date;
+
+  @Column('uuid', { nullable: true })
+  setupCompletedById: string;
 
   @OneToMany(() => TimeEntry, (entry) => entry.project)
   timeEntries: TimeEntry[];
