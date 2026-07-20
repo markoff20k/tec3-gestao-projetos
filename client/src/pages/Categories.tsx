@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Loader2, Search } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,6 +40,9 @@ type CategoryFormState = {
   isActive: boolean;
 };
 
+type SortColumn = 'name' | 'isActive';
+type SortDirection = 'asc' | 'desc';
+
 function CategoriesTableSkeleton({ showFullColumnsMobile }: { showFullColumnsMobile: boolean }) {
   return (
     <>
@@ -74,6 +77,10 @@ export default function Categories() {
   const [showFullColumnsMobile, setShowFullColumnsMobile] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<CategoryFormState>({ name: '', isActive: true });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(12);
+  const [sortColumn, setSortColumn] = useState<SortColumn>('name');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -127,6 +134,73 @@ export default function Categories() {
     });
   }, [categories, search, activeFilter]);
 
+  const sortedCategories = useMemo(() => {
+    const getSortValue = (category: ProposalCategory, column: SortColumn): string | number => {
+      switch (column) {
+        case 'name':
+          return category.name || '';
+        case 'isActive':
+          return category.isActive ? 1 : 0;
+        default:
+          return '';
+      }
+    };
+
+    const sorted = [...filtered].sort((a, b) => {
+      const aValue = getSortValue(a, sortColumn);
+      const bValue = getSortValue(b, sortColumn);
+
+      let comparison = 0;
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        comparison = aValue - bValue;
+      } else {
+        comparison = String(aValue).localeCompare(String(bValue), 'pt-BR', { sensitivity: 'base' });
+      }
+
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    return sorted;
+  }, [filtered, sortColumn, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedCategories.length / itemsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedCategories = sortedCategories.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    if (currentPage !== safeCurrentPage) {
+      setCurrentPage(safeCurrentPage);
+    }
+  }, [currentPage, safeCurrentPage]);
+
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+    setCurrentPage(1);
+  };
+
+  const renderSortIcon = (column: SortColumn) => {
+    if (sortColumn !== column) return null;
+    return sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />;
+  };
+
+  const handlePageChange = (page: number) => {
+    if (page < 1 || page > totalPages) return;
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleItemsPerPageChange = (value: string) => {
+    setItemsPerPage(Number(value));
+    setCurrentPage(1);
+  };
+
   const downloadTemplate = async () => {
     const content = ['categoria;ativo', 'Administrativo;Sim'].join('\n');
     await saveCsvFile('template_categorias.csv', content);
@@ -177,7 +251,7 @@ export default function Categories() {
           <div>
             <h1 className="text-2xl font-semibold">Categorias</h1>
             <p className="text-sm text-muted-foreground">
-              {isLoading ? 'Carregando categorias...' : `${filtered.length} categorias encontradas`}
+              {isLoading ? 'Carregando categorias...' : `${sortedCategories.length} categorias encontradas`}
             </p>
           </div>
 
@@ -260,22 +334,32 @@ export default function Categories() {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="text-xs font-medium">Categoria</TableHead>
-                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[140px] text-center text-xs font-medium`}>Ativo?</TableHead>
+                  <TableHead className="text-xs font-medium">
+                    <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('name')}>
+                      Categoria
+                      {renderSortIcon('name')}
+                    </Button>
+                  </TableHead>
+                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[140px] text-center text-xs font-medium`}>
+                    <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('isActive')}>
+                      Ativo?
+                      {renderSortIcon('isActive')}
+                    </Button>
+                  </TableHead>
                   <TableHead className="w-[120px] text-right text-xs font-medium">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <CategoriesTableSkeleton showFullColumnsMobile={showFullColumnsMobile} />
-                ) : filtered.length === 0 ? (
+                ) : sortedCategories.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={showFullColumnsMobile ? 3 : 2} className="text-muted-foreground">
                       Nenhuma categoria encontrada
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filtered.map((cat) => (
+                  paginatedCategories.map((cat) => (
                     <TableRow key={cat.id} data-testid={`row-category-${cat.id}`}>
                       <TableCell className="font-medium">{cat.name}</TableCell>
                       <TableCell className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} text-center`}>
@@ -310,6 +394,75 @@ export default function Categories() {
             <div className="flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
               Carregando categorias
+            </div>
+          </div>
+        )}
+
+        {sortedCategories.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Exibir</span>
+              <Select value={String(itemsPerPage)} onValueChange={handleItemsPerPageChange}>
+                <SelectTrigger className="w-20" data-testid="select-categories-items-per-page">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="6">6</SelectItem>
+                  <SelectItem value="12">12</SelectItem>
+                  <SelectItem value="24">24</SelectItem>
+                  <SelectItem value="48">48</SelectItem>
+                  <SelectItem value="96">96</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground">por página</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(safeCurrentPage - 1)}
+                disabled={safeCurrentPage === 1}
+                data-testid="button-categories-prev-page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Anterior
+              </Button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (safeCurrentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (safeCurrentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = safeCurrentPage - 2 + i;
+                  }
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={safeCurrentPage === pageNum ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                      data-testid={`button-categories-page-${pageNum}`}
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(safeCurrentPage + 1)}
+                disabled={safeCurrentPage === totalPages}
+                data-testid="button-categories-next-page"
+              >
+                Próximo
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         )}

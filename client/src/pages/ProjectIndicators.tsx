@@ -97,13 +97,13 @@ const statusLabelMap: Record<string, string> = {
   cancelled: 'Cancelado',
 };
 
-const baseChartOptions: ChartOptions<'bar' | 'line' | 'doughnut'> = {
+const baseChartOptions: any = {
   responsive: true,
   maintainAspectRatio: false,
   animation: {
     duration: 1200,
     easing: 'easeOutQuart',
-    delay(context) {
+    delay(context: any) {
       if (context.type === 'data') {
         return context.dataIndex * 80;
       }
@@ -158,11 +158,11 @@ const baseChartOptions: ChartOptions<'bar' | 'line' | 'doughnut'> = {
   scales: {
     x: {
       ticks: { color: '#666', font: { size: 12 } },
-      grid: { color: 'rgba(204, 204, 204, 0.30)', borderDash: [3, 3] },
+      grid: { color: 'rgba(204, 204, 204, 0.30)', borderDash: [3, 3] } as any,
     },
     y: {
       ticks: { color: '#666', font: { size: 10 } },
-      grid: { color: 'rgba(204, 204, 204, 0.30)', borderDash: [3, 3] },
+      grid: { color: 'rgba(204, 204, 204, 0.30)', borderDash: [3, 3] } as any,
       beginAtZero: true,
     },
   },
@@ -1224,7 +1224,7 @@ export default function ProjectIndicators() {
                               },
                               animation: {
                                 ...baseChartOptions.animation,
-                                delay(context) {
+                                delay(context: any) {
                                   if (context.type === 'data') return context.dataIndex * 70;
                                   return 0;
                                 },
@@ -1266,7 +1266,6 @@ export default function ProjectIndicators() {
                               ...baseChartOptions,
                               elements: {
                                 ...baseChartOptions.elements,
-                                line: { borderWidth: 2 },
                                 point: {
                                   radius: isWideScreen ? 2.2 : 1.4,
                                   hoverRadius: isWideScreen ? 5.2 : 3.5,
@@ -1289,7 +1288,7 @@ export default function ProjectIndicators() {
                               },
                               animation: {
                                 ...baseChartOptions.animation,
-                                delay(context) {
+                                delay(context: any) {
                                   if (context.type === 'data') return context.dataIndex * 55;
                                   return 0;
                                 },
@@ -1356,7 +1355,7 @@ export default function ProjectIndicators() {
                               },
                               animation: {
                                 ...baseChartOptions.animation,
-                                delay(context) {
+                                delay(context: any) {
                                   if (context.type === 'data') return context.dataIndex * 75;
                                   return 0;
                                 },
@@ -1442,7 +1441,7 @@ export default function ProjectIndicators() {
                               },
                               animation: {
                                 ...baseChartOptions.animation,
-                                delay(context) {
+                                delay(context: any) {
                                   if (context.type === 'data') return context.dataIndex * 70;
                                   return 0;
                                 },

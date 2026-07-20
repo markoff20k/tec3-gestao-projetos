@@ -1,7 +1,6 @@
 import 'dotenv/config';
-import fs from 'node:fs';
-import path from 'node:path';
 import { prisma } from '../server/db.ts';
+import { assertNoLocalDumpArgs, loadLegacySqlFromTables } from './legacy-source.ts';
 
 type ParsedValue = string | null;
 
@@ -262,17 +261,9 @@ async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
   const replaceAll = args.includes('--replace-all');
-  const fileArg = args.find((arg) => !arg.startsWith('--'));
+  assertNoLocalDumpArgs(args, 'import-legacy-projects-sql');
 
-  const resolvedPath = fileArg
-    ? path.resolve(fileArg)
-    : path.resolve('C:/Users/jefer/Downloads/bdtec3.sql');
-
-  if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`Arquivo não encontrado: ${resolvedPath}`);
-  }
-
-  const sqlContent = fs.readFileSync(resolvedPath, 'utf-8');
+  const sqlContent = await loadLegacySqlFromTables(['Projeto']);
   const legacyProjectsRaw = extractLegacyProjects(sqlContent);
   if (legacyProjectsRaw.length === 0) {
     throw new Error('Nenhum projeto legado encontrado no arquivo informado.');

@@ -524,6 +524,8 @@ type ProposalTapDraft = {
   reimbursableExpensesForecastDetails: string;
   subcontractForecast: 'sim' | 'nao';
   subcontractForecastDetails: string;
+  projectAnalystId?: string | null;
+  projectAnalystName?: string | null;
   notes: string;
   startDate?: string | null;
   endDate?: string | null;
@@ -637,6 +639,8 @@ function normalizeProposalTapDraft(proposal: any, input?: unknown): ProposalTapD
     reimbursableExpensesForecastDetails: String(existing.reimbursableExpensesForecastDetails ?? '').trim(),
     subcontractForecast: normalizeTapYesNo(existing.subcontractForecast),
     subcontractForecastDetails: String(existing.subcontractForecastDetails ?? '').trim(),
+    projectAnalystId: existing.projectAnalystId ? String(existing.projectAnalystId).trim() : null,
+    projectAnalystName: existing.projectAnalystName ? String(existing.projectAnalystName).trim() : null,
     notes: String(existing.notes ?? '').trim(),
     startDate: resolveTapStartDateFromProposal(proposal, existing),
     endDate: String(existing.endDate ?? proposal?.expectedEndDate ?? '').trim() || null,
@@ -650,12 +654,16 @@ function validateProposalTapDraft(draft: ProposalTapDraft) {
   if (!draft.projectName.trim()) {
     throw new Error('Informe o nome do projeto no TAP');
   }
+  if (!draft.projectAnalystId) {
+    throw new Error('Selecione o analista de projeto no TAP');
+  }
 }
 
 function resolveProposalTapErrorStatus(error: unknown): number {
   const message = error instanceof Error ? error.message : String(error || '');
   if (
     message === 'Informe o nome do projeto no TAP' ||
+    message === 'Selecione o analista de projeto no TAP' ||
     message === 'Proposta ja convertida em projeto' ||
     message === 'Apenas propostas com sucesso podem ser convertidas'
   ) {
@@ -903,12 +911,12 @@ function renderProjectTapHtml(
   const projectCode = escapeProjectTapEmailHtml(payload.project.code || '-');
   const proposalOrigin = escapeProjectTapEmailHtml(payload.proposal.proposalOrigin || payload.proposal.code || '-');
   const clientName = escapeProjectTapEmailHtml(payload.client?.razaoSocial || payload.client?.nomeFantasia || '-');
-  const analystName = escapeProjectTapEmailHtml(payload.proposal.sentByName || '-');
+  const analystName = escapeProjectTapEmailHtml(payload.tap?.projectAnalystName || payload.proposal.sentByName || '-');
   const coordinatorName = escapeProjectTapEmailHtml(payload.proposal.coordinatorName || '-');
   const projectTitle = escapeProjectTapEmailHtml(payload.project.name || payload.proposal.title || '-');
   const contractType = escapeProjectTapEmailHtml(formatProposalTypeForTap(payload.proposal.type));
   const reimbursableByClient = escapeProjectTapEmailHtml(formatTapYesNoLabel(payload.tap?.reimbursableByClient));
-  const contractGc = escapeProjectTapEmailHtml(payload.proposal.contractCode || payload.proposal.workOrders || '-');
+  const contractGc = escapeProjectTapEmailHtml(payload.proposal.umbrellaRef || payload.proposal.contractCode || payload.proposal.workOrders || '-');
   const executionTerm = payload.proposal.termMonths != null ? escapeProjectTapEmailHtml(String(payload.proposal.termMonths)) : '-';
   const startDate = escapeProjectTapEmailHtml(
     formatProjectTapEmailDate(payload.tap?.startDate || payload.proposal.successDate || payload.proposal.expectedStartDate)
@@ -1135,12 +1143,12 @@ async function sendProjectTapEmail(params: {
     `Centro de Custo: ${params.payload.project.code}`,
     `Proposta Origem: ${params.payload.proposal.proposalOrigin || params.payload.proposal.code}`,
     `Cliente: ${params.payload.client?.razaoSocial || params.payload.client?.nomeFantasia || '-'}`,
-    `Analista de Projeto: ${params.payload.proposal.sentByName || '-'}`,
+    `Analista de Projeto: ${params.payload.tap?.projectAnalystName || params.payload.proposal.sentByName || '-'}`,
     `Descrição (título): ${params.payload.project.name || params.payload.proposal.title || '-'}`,
     `Coordenador: ${params.payload.proposal.coordinatorName || '-'}`,
     `Tipo de Contrato: ${formatProposalTypeForTap(params.payload.proposal.type)}`,
     `Despesa Reembolsável pelo Cliente?: ${formatTapYesNoLabel(params.payload.tap?.reimbursableByClient)}`,
-    `Projeto Contrato GC: ${params.payload.proposal.contractCode || params.payload.proposal.workOrders || '-'}`,
+    `Projeto Contrato GC: ${params.payload.proposal.umbrellaRef || params.payload.proposal.contractCode || params.payload.proposal.workOrders || '-'}`,
     `Prazo execução: ${params.payload.proposal.termMonths ?? '-'}`,
     `Data início: ${formatProjectTapEmailDate(params.payload.tap?.startDate || params.payload.proposal.successDate || params.payload.proposal.expectedStartDate)}`,
     `Mobilização de pessoas/veículos?: ${formatTapYesNoLabel(params.payload.tap?.mobilityForecast)} (${params.payload.tap?.mobilityForecastDetails || '-'})`,
@@ -2785,6 +2793,16 @@ export async function registerRoutes(
     }
   });
 
+  app.get('/api/projects/next-code', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+    try {
+      const code = await storage.previewNextProjectCode();
+      res.json({ code });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao gerar previa do centro de custo';
+      res.status(500).json({ message });
+    }
+  });
+
   app.get('/api/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
@@ -3009,6 +3027,10 @@ export async function registerRoutes(
     const updates: Record<string, unknown> = {};
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'coordinatorId')) {
+      if (existingProject.tapStatus && existingProject.tapStatus !== PROJECT_TAP_STATUS.NOT_GENERATED) {
+        return res.status(403).json({ message: 'O coordenador já foi definido na geração do TAP e não pode ser alterado' });
+      }
+
       const coordinatorId = typeof req.body.coordinatorId === 'string' ? req.body.coordinatorId.trim() : '';
       if (coordinatorId) {
         const coordinator = await storage.getUser(coordinatorId);
@@ -4449,6 +4471,26 @@ export async function registerRoutes(
     const userId = (req as any).user.sub;
     const { proposalId } = req.params;
     await storage.removeFavoriteProposal(userId, proposalId);
+    res.status(204).send();
+  });
+
+  app.get('/api/project-favorites', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const userId = (req as any).user.sub;
+    const favoriteIds = await storage.getUserFavoriteProjects(userId);
+    res.json(favoriteIds);
+  });
+
+  app.post('/api/project-favorites/:projectId', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const userId = (req as any).user.sub;
+    const { projectId } = req.params;
+    await storage.addFavoriteProject(userId, projectId);
+    res.status(201).json({ success: true });
+  });
+
+  app.delete('/api/project-favorites/:projectId', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const userId = (req as any).user.sub;
+    const { projectId } = req.params;
+    await storage.removeFavoriteProject(userId, projectId);
     res.status(204).send();
   });
 

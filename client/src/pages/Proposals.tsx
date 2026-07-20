@@ -503,6 +503,8 @@ function createEmptyTapDraft(): ProposalTapDraft {
     reimbursableExpensesForecastDetails: '',
     subcontractForecast: 'nao',
     subcontractForecastDetails: '',
+    projectAnalystId: null,
+    projectAnalystName: null,
     notes: '',
     startDate: null,
     endDate: null,
@@ -533,6 +535,8 @@ function createTapDraftFromProposal(proposal: Proposal | null): ProposalTapDraft
     reimbursableExpensesForecastDetails: existing?.reimbursableExpensesForecastDetails || '',
     subcontractForecast: existing?.subcontractForecast || 'nao',
     subcontractForecastDetails: existing?.subcontractForecastDetails || '',
+    projectAnalystId: existing?.projectAnalystId || null,
+    projectAnalystName: existing?.projectAnalystName || null,
     notes: existing?.notes || '',
     startDate: existing?.startDate || extractDateOnly(proposal.updatedAt || proposal.expectedStartDate),
     endDate: existing?.endDate || extractDateOnly(proposal.expectedEndDate),
@@ -2025,6 +2029,15 @@ export default function Proposals() {
     setTapForm((current) => ({ ...current, [field]: value }));
   };
 
+  const handleTapAnalystChange = (userId: string) => {
+    const selectedUser = users.find((u) => u.id === userId);
+    setTapForm((current) => ({
+      ...current,
+      projectAnalystId: userId || null,
+      projectAnalystName: selectedUser?.name || null,
+    }));
+  };
+
   const uploadTapAttachmentFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
 
@@ -2081,6 +2094,18 @@ export default function Proposals() {
 
   const tapReadOnly = useMemo(() => isProposalTapReadOnly(tapProposal), [tapProposal]);
   const tapCanResendEmail = Boolean(tapProposal?.projectId);
+  const tapProposalProjectId = tapProposal?.projectId || null;
+  const { data: tapProposalProject } = useQuery<Project>({
+    queryKey: ['/api/projects', tapProposalProjectId, 'tap-cost-center'],
+    queryFn: () => projectsApi.getOne(tapProposalProjectId as string),
+    enabled: tapDialogOpen && !!tapProposalProjectId,
+  });
+  const { data: tapNextProjectCode } = useQuery<{ code: string }>({
+    queryKey: ['/api/projects/next-code'],
+    queryFn: () => projectsApi.getNextCode(),
+    enabled: tapDialogOpen && !tapProposalProjectId,
+  });
+  const tapCostCenterCode = tapProposalProject?.code || tapNextProjectCode?.code || '-';
   const selectedProposalTapButtonState = useMemo(() => getProposalTapButtonState(selectedProposal), [selectedProposal]);
   const selectedProposalProjectId = selectedProposal?.projectId || null;
   const { data: selectedProposalProject, isLoading: isLoadingSelectedProposalProject } = useQuery<Project>({
@@ -2093,8 +2118,9 @@ export default function Proposals() {
     if (generateTapMutation.isPending) return 'Gerando TAP...';
     if (isUploadingTapAttachment) return 'Aguarde o término do upload dos anexos.';
     if (!tapForm.projectName.trim()) return 'Informe o nome do projeto.';
+    if (!tapForm.projectAnalystId) return 'Selecione o analista de projeto.';
     return null;
-  }, [generateTapMutation.isPending, isUploadingTapAttachment, tapForm.projectName, tapReadOnly]);
+  }, [generateTapMutation.isPending, isUploadingTapAttachment, tapForm.projectName, tapForm.projectAnalystId, tapReadOnly]);
 
   const handleEditProposal = (proposal: Proposal, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -4189,7 +4215,7 @@ export default function Proposals() {
                             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 [&>div>label]:flex [&>div>label]:min-h-9 [&>div>label]:items-end">
                               <div className="space-y-2">
                                 <Label>Centro de custo</Label>
-                                <Input value={tapProposal.code || '-'} disabled />
+                                <Input value={tapCostCenterCode} disabled />
                               </div>
                               <div className="space-y-2">
                                 <Label>Proposta origem</Label>
@@ -4200,17 +4226,43 @@ export default function Proposals() {
                                 <Input value={tapProposal.client?.razaoSocial || tapProposal.client?.nomeFantasia || '-'} disabled />
                               </div>
                               <div className="space-y-2">
-                                <Label>Analista de projeto</Label>
-                                <Input value={tapProposal.sentByName || '-'} disabled />
+                                <Label>Analista de projeto *</Label>
+                                <Select
+                                  value={tapForm.projectAnalystId || '__none__'}
+                                  onValueChange={(value) => handleTapAnalystChange(value === '__none__' ? '' : value)}
+                                  disabled={tapReadOnly}
+                                >
+                                  <SelectTrigger
+                                    data-testid="select-tap-project-analyst"
+                                    className={!tapForm.projectAnalystId ? 'border-destructive' : ''}
+                                  >
+                                    <SelectValue placeholder="Selecione um analista" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Selecione um analista</SelectItem>
+                                    {users.filter((user) => user.isActive).map((user) => (
+                                      <SelectItem key={user.id} value={user.id}>
+                                        {user.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                {!tapForm.projectAnalystId && (
+                                  <p className="text-xs text-destructive">Campo obrigatório</p>
+                                )}
                               </div>
                               <div className="space-y-2 md:col-span-2">
-                                <Label>Nome do projeto</Label>
+                                <Label>Nome do projeto *</Label>
                                 <Input
                                   value={tapForm.projectName}
                                   onChange={(event) => handleTapFieldChange('projectName', event.target.value)}
                                   disabled={tapReadOnly}
+                                  className={!tapForm.projectName.trim() ? 'border-destructive' : ''}
                                   data-testid="input-tap-project-name"
                                 />
+                                {!tapForm.projectName.trim() && (
+                                  <p className="text-xs text-destructive">Campo obrigatório</p>
+                                )}
                               </div>
                               <div className="space-y-2">
                                 <Label>Coordenador</Label>
@@ -4238,7 +4290,7 @@ export default function Proposals() {
                               </div>
                               <div className="space-y-2">
                                 <Label>Projeto contrato GC</Label>
-                                <Input value={tapProposal.contractCode || tapProposal.workOrders || '-'} disabled />
+                                <Input value={tapProposal.umbrellaRef || tapProposal.contractCode || tapProposal.workOrders || '-'} disabled />
                               </div>
                               <div className="space-y-2">
                                 <Label>Prazo execução</Label>

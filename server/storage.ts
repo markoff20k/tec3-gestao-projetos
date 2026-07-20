@@ -1,5 +1,6 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
+import { randomUUID } from "crypto";
 import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification, ProjectTap, EmailOutbox, CostCenter } from "../generated/prisma/client.ts";
 import { Prisma } from "../generated/prisma/client.ts";
 
@@ -170,6 +171,7 @@ export interface IStorage {
   
   getAllProjects(): Promise<Project[]>;
   getProject(id: string): Promise<Project | null>;
+  previewNextProjectCode(): Promise<string>;
   createProject(project: InsertProject): Promise<Project>;
   updateProject(id: string, project: Partial<Project>): Promise<Project | null>;
   deleteProject(id: string): Promise<boolean>;
@@ -204,6 +206,9 @@ export interface IStorage {
   getUserFavoriteProposals(userId: string): Promise<string[]>;
   addFavoriteProposal(userId: string, proposalId: string): Promise<ProposalFavorite>;
   removeFavoriteProposal(userId: string, proposalId: string): Promise<boolean>;
+  getUserFavoriteProjects(userId: string): Promise<string[]>;
+  addFavoriteProject(userId: string, projectId: string): Promise<boolean>;
+  removeFavoriteProject(userId: string, projectId: string): Promise<boolean>;
 
   seedAdminUser(): Promise<void>;
   seedProposalCategories(): Promise<void>;
@@ -1336,6 +1341,10 @@ export class PrismaStorage implements IStorage {
     return prisma.project.findUnique({ where: { id } });
   }
 
+  async previewNextProjectCode(): Promise<string> {
+    return this.generateProjectCode();
+  }
+
   async createProject(insertProject: InsertProject): Promise<Project> {
     const code = await this.generateProjectCode();
     return prisma.project.create({
@@ -1385,7 +1394,7 @@ export class PrismaStorage implements IStorage {
       select: { version: true },
     });
 
-    return prisma.projectTap.create({
+    const tap = await prisma.projectTap.create({
       data: {
         projectId: input.projectId,
         version: (latestTap?.version ?? 0) + 1,
@@ -1395,6 +1404,21 @@ export class PrismaStorage implements IStorage {
         generatedById: input.generatedById ?? null,
       },
     });
+
+    const project = await prisma.project.findUnique({
+      where: { id: input.projectId },
+      select: { code: true, name: true },
+    });
+
+    if (project) {
+      await prisma.costCenter.upsert({
+        where: { code: project.code },
+        update: {},
+        create: { code: project.code, name: project.name, isActive: true },
+      });
+    }
+
+    return tap;
   }
 
   async queueEmailOutbox(input: QueueEmailOutboxInput): Promise<EmailOutbox> {
@@ -1650,6 +1674,38 @@ export class PrismaStorage implements IStorage {
         where: { userId_proposalId: { userId, proposalId } }
       });
       return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getUserFavoriteProjects(userId: string): Promise<string[]> {
+    const favorites = await prisma.$queryRaw<Array<{ projectId: string }>>`
+      SELECT project_id AS "projectId"
+      FROM project_favorites
+      WHERE user_id = ${userId}
+      ORDER BY created_at DESC
+    `;
+
+    return favorites.map((favorite) => favorite.projectId);
+  }
+
+  async addFavoriteProject(userId: string, projectId: string): Promise<boolean> {
+    await prisma.$executeRaw`
+      INSERT INTO project_favorites (id, user_id, project_id)
+      VALUES (${randomUUID()}, ${userId}, ${projectId})
+      ON CONFLICT (user_id, project_id) DO NOTHING
+    `;
+    return true;
+  }
+
+  async removeFavoriteProject(userId: string, projectId: string): Promise<boolean> {
+    try {
+      const deletedCount = await prisma.$executeRaw`
+        DELETE FROM project_favorites
+        WHERE user_id = ${userId} AND project_id = ${projectId}
+      `;
+      return Number(deletedCount) > 0;
     } catch {
       return false;
     }

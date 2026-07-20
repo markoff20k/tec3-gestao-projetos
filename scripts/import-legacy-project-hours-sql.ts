@@ -1,7 +1,6 @@
 import 'dotenv/config';
-import fs from 'node:fs';
-import path from 'node:path';
 import { prisma } from '../server/db.ts';
+import { assertNoLocalDumpArgs, loadLegacySqlFromTables } from './legacy-source.ts';
 
 type ParsedValue = string | null;
 
@@ -178,9 +177,23 @@ function mapTimeEntryRows(sqlContent: string): LegacyTimeEntryRow[] {
 
 function parseLegacyDate(value: string | null): Date | null {
   const text = normalizeText(value);
-  if (!text || text === '0000-00-00') return null;
-  const date = new Date(`${text}T00:00:00.000Z`);
-  return Number.isNaN(date.getTime()) ? null : date;
+  if (!text || text === '0000-00-00' || text === '0000-00-00 00:00:00') return null;
+
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  if (dateOnly.test(text)) {
+    const date = new Date(`${text}T00:00:00.000Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const dateTime = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/;
+  if (dateTime.test(text)) {
+    const normalized = text.includes(' ') ? text.replace(' ', 'T') : text;
+    const date = new Date(`${normalized}Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const fallback = new Date(text);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
 }
 
 function splitHoursForInsert(totalHours: number): number[] {
@@ -203,17 +216,9 @@ async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
   const replaceAll = args.includes('--replace-all');
-  const fileArg = args.find((arg) => !arg.startsWith('--'));
+  assertNoLocalDumpArgs(args, 'import-legacy-project-hours-sql');
 
-  const resolvedPath = fileArg
-    ? path.resolve(fileArg)
-    : path.resolve('C:/Users/jefer/Downloads/bdtec3.sql');
-
-  if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`Arquivo não encontrado: ${resolvedPath}`);
-  }
-
-  const sqlContent = fs.readFileSync(resolvedPath, 'utf-8');
+  const sqlContent = await loadLegacySqlFromTables(['HorasPrevistas', 'LancamentoHoras']);
   const expectedHoursRows = mapExpectedHoursRows(sqlContent);
   const timeEntryRows = mapTimeEntryRows(sqlContent);
 

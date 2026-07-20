@@ -6,7 +6,7 @@ Executar a carga do legado em ambiente de homologação com ordem controlada, po
 
 Este runbook parte de três premissas:
 
-1. O dump congelado do legado é o arquivo `bdtec3.sql`.
+1. A leitura do legado é direta no MySQL remoto `192.168.1.12`, banco `proaero_app`.
 2. O banco de homologação está vazio ou foi recriado do zero.
 3. A carga será executada na raiz do repositório, com `.env` apontando para o PostgreSQL de homologação.
 
@@ -28,10 +28,14 @@ Esse fluxo preserva o schema e mantém a tabela `_prisma_migrations` intacta.
 ## Pré-requisitos
 
 1. Ajuste o `.env` para o banco de homologação.
-2. Garanta que o dump congelado esteja disponível em um caminho sem ambiguidade. Exemplo:
+2. Configure as credenciais do legado no ambiente:
 
-```powershell
-Copy-Item "C:\Users\jefer\Downloads\bdtec3 (1).sql" ".\bdtec3.sql"
+```env
+LEGACY_DB_HOST=192.168.1.12
+LEGACY_DB_PORT=3306
+LEGACY_DB_NAME=proaero_app
+LEGACY_DB_USER=<usuario_mysql_legado>
+LEGACY_DB_PASSWORD=<senha_mysql_legado>
 ```
 
 3. Instale dependências e gere o client Prisma:
@@ -55,7 +59,7 @@ Quando a aplicação subir, interrompa o processo. Se estiver usando Docker em h
 ### 1. Carga de clientes
 
 ```powershell
-npm run import:legacy:clients:strict -- .\bdtec3.sql
+npm run import:legacy:clients:strict
 ```
 
 Conferência imediata:
@@ -71,18 +75,18 @@ Critério para seguir:
 
 ### 2. Carga base de propostas
 
-Essa etapa importa diretamente a tabela `Proposta` do dump legado para o PostgreSQL.
+Essa etapa importa diretamente a tabela `Proposta` do banco legado remoto para o PostgreSQL.
 
 Primeiro em leitura:
 
 ```powershell
-npm run import:legacy:proposals:strict -- --dry-run .\bdtec3.sql
+npm run import:legacy:proposals:strict -- --dry-run
 ```
 
 Depois aplicando:
 
 ```powershell
-npm run import:legacy:proposals:strict -- .\bdtec3.sql
+npm run import:legacy:proposals:strict
 ```
 
 Conferências imediatas:
@@ -100,13 +104,13 @@ WHERE client_id = '00000000-0000-0000-0000-000000000001';
 Critério para seguir:
 
 1. Todos os contadores `skipped*` no resumo do script devem ser zero.
-2. `total_propostas` deve ficar compatível com o dump legado importado.
+2. `total_propostas` deve ficar compatível com a origem legado remota.
 3. `propostas_cliente_fallback` deve continuar zero, porque o fluxo direto não depende mais de cliente fallback.
 
 ### 3. Pós-carga de propostas
 
 ```powershell
-npm run import:legacy:proposals:postload -- .\bdtec3.sql
+npm run import:legacy:proposals:postload
 ```
 
 Essa etapa executa, em ordem:
@@ -148,7 +152,7 @@ Critério para seguir:
 ### 4. Dry-run de projetos
 
 ```powershell
-npm run import:legacy:projects -- --dry-run .\bdtec3.sql
+npm run import:legacy:projects -- --dry-run
 ```
 
 Critério para seguir:
@@ -160,7 +164,7 @@ Critério para seguir:
 ### 5. Carga de projetos
 
 ```powershell
-npm run import:legacy:projects -- .\bdtec3.sql
+npm run import:legacy:projects
 ```
 
 Conferências imediatas:
@@ -211,7 +215,7 @@ Critério para seguir:
 ### 7. Dry-run de horas e orçamento
 
 ```powershell
-npm run import:legacy:project-hours -- --dry-run .\bdtec3.sql
+npm run import:legacy:project-hours -- --dry-run
 ```
 
 Critério para seguir:
@@ -224,7 +228,7 @@ Critério para seguir:
 ### 8. Carga de horas e orçamento
 
 ```powershell
-npm run import:legacy:project-hours -- .\bdtec3.sql
+npm run import:legacy:project-hours
 ```
 
 Conferências imediatas:
@@ -341,7 +345,7 @@ WHERE category_id IS NULL
 
 ## Resultado validado em homologação
 
-Execução validada em 2026-05-15 sobre o dump `C:\Users\jefer\Downloads\bdtec3 (1).sql`.
+Execução validada em homologação com leitura direta do legado remoto.
 
 Totais consolidados:
 
@@ -408,16 +412,16 @@ Se tudo estiver validado, a sequência operacional fica:
 npm install
 npm run prisma:generate
 npx prisma migrate deploy
-npm run import:legacy:clients -- .\bdtec3.sql
-npm run import:legacy:proposals -- --dry-run .\bdtec3.sql
-npm run import:legacy:proposals -- .\bdtec3.sql
-npm run import:legacy:proposals:postload -- .\bdtec3.sql
-npm run import:legacy:projects -- --dry-run .\bdtec3.sql
-npm run import:legacy:projects -- .\bdtec3.sql
+npm run import:legacy:clients
+npm run import:legacy:proposals -- --dry-run
+npm run import:legacy:proposals
+npm run import:legacy:proposals:postload
+npm run import:legacy:projects -- --dry-run
+npm run import:legacy:projects
 npm run link:project:coordinators -- --dry-run
 npm run link:project:coordinators
-npm run import:legacy:project-hours -- --dry-run .\bdtec3.sql
-npm run import:legacy:project-hours -- .\bdtec3.sql
+npm run import:legacy:project-hours -- --dry-run
+npm run import:legacy:project-hours
 npm run link:time-entries:users -- --dry-run --no-create-users
 npm run link:time-entries:users -- --mapping-file=scripts/legacy-time-entry-user-mapping.template.csv --no-create-users
 npm run backfill:proposal:project-links

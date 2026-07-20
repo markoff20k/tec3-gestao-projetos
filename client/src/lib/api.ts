@@ -207,6 +207,8 @@ export const api = {
     request<T>(endpoint, { method: 'POST', body: JSON.stringify(data) }),
   put: <T>(endpoint: string, data?: unknown) =>
     request<T>(endpoint, { method: 'PUT', body: JSON.stringify(data) }),
+  patch: <T>(endpoint: string, data?: unknown) =>
+    request<T>(endpoint, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: <T>(endpoint: string) => request<T>(endpoint, { method: 'DELETE' }),
 };
 
@@ -486,6 +488,8 @@ export interface ProposalTapDraft {
   reimbursableExpensesForecastDetails?: string;
   subcontractForecast?: 'sim' | 'nao';
   subcontractForecastDetails?: string;
+  projectAnalystId?: string | null;
+  projectAnalystName?: string | null;
   notes: string;
   startDate?: string | null;
   endDate?: string | null;
@@ -828,6 +832,7 @@ export const proposalsApi = {
 export const projectsApi = {
   getAll: () => api.get<Project[]>('/projects'),
   getOne: (id: string) => api.get<Project>(`/projects/${id}`),
+  getNextCode: () => api.get<{ code: string }>('/projects/next-code'),
   create: (data: Partial<Project>) => api.post<Project>('/projects', data),
   update: (id: string, data: Partial<Project>) => api.put<Project>(`/projects/${id}`, data),
   delete: (id: string) => api.delete(`/projects/${id}`),
@@ -868,6 +873,12 @@ export const favoritesApi = {
   getAll: () => api.get<string[]>('/proposal-favorites'),
   add: (proposalId: string) => api.post<{ success: boolean }>(`/proposal-favorites/${proposalId}`),
   remove: (proposalId: string) => api.delete(`/proposal-favorites/${proposalId}`),
+};
+
+export const projectFavoritesApi = {
+  getAll: () => api.get<string[]>('/project-favorites'),
+  add: (projectId: string) => api.post<{ success: boolean }>(`/project-favorites/${projectId}`),
+  remove: (projectId: string) => api.delete(`/project-favorites/${projectId}`),
 };
 
 export const proposalCategoriesApi = {

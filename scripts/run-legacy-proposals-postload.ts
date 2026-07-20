@@ -2,6 +2,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
+import { assertNoLocalDumpArgs } from './legacy-source.ts';
 
 interface Step {
   label: string;
@@ -39,11 +40,7 @@ function runStep(step: Step): void {
 
 async function main() {
   const args = process.argv.slice(2);
-  const fileArg = args.find((arg) => !arg.startsWith('--'));
-
-  const resolvedPath = fileArg
-    ? path.resolve(fileArg)
-    : path.resolve('C:/Users/jefer/Downloads/bdtec3.sql');
+  assertNoLocalDumpArgs(args, 'run-legacy-proposals-postload');
 
   const steps: Step[] = [
     {
@@ -57,27 +54,25 @@ async function main() {
     {
       label: 'Vincular campos legados principais (expectation/mainType/umbrellaRef)',
       scriptPath: 'scripts/link-legacy-proposal-fields.ts',
-      args: [resolvedPath],
     },
     {
       label: 'Vincular campos legados restantes (dueDate/termMonths/etc.)',
       scriptPath: 'scripts/link-legacy-proposal-remaining-fields.ts',
-      args: [resolvedPath],
     },
     {
       label: 'Importar aditivos/despesas legados',
       scriptPath: 'scripts/import-legacy-proposal-extras-sql.ts',
-      args: [resolvedPath, '--replace-all'],
+      args: ['--replace-all'],
     },
     {
       label: 'Importar valores por categoria legados',
       scriptPath: 'scripts/import-legacy-proposal-category-values-sql.ts',
-      args: [resolvedPath, '--replace-all'],
+      args: ['--replace-all'],
     },
   ];
 
   console.log('Iniciando fluxo pós-carga legado de propostas...');
-  console.log(`Arquivo legado: ${resolvedPath}`);
+  console.log('Origem: banco legado remoto (LEGACY_DB_*).');
 
   for (const step of steps) {
     runStep(step);

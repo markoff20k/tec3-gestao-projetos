@@ -1,8 +1,7 @@
 import 'dotenv/config';
-import fs from 'node:fs';
-import path from 'node:path';
 import { prisma } from '../server/db.ts';
 import { storage } from '../server/storage.ts';
+import { assertNoLocalDumpArgs, loadLegacySqlFromTables } from './legacy-source.ts';
 
 type ParsedValue = string | null;
 
@@ -294,19 +293,11 @@ async function ensureProposalCategories(categoryNameByLegacyId: Map<number, stri
 
 async function main() {
   const args = process.argv.slice(2);
-  const fileArg = args.find((arg) => !arg.startsWith('--'));
   const dryRun = args.includes('--dry-run');
   const replaceAll = args.includes('--replace-all');
+  assertNoLocalDumpArgs(args, 'import-legacy-proposal-category-values-sql');
 
-  const resolvedPath = fileArg
-    ? path.resolve(fileArg)
-    : path.resolve('C:/Users/jefer/Downloads/bdtec3.sql');
-
-  if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`Arquivo não encontrado: ${resolvedPath}`);
-  }
-
-  const sqlContent = fs.readFileSync(resolvedPath, 'utf-8');
+  const sqlContent = await loadLegacySqlFromTables(['Categoria', 'ValorCategoriaProposta']);
   const legacyCategories = extractCategories(sqlContent);
   const legacyValues = extractCategoryValues(sqlContent);
 

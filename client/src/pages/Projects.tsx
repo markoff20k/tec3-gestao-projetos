@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info } from 'lucide-react';
+import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info, Star, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -56,7 +56,7 @@ import {
 } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { projectsApi, clientsApi, usersApi, Project, Client, ProjectTap, ProjectMember, UserOption } from '@/lib/api';
+import { projectsApi, clientsApi, usersApi, projectFavoritesApi, Project, Client, ProjectTap, ProjectMember, UserOption } from '@/lib/api';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 import { DangerZoneConfirm } from '@/components/DangerZoneConfirm';
 
@@ -124,7 +124,9 @@ function normalizeFilterValue(value: unknown): string {
 }
 
 type ViewMode = 'cards' | 'table';
-type SortOrder = 'recent' | 'oldest' | 'name_asc' | 'value_desc';
+type SortColumn = 'name' | 'code' | 'client' | 'status' | 'hours' | 'value' | 'createdAt';
+type SortDirection = 'asc' | 'desc';
+type SortPreset = 'recent' | 'oldest' | 'name_asc' | 'value_desc' | 'custom';
 
 export default function Projects() {
   const queryClient = useQueryClient();
@@ -133,7 +135,9 @@ export default function Projects() {
   const [location, setLocation] = useLocation();
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('recent');
+  const [sortColumn, setSortColumn] = useState<SortColumn>('createdAt');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [sortPreset, setSortPreset] = useState<SortPreset>('recent');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -148,6 +152,7 @@ export default function Projects() {
   const [valueMax, setValueMax] = useState('');
   const [hoursMin, setHoursMin] = useState('');
   const [hoursMax, setHoursMax] = useState('');
+  const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
@@ -187,6 +192,7 @@ export default function Projects() {
     const nextOnboardingOrigin = normalizeFilterValue(params.get('onboardingOrigin') ?? 'all');
     const nextProjectId = (params.get('projectId') ?? '').trim();
     const nextAction = normalizeFilterValue(params.get('action') ?? '');
+    const nextFavoritesOnly = params.get('favorites') === '1';
 
     setSearch(params.get('search') ?? '');
     setStatusFilters(nextStatusFilters);
@@ -199,8 +205,9 @@ export default function Projects() {
     setSelectedProjectId(nextProjectId || null);
     setDetailsOpen(Boolean(nextProjectId));
     setDetailsInitialSection(nextAction === 'allocateteam' ? 'team' : 'overview');
+    setShowOnlyFavorites(nextFavoritesOnly);
 
-    if (nextStatusFilters.length > 0 || nextClientFilter || nextOnboardingOrigin === 'legacy' || nextOnboardingOrigin === 'native') {
+    if (nextStatusFilters.length > 0 || nextClientFilter || nextOnboardingOrigin === 'legacy' || nextOnboardingOrigin === 'native' || nextFavoritesOnly) {
       setFiltersOpen(true);
     }
 
@@ -217,7 +224,7 @@ export default function Projects() {
     const nextSearch = search.trim();
     const nextClient = clientFilter.trim();
 
-    ['search', 'statuses', 'status', 'clientId', 'client', 'onboardingOrigin'].forEach((key) => {
+    ['search', 'statuses', 'status', 'clientId', 'client', 'onboardingOrigin', 'favorites'].forEach((key) => {
       params.delete(key);
     });
 
@@ -225,6 +232,7 @@ export default function Projects() {
     if (normalizedStatuses.length) params.set('statuses', normalizedStatuses.join(','));
     if (nextClient) params.set('clientId', nextClient);
     if (onboardingOriginFilter !== 'all') params.set('onboardingOrigin', onboardingOriginFilter);
+    if (showOnlyFavorites) params.set('favorites', '1');
 
     const nextQuery = params.toString();
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
@@ -233,7 +241,7 @@ export default function Projects() {
     if (nextUrl !== currentUrl) {
       window.history.replaceState(window.history.state, '', nextUrl);
     }
-  }, [search, statusFilters, clientFilter, onboardingOriginFilter]);
+  }, [search, statusFilters, clientFilter, onboardingOriginFilter, showOnlyFavorites]);
 
   useEffect(() => {
     const savedViewMode = localStorage.getItem('projectsViewMode') as ViewMode;
@@ -241,9 +249,18 @@ export default function Projects() {
       setViewMode(savedViewMode);
     }
 
-    const savedSortOrder = localStorage.getItem('projectsSortOrder') as SortOrder;
-    if (savedSortOrder && (savedSortOrder === 'recent' || savedSortOrder === 'oldest' || savedSortOrder === 'name_asc' || savedSortOrder === 'value_desc')) {
-      setSortOrder(savedSortOrder);
+    const savedSortColumn = localStorage.getItem('projectsSortColumn') as SortColumn;
+    const savedSortDirection = localStorage.getItem('projectsSortDirection') as SortDirection;
+    const savedSortOrder = localStorage.getItem('projectsSortOrder') as SortPreset;
+
+    if (savedSortColumn && ['name', 'code', 'client', 'status', 'hours', 'value', 'createdAt'].includes(savedSortColumn)) {
+      setSortColumn(savedSortColumn);
+    }
+    if (savedSortDirection && (savedSortDirection === 'asc' || savedSortDirection === 'desc')) {
+      setSortDirection(savedSortDirection);
+    }
+    if (savedSortOrder && (savedSortOrder === 'recent' || savedSortOrder === 'oldest' || savedSortOrder === 'name_asc' || savedSortOrder === 'value_desc' || savedSortOrder === 'custom')) {
+      setSortPreset(savedSortOrder);
     }
   }, []);
 
@@ -252,9 +269,58 @@ export default function Projects() {
     localStorage.setItem('projectsViewMode', mode);
   };
 
-  const handleSortOrderChange = (order: SortOrder) => {
-    setSortOrder(order);
-    localStorage.setItem('projectsSortOrder', order);
+  const persistSortState = (nextColumn: SortColumn, nextDirection: SortDirection) => {
+    setSortColumn(nextColumn);
+    setSortDirection(nextDirection);
+    localStorage.setItem('projectsSortColumn', nextColumn);
+    localStorage.setItem('projectsSortDirection', nextDirection);
+
+    if (nextColumn === 'createdAt' && nextDirection === 'desc') {
+      setSortPreset('recent');
+      localStorage.setItem('projectsSortOrder', 'recent');
+      return;
+    }
+
+    if (nextColumn === 'createdAt' && nextDirection === 'asc') {
+      setSortPreset('oldest');
+      localStorage.setItem('projectsSortOrder', 'oldest');
+      return;
+    }
+
+    if (nextColumn === 'name' && nextDirection === 'asc') {
+      setSortPreset('name_asc');
+      localStorage.setItem('projectsSortOrder', 'name_asc');
+      return;
+    }
+
+    if (nextColumn === 'value' && nextDirection === 'desc') {
+      setSortPreset('value_desc');
+      localStorage.setItem('projectsSortOrder', 'value_desc');
+      return;
+    }
+
+    setSortPreset('custom');
+    localStorage.setItem('projectsSortOrder', 'custom');
+  };
+
+  const handleSortPresetChange = (preset: SortPreset) => {
+    switch (preset) {
+      case 'recent':
+        persistSortState('createdAt', 'desc');
+        return;
+      case 'oldest':
+        persistSortState('createdAt', 'asc');
+        return;
+      case 'name_asc':
+        persistSortState('name', 'asc');
+        return;
+      case 'value_desc':
+        persistSortState('value', 'desc');
+        return;
+      default:
+        setSortPreset('custom');
+        localStorage.setItem('projectsSortOrder', 'custom');
+    }
   };
 
   const { data: projects = [], isLoading } = useQuery<Project[]>({
@@ -303,6 +369,26 @@ export default function Projects() {
   const { data: users = [] } = useQuery<UserOption[]>({
     queryKey: ['/api/users'],
     queryFn: () => usersApi.getAllOptions(),
+  });
+
+  const { data: favoriteProjectIds = [] } = useQuery<string[]>({
+    queryKey: ['/api/project-favorites'],
+    queryFn: () => projectFavoritesApi.getAll(),
+  });
+
+  const favoriteProjectsSet = useMemo(() => new Set(favoriteProjectIds), [favoriteProjectIds]);
+
+  const toggleFavoriteMutation = useMutation({
+    mutationFn: async ({ projectId, isFavorite }: { projectId: string; isFavorite: boolean }) => {
+      if (isFavorite) {
+        return projectFavoritesApi.remove(projectId);
+      }
+
+      return projectFavoritesApi.add(projectId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/project-favorites'] });
+    },
   });
 
   const { data: selectedProject, isLoading: isLoadingSelectedProject } = useQuery<Project>({
@@ -503,6 +589,35 @@ export default function Projects() {
   const hasProjectExecutionStarted = (project: Project) =>
     project.status !== 'planning' || Number(project.timeSummary?.entriesCount || 0) > 0;
 
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      persistSortState(column, sortDirection === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+
+    persistSortState(column, 'asc');
+  };
+
+  const getSortIcon = (column: SortColumn) => {
+    if (sortColumn !== column) {
+      return <ArrowUpDown className="ml-1 h-4 w-4 opacity-50" />;
+    }
+
+    return sortDirection === 'asc'
+      ? <ArrowUp className="ml-1 h-4 w-4" />
+      : <ArrowDown className="ml-1 h-4 w-4" />;
+  };
+
+  const handleToggleFavorite = (projectId: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    toggleFavoriteMutation.mutate({
+      projectId,
+      isFavorite: favoriteProjectsSet.has(projectId),
+    });
+  };
+
   const hasProjectTapReady = (project: Project) =>
     Boolean((project.tapStatus && project.tapStatus !== 'not_generated') || project.tapGeneratedAt);
 
@@ -561,6 +676,8 @@ export default function Projects() {
       selectedProjectTap?.htmlContent
     )
   );
+
+  const canEditSetupCoordinator = canEditSetupAfterCompletion && !isTapReadyEffective;
 
   const isLegacyOnboardingInferred = Boolean(
     selectedProject && selectedProject.setupStatus !== 'completed' && isProjectExecutionStarted
@@ -675,29 +792,60 @@ export default function Projects() {
         return true;
       })();
 
-      return searchMatch && statusMatch && clientMatch && onboardingOriginMatch && dateMatch && valueMatch && hoursMatch;
+      const favoriteMatch = !showOnlyFavorites || favoriteProjectsSet.has(p.id);
+
+      return searchMatch && statusMatch && clientMatch && onboardingOriginMatch && dateMatch && valueMatch && hoursMatch && favoriteMatch;
     });
 
     return filtered.sort((a, b) => {
-      if (sortOrder === 'value_desc') {
-        return Number(b.budgetValue || 0) - Number(a.budgetValue || 0);
+      let aValue: string | number = '';
+      let bValue: string | number = '';
+
+      switch (sortColumn) {
+        case 'name':
+          aValue = a.name || '';
+          bValue = b.name || '';
+          break;
+        case 'code':
+          aValue = a.code || '';
+          bValue = b.code || '';
+          break;
+        case 'client':
+          aValue = a.client?.razaoSocial || '';
+          bValue = b.client?.razaoSocial || '';
+          break;
+        case 'status':
+          aValue = a.status || '';
+          bValue = b.status || '';
+          break;
+        case 'hours':
+          aValue = Number(a.consumedHours || 0);
+          bValue = Number(b.consumedHours || 0);
+          break;
+        case 'value':
+          aValue = Number(a.budgetValue || 0);
+          bValue = Number(b.budgetValue || 0);
+          break;
+        case 'createdAt':
+        default:
+          aValue = Number.isNaN(new Date(a.createdAt).getTime()) ? 0 : new Date(a.createdAt).getTime();
+          bValue = Number.isNaN(new Date(b.createdAt).getTime()) ? 0 : new Date(b.createdAt).getTime();
       }
 
-      if (sortOrder === 'name_asc') {
-        return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return sortDirection === 'asc'
+          ? aValue.localeCompare(bValue, 'pt-BR', { sensitivity: 'base' })
+          : bValue.localeCompare(aValue, 'pt-BR', { sensitivity: 'base' });
       }
 
-      const dateA = Number.isNaN(new Date(a.createdAt).getTime()) ? 0 : new Date(a.createdAt).getTime();
-      const dateB = Number.isNaN(new Date(b.createdAt).getTime()) ? 0 : new Date(b.createdAt).getTime();
-
-      if (sortOrder === 'oldest') {
-        return dateA - dateB;
+      if (sortDirection === 'asc') {
+        return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
       }
 
-      return dateB - dateA;
+      return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
     });
 
-  }, [projects, search, statusFilters, clientFilter, onboardingOriginFilter, dateFrom, dateTo, valueMin, valueMax, hoursMin, hoursMax, sortOrder]);
+  }, [projects, search, statusFilters, clientFilter, onboardingOriginFilter, dateFrom, dateTo, valueMin, valueMax, hoursMin, hoursMax, sortColumn, sortDirection, showOnlyFavorites, favoriteProjectsSet]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProjects.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -960,7 +1108,7 @@ export default function Projects() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <Select value={sortOrder} onValueChange={(value) => handleSortOrderChange(value as SortOrder)}>
+                  <Select value={sortPreset} onValueChange={(value) => handleSortPresetChange(value as SortPreset)}>
                     <SelectTrigger className="w-44" data-testid="select-projects-sort-order">
                       <SelectValue placeholder="Ordenar por" />
                     </SelectTrigger>
@@ -969,6 +1117,7 @@ export default function Projects() {
                       <SelectItem value="oldest">Mais antigo</SelectItem>
                       <SelectItem value="name_asc">Nome (A-Z)</SelectItem>
                       <SelectItem value="value_desc">Maior valor</SelectItem>
+                      <SelectItem value="custom">Personalizada</SelectItem>
                     </SelectContent>
                   </Select>
 
@@ -1229,19 +1378,68 @@ export default function Projects() {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Nome</TableHead>
-                    <TableHead>Código</TableHead>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Horas</TableHead>
-                    <TableHead>Valor</TableHead>
+                  <TableRow className="bg-muted/50 hover:bg-muted/50">
+                    <TableHead className="w-10 px-2">
+                      <Button
+                        size="icon"
+                        variant={showOnlyFavorites ? 'default' : 'ghost'}
+                        className="h-7 w-7"
+                        onClick={() => setShowOnlyFavorites(!showOnlyFavorites)}
+                        data-testid="button-filter-favorites"
+                        title={showOnlyFavorites ? 'Mostrando apenas favoritos' : 'Mostrar apenas favoritos'}
+                      >
+                        <Star className={`h-4 w-4 ${showOnlyFavorites ? 'fill-current' : ''}`} />
+                      </Button>
+                    </TableHead>
+                    <TableHead>
+                      <Button type="button" variant="ghost" className="-ml-3 h-8 px-2 font-medium hover:bg-transparent" onClick={() => handleSort('name')}>
+                        Nome {getSortIcon('name')}
+                      </Button>
+                    </TableHead>
+                    <TableHead>
+                      <Button type="button" variant="ghost" className="-ml-3 h-8 px-2 font-medium hover:bg-transparent" onClick={() => handleSort('code')}>
+                        Código {getSortIcon('code')}
+                      </Button>
+                    </TableHead>
+                    <TableHead>
+                      <Button type="button" variant="ghost" className="-ml-3 h-8 px-2 font-medium hover:bg-transparent" onClick={() => handleSort('client')}>
+                        Cliente {getSortIcon('client')}
+                      </Button>
+                    </TableHead>
+                    <TableHead>
+                      <Button type="button" variant="ghost" className="-ml-3 h-8 px-2 font-medium hover:bg-transparent" onClick={() => handleSort('status')}>
+                        Status {getSortIcon('status')}
+                      </Button>
+                    </TableHead>
+                    <TableHead>
+                      <Button type="button" variant="ghost" className="-ml-3 h-8 px-2 font-medium hover:bg-transparent" onClick={() => handleSort('hours')}>
+                        Horas {getSortIcon('hours')}
+                      </Button>
+                    </TableHead>
+                    <TableHead>
+                      <Button type="button" variant="ghost" className="-ml-3 h-8 px-2 font-medium hover:bg-transparent" onClick={() => handleSort('value')}>
+                        Valor {getSortIcon('value')}
+                      </Button>
+                    </TableHead>
                     <TableHead className="text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {paginatedProjects.map((project) => (
                     <TableRow key={project.id} data-testid={`row-project-${project.id}`}>
+                      <TableCell className="px-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={(event) => handleToggleFavorite(project.id, event)}
+                          data-testid={`button-favorite-project-table-${project.id}`}
+                          title={favoriteProjectsSet.has(project.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+                        >
+                          <Star className={`h-4 w-4 transition-colors ${favoriteProjectsSet.has(project.id) ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground hover:text-yellow-400'}`} />
+                        </Button>
+                      </TableCell>
                       <TableCell className="font-medium">{project.name}</TableCell>
                       <TableCell>{project.code}</TableCell>
                       <TableCell>{project.client?.razaoSocial || '-'}</TableCell>
@@ -1326,9 +1524,22 @@ export default function Projects() {
                     </div>
                     <p className="text-sm text-muted-foreground">{project.client?.razaoSocial}</p>
                   </div>
-                  <Badge className={`text-xs text-white ${statusColors[project.status]}`}>
-                    {statusLabels[project.status] || project.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={(event) => handleToggleFavorite(project.id, event)}
+                      data-testid={`button-favorite-project-card-${project.id}`}
+                      title={favoriteProjectsSet.has(project.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+                    >
+                      <Star className={`h-4 w-4 transition-colors ${favoriteProjectsSet.has(project.id) ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground hover:text-yellow-400'}`} />
+                    </Button>
+                    <Badge className={`text-xs text-white ${statusColors[project.status]}`}>
+                      {statusLabels[project.status] || project.status}
+                    </Badge>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
@@ -1680,7 +1891,7 @@ export default function Projects() {
                             <Select
                               value={setupForm.coordinatorId || '__none__'}
                               onValueChange={(value) => setSetupForm((current) => ({ ...current, coordinatorId: value === '__none__' ? '' : value }))}
-                              disabled={!canEditSetupAfterCompletion}
+                              disabled={!canEditSetupCoordinator}
                             >
                               <SelectTrigger>
                                 <SelectValue placeholder="Selecione um coordenador" />
@@ -1694,6 +1905,11 @@ export default function Projects() {
                                 ))}
                               </SelectContent>
                             </Select>
+                            {isTapReadyEffective && (
+                              <p className="text-xs text-muted-foreground">
+                                Definido na geração do TAP e não pode ser alterado.
+                              </p>
+                            )}
                           </div>
 
                           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

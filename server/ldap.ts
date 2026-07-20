@@ -148,6 +148,33 @@ function getUserAttrMulti(entry: any, key: string): string[] {
   return [];
 }
 
+function parseIntegerAttribute(entry: any, key: string): number | null {
+  const value = entry?.[key];
+  const raw = Array.isArray(value) ? value[0] : value;
+
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return Math.trunc(raw);
+  }
+
+  if (typeof raw === 'string') {
+    const parsed = Number.parseInt(raw.trim(), 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (raw && typeof raw === 'object' && typeof (raw as any).toString === 'function') {
+    const parsed = Number.parseInt((raw as any).toString().trim(), 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function isAdAccountDisabled(entry: any): boolean {
+  const userAccountControl = parseIntegerAttribute(entry, 'userAccountControl');
+  if (userAccountControl == null) return false;
+  return (userAccountControl & 2) === 2;
+}
+
 function parseAdWhenCreated(value: string | undefined): string | null {
   if (!value) return null;
   const raw = value.trim();
@@ -300,6 +327,9 @@ async function tryAuthenticateProvider(params: {
         if (dataCode === '525') {
           return { status: 'not_found', provider };
         }
+        if (dataCode === '533') {
+          return { status: 'invalid_password', provider };
+        }
         return { status: 'invalid_password', provider };
       }
     }
@@ -320,6 +350,7 @@ async function tryAuthenticateProvider(params: {
         'userPrincipalName',
         'uid',
         'whenCreated',
+        'userAccountControl',
       ],
       sizeLimit: 5,
     });
@@ -353,6 +384,10 @@ async function tryAuthenticateProvider(params: {
       identifier;
     const memberSince =
       provider === 'ad' ? parseAdWhenCreated(getUserAttr(entry, 'whenCreated')) : null;
+
+    if (provider === 'ad' && isAdAccountDisabled(entry)) {
+      return { status: 'invalid_password', provider };
+    }
 
     // Verify password by binding as the user.
     if (!userBoundDirectly) {
@@ -504,7 +539,7 @@ async function listUsersFromProvider(params: {
 
     const defaultFilter =
       provider === 'ad'
-        ? '(&(objectCategory=person)(objectClass=user))'
+        ? '(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))'
         : '(objectClass=person)';
 
     const filter = userFilterTemplate?.includes('{{id}}')
@@ -524,6 +559,7 @@ async function listUsersFromProvider(params: {
         'memberOf',
         'sAMAccountName',
         'userPrincipalName',
+        'userAccountControl',
         'uid',
       ],
       sizeLimit: 10000,
@@ -533,6 +569,11 @@ async function listUsersFromProvider(params: {
 
     for (const entry of searchEntries ?? []) {
       const typedEntry: any = entry;
+
+      if (provider === 'ad' && isAdAccountDisabled(typedEntry)) {
+        continue;
+      }
+
       const sam = getUserAttr(typedEntry, 'sAMAccountName');
       const upn = getUserAttr(typedEntry, 'userPrincipalName');
       const email =

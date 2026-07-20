@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Loader2, Search } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,6 +40,9 @@ type CostCenterFormState = {
   isActive: boolean;
 };
 
+type SortColumn = 'code' | 'name' | 'isActive';
+type SortDirection = 'asc' | 'desc';
+
 function CostCentersTableSkeleton({ showFullColumnsMobile }: { showFullColumnsMobile: boolean }) {
   return (
     <>
@@ -77,6 +80,10 @@ export default function CostCenters() {
   const [showFullColumnsMobile, setShowFullColumnsMobile] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<CostCenterFormState>({ code: '', name: '', isActive: true });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(12);
+  const [sortColumn, setSortColumn] = useState<SortColumn>('code');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   const { data: costCenters = [], isLoading } = useQuery<CostCenter[]>({
     queryKey: ['/api/cost-centers'],
@@ -128,6 +135,75 @@ export default function CostCenters() {
     });
   }, [costCenters, search, activeFilter]);
 
+  const sortedCostCenters = useMemo(() => {
+    const getSortValue = (costCenter: CostCenter, column: SortColumn): string | number => {
+      switch (column) {
+        case 'code':
+          return costCenter.code || '';
+        case 'name':
+          return costCenter.name || '';
+        case 'isActive':
+          return costCenter.isActive ? 1 : 0;
+        default:
+          return '';
+      }
+    };
+
+    const sorted = [...filtered].sort((a, b) => {
+      const aValue = getSortValue(a, sortColumn);
+      const bValue = getSortValue(b, sortColumn);
+
+      let comparison = 0;
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        comparison = aValue - bValue;
+      } else {
+        comparison = String(aValue).localeCompare(String(bValue), 'pt-BR', { sensitivity: 'base' });
+      }
+
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    return sorted;
+  }, [filtered, sortColumn, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedCostCenters.length / itemsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedCostCenters = sortedCostCenters.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    if (currentPage !== safeCurrentPage) {
+      setCurrentPage(safeCurrentPage);
+    }
+  }, [currentPage, safeCurrentPage]);
+
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+    setCurrentPage(1);
+  };
+
+  const renderSortIcon = (column: SortColumn) => {
+    if (sortColumn !== column) return null;
+    return sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />;
+  };
+
+  const handlePageChange = (page: number) => {
+    if (page < 1 || page > totalPages) return;
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleItemsPerPageChange = (value: string) => {
+    setItemsPerPage(Number(value));
+    setCurrentPage(1);
+  };
+
   if (!hasRole(['admin'])) {
     return (
       <Layout>
@@ -145,7 +221,7 @@ export default function CostCenters() {
           <div>
             <h1 className="text-2xl font-semibold">Centros de Custo</h1>
             <p className="text-sm text-muted-foreground">
-              {isLoading ? 'Carregando centros de custo...' : `${filtered.length} centros de custo encontrados`}
+              {isLoading ? 'Carregando centros de custo...' : `${sortedCostCenters.length} centros de custo encontrados`}
             </p>
           </div>
 
@@ -203,23 +279,38 @@ export default function CostCenters() {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="w-[140px] text-xs font-medium">Sigla</TableHead>
-                  <TableHead className="text-xs font-medium">Centro de custo</TableHead>
-                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[140px] text-center text-xs font-medium`}>Ativo?</TableHead>
+                  <TableHead className="w-[140px] text-xs font-medium">
+                    <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('code')}>
+                      Sigla
+                      {renderSortIcon('code')}
+                    </Button>
+                  </TableHead>
+                  <TableHead className="text-xs font-medium">
+                    <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('name')}>
+                      Centro de custo
+                      {renderSortIcon('name')}
+                    </Button>
+                  </TableHead>
+                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[140px] text-center text-xs font-medium`}>
+                    <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('isActive')}>
+                      Ativo?
+                      {renderSortIcon('isActive')}
+                    </Button>
+                  </TableHead>
                   <TableHead className="w-[120px] text-right text-xs font-medium">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <CostCentersTableSkeleton showFullColumnsMobile={showFullColumnsMobile} />
-                ) : filtered.length === 0 ? (
+                ) : sortedCostCenters.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={showFullColumnsMobile ? 4 : 3} className="text-muted-foreground">
                       Nenhum centro de custo encontrado
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filtered.map((costCenter) => (
+                  paginatedCostCenters.map((costCenter) => (
                     <TableRow key={costCenter.id} data-testid={`row-cost-center-${costCenter.id}`}>
                       <TableCell className="font-medium">{costCenter.code}</TableCell>
                       <TableCell>{costCenter.name}</TableCell>
@@ -252,6 +343,75 @@ export default function CostCenters() {
             <div className="flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
               Carregando centros de custo
+            </div>
+          </div>
+        )}
+
+        {sortedCostCenters.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Exibir</span>
+              <Select value={String(itemsPerPage)} onValueChange={handleItemsPerPageChange}>
+                <SelectTrigger className="w-20" data-testid="select-cost-centers-items-per-page">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="6">6</SelectItem>
+                  <SelectItem value="12">12</SelectItem>
+                  <SelectItem value="24">24</SelectItem>
+                  <SelectItem value="48">48</SelectItem>
+                  <SelectItem value="96">96</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground">por página</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(safeCurrentPage - 1)}
+                disabled={safeCurrentPage === 1}
+                data-testid="button-cost-centers-prev-page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Anterior
+              </Button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (safeCurrentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (safeCurrentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = safeCurrentPage - 2 + i;
+                  }
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={safeCurrentPage === pageNum ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                      data-testid={`button-cost-centers-page-${pageNum}`}
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(safeCurrentPage + 1)}
+                disabled={safeCurrentPage === totalPages}
+                data-testid="button-cost-centers-next-page"
+              >
+                Próximo
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         )}

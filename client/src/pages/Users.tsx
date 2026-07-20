@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Loader2, Search } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,9 @@ const EMAIL_GROUP_OPTIONS = [
   { value: 'Escritório de projetos', label: 'Escritório de projetos' },
   { value: 'SSMA', label: 'SSMA' },
 ];
+
+type SortColumn = 'name' | 'email' | 'category' | 'emailGroup' | 'receivesEmails';
+type SortDirection = 'asc' | 'desc';
 
 function UsersTableSkeleton({ showFullColumnsMobile }: { showFullColumnsMobile: boolean }) {
   return (
@@ -67,6 +70,10 @@ export default function Users() {
   const [search, setSearch] = useState('');
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [showFullColumnsMobile, setShowFullColumnsMobile] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(12);
+  const [sortColumn, setSortColumn] = useState<SortColumn>('name');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   const { data: professionals = [], isLoading } = useQuery<User[]>({
     queryKey: ['/api/auth/users'],
@@ -89,6 +96,14 @@ export default function Users() {
     });
   }, [categories]);
 
+  const categoryNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const category of categories) {
+      map.set(category.id, category.name);
+    }
+    return map;
+  }, [categories]);
+
   const filteredProfessionals = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return professionals;
@@ -99,6 +114,80 @@ export default function Users() {
       );
     });
   }, [professionals, search]);
+
+  const sortedProfessionals = useMemo(() => {
+    const getSortValue = (user: User, column: SortColumn): string | number => {
+      switch (column) {
+        case 'name':
+          return user.name || '';
+        case 'email':
+          return user.email || '';
+        case 'category':
+          return categoryNameById.get(user.professionalCategoryId || '') || '';
+        case 'emailGroup':
+          return user.emailGroup || '';
+        case 'receivesEmails':
+          return user.receivesEmails ? 1 : 0;
+        default:
+          return '';
+      }
+    };
+
+    const sorted = [...filteredProfessionals].sort((a, b) => {
+      const aValue = getSortValue(a, sortColumn);
+      const bValue = getSortValue(b, sortColumn);
+
+      let comparison = 0;
+
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        comparison = aValue - bValue;
+      } else {
+        comparison = String(aValue).localeCompare(String(bValue), 'pt-BR', { sensitivity: 'base' });
+      }
+
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    return sorted;
+  }, [filteredProfessionals, sortColumn, sortDirection, categoryNameById]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedProfessionals.length / itemsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedProfessionals = sortedProfessionals.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    if (currentPage !== safeCurrentPage) {
+      setCurrentPage(safeCurrentPage);
+    }
+  }, [currentPage, safeCurrentPage]);
+
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+    setCurrentPage(1);
+  };
+
+  const renderSortIcon = (column: SortColumn) => {
+    if (sortColumn !== column) return null;
+    return sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />;
+  };
+
+  const handlePageChange = (page: number) => {
+    if (page < 1 || page > totalPages) return;
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleItemsPerPageChange = (value: string) => {
+    setItemsPerPage(Number(value));
+    setCurrentPage(1);
+  };
 
   const updateProfessionalMutation = useMutation({
     mutationFn: async ({
@@ -152,7 +241,7 @@ export default function Users() {
               Profissionais da Tec3
             </h1>
             <p className="text-sm text-muted-foreground">
-              {isLoading ? 'Carregando profissionais...' : `${filteredProfessionals.length} profissionais encontrados`}
+              {isLoading ? 'Carregando profissionais...' : `${sortedProfessionals.length} profissionais encontrados`}
             </p>
           </div>
         </div>
@@ -188,24 +277,44 @@ export default function Users() {
             <Table className="table-fixed w-full">
               <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="w-[280px] text-xs font-medium">Profissional</TableHead>
-                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[520px] text-xs font-medium`}>Categoria</TableHead>
-                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden md:table-cell'} w-[360px] text-xs font-medium`}>Grupo de e-mail</TableHead>
-                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} w-[180px] text-xs font-medium`}>Recebe e-mails?</TableHead>
+                  <TableHead className="w-[280px] text-xs font-medium">
+                    <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('name')}>
+                      Profissional
+                      {renderSortIcon('name')}
+                    </Button>
+                  </TableHead>
+                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden sm:table-cell'} w-[520px] text-xs font-medium`}>
+                    <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('category')}>
+                      Categoria
+                      {renderSortIcon('category')}
+                    </Button>
+                  </TableHead>
+                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden md:table-cell'} w-[360px] text-xs font-medium`}>
+                    <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('emailGroup')}>
+                      Grupo de e-mail
+                      {renderSortIcon('emailGroup')}
+                    </Button>
+                  </TableHead>
+                  <TableHead className={`${showFullColumnsMobile ? '' : 'hidden lg:table-cell'} w-[180px] text-xs font-medium`}>
+                    <Button type="button" variant="ghost" size="sm" className="h-auto px-0 font-medium" onClick={() => handleSort('receivesEmails')}>
+                      Recebe e-mails?
+                      {renderSortIcon('receivesEmails')}
+                    </Button>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               {isLoading ? (
                 <UsersTableSkeleton showFullColumnsMobile={showFullColumnsMobile} />
               ) : (
                 <TableBody>
-                  {filteredProfessionals.length === 0 ? (
+                  {sortedProfessionals.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={showFullColumnsMobile ? 4 : 1} className="text-muted-foreground">
                         Nenhum profissional encontrado
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredProfessionals.map((user) => {
+                    paginatedProfessionals.map((user) => {
                       const isSaving = savingUserId === user.id && updateProfessionalMutation.isPending;
 
                       return (
@@ -303,6 +412,75 @@ export default function Users() {
             <div className="flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
               Carregando profissionais
+            </div>
+          </div>
+        )}
+
+        {sortedProfessionals.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Exibir</span>
+              <Select value={String(itemsPerPage)} onValueChange={handleItemsPerPageChange}>
+                <SelectTrigger className="w-20" data-testid="select-users-items-per-page">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="6">6</SelectItem>
+                  <SelectItem value="12">12</SelectItem>
+                  <SelectItem value="24">24</SelectItem>
+                  <SelectItem value="48">48</SelectItem>
+                  <SelectItem value="96">96</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground">por página</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(safeCurrentPage - 1)}
+                disabled={safeCurrentPage === 1}
+                data-testid="button-users-prev-page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Anterior
+              </Button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (safeCurrentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (safeCurrentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = safeCurrentPage - 2 + i;
+                  }
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={safeCurrentPage === pageNum ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                      data-testid={`button-users-page-${pageNum}`}
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(safeCurrentPage + 1)}
+                disabled={safeCurrentPage === totalPages}
+                data-testid="button-users-next-page"
+              >
+                Próximo
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         )}

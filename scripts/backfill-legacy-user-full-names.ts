@@ -1,7 +1,6 @@
 import 'dotenv/config';
-import fs from 'node:fs';
-import path from 'node:path';
 import { prisma } from '../server/db.ts';
+import { assertNoLocalDumpArgs, loadLegacySqlFromTables } from './legacy-source.ts';
 
 type ParsedValue = string | null;
 
@@ -142,17 +141,9 @@ function mapLegacyUsers(sqlContent: string): LegacyUserRow[] {
 async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
-  const fileArg = args.find((arg) => !arg.startsWith('--'));
+  assertNoLocalDumpArgs(args, 'backfill-legacy-user-full-names');
 
-  const resolvedPath = fileArg
-    ? path.resolve(fileArg)
-    : path.resolve('C:/Users/jefer/Downloads/bdtec3.sql');
-
-  if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`Arquivo não encontrado: ${resolvedPath}`);
-  }
-
-  const sqlContent = fs.readFileSync(resolvedPath, 'utf-8');
+  const sqlContent = await loadLegacySqlFromTables(['Usuario']);
   const legacyUsers = mapLegacyUsers(sqlContent);
 
   if (legacyUsers.length === 0) {
