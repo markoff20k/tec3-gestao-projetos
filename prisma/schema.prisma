@@ -193,12 +193,14 @@ model ProposalAdditive {
   subcontractValue   Decimal  @default(0) @map("subcontract_value") @db.Decimal(12, 2)
   mobilizationValue  Decimal  @default(0) @map("mobilization_value") @db.Decimal(12, 2)
   readjustValue      Decimal  @default(0) @map("readjust_value") @db.Decimal(12, 2)
+  isLegacyImport     Boolean  @default(false) @map("is_legacy_import")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime? @updatedAt @map("updated_at")
 
   proposal           Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
 
   @@index([proposalId, createdAt])
+  @@index([isLegacyImport])
   @@map("proposal_additives")
 }
 
@@ -208,12 +210,14 @@ model ProposalExpense {
   description  String
   value        Decimal  @default(0) @db.Decimal(12, 2)
   reimbursable Boolean  @default(false) @map("reimbursable")
+  isLegacyImport Boolean @default(false) @map("is_legacy_import")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime? @updatedAt @map("updated_at")
 
   proposal     Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
 
   @@index([proposalId, createdAt])
+  @@index([isLegacyImport])
   @@map("proposal_expenses")
 }
 
@@ -328,12 +332,14 @@ model TimeEntry {
   approvedById    String?   @map("approved_by_id")
   approvedAt      DateTime? @map("approved_at")
   rejectionReason String?   @map("rejection_reason")
+  isLegacyImport  Boolean   @default(false) @map("is_legacy_import")
   createdAt       DateTime  @default(now()) @map("created_at")
 
   project         Project   @relation(fields: [projectId], references: [id])
   costCenter      CostCenter? @relation(fields: [costCenterId], references: [id])
 
   @@index([costCenterId])
+  @@index([isLegacyImport])
   @@map("time_entries")
 }
 
@@ -357,12 +363,14 @@ model ProposalCategoryValue {
   customName String?  @map("custom_name")
   value      Decimal  @default(0) @db.Decimal(12, 2)
   hours      Decimal  @default(0) @db.Decimal(6, 2)
+  isLegacyImport Boolean @default(false) @map("is_legacy_import")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime? @updatedAt @map("updated_at")
 
   proposal   Proposal  @relation(fields: [proposalId], references: [id], onDelete: Cascade)
   category   ProposalCategory? @relation(fields: [categoryId], references: [id])
 
+  @@index([isLegacyImport])
   @@map("proposal_category_values")
 }
 

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, Check, Star, StarOff, Maximize2, Minimize2, PanelRightClose, Trash2, Edit, Eye, Download, Upload, LayoutGrid, List, GripVertical, FileText, Loader2, Mail, Paperclip, FolderKanban, ArrowUpRight, CircleDashed, AlertTriangle, Sparkles, Route } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, ChevronsUpDown, Check, Star, StarOff, Maximize2, Minimize2, PanelRightClose, Trash2, Edit, Eye, Download, Upload, LayoutGrid, List, GripVertical, FileText, Loader2, Mail, Paperclip, FolderKanban, ArrowUpRight, CircleDashed, AlertTriangle, Sparkles, Route } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -54,6 +54,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import { Calendar as DateCalendar } from '@/components/ui/calendar';
 import {
   Tooltip,
@@ -505,6 +513,9 @@ function createEmptyTapDraft(): ProposalTapDraft {
     subcontractForecastDetails: '',
     projectAnalystId: null,
     projectAnalystName: null,
+    additiveProjectId: null,
+    projectCoordinatorId: null,
+    projectCoordinatorName: null,
     notes: '',
     startDate: null,
     endDate: null,
@@ -537,7 +548,10 @@ function createTapDraftFromProposal(proposal: Proposal | null): ProposalTapDraft
     subcontractForecastDetails: existing?.subcontractForecastDetails || '',
     projectAnalystId: existing?.projectAnalystId || null,
     projectAnalystName: existing?.projectAnalystName || null,
-    notes: existing?.notes || '',
+    additiveProjectId: (existing as any)?.additiveProjectId || null,
+    projectCoordinatorId: (existing as any)?.projectCoordinatorId || null,
+    projectCoordinatorName: (existing as any)?.projectCoordinatorName || null,
+    notes: existing?.notes || proposal.description || '',
     startDate: existing?.startDate || extractDateOnly(proposal.updatedAt || proposal.expectedStartDate),
     endDate: existing?.endDate || extractDateOnly(proposal.expectedEndDate),
     budgetHours: Number(existing?.budgetHours ?? proposal.estimatedHours ?? 0),
@@ -552,6 +566,15 @@ function canOpenProposalTap(proposal: Proposal | null): boolean {
     return false;
   }
   return true;
+}
+
+function normalizeUserNameKey(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 function isProposalTapReadOnly(proposal: Proposal | null): boolean {
@@ -687,6 +710,8 @@ export default function Proposals() {
   const [tapProposal, setTapProposal] = useState<Proposal | null>(null);
   const [tapForm, setTapForm] = useState<ProposalTapDraft>(() => createEmptyTapDraft());
   const [tapGenerateConfirmOpen, setTapGenerateConfirmOpen] = useState(false);
+  const [additiveProjectComboOpen, setAdditiveProjectComboOpen] = useState(false);
+  const [revisionConfirmProposal, setRevisionConfirmProposal] = useState<Proposal | null>(null);
   const [isSavingTap, setIsSavingTap] = useState(false);
   const [isTapAttachmentDragOver, setIsTapAttachmentDragOver] = useState(false);
   const [expensesProposal, setExpensesProposal] = useState<Proposal | null>(null);
@@ -1090,6 +1115,7 @@ export default function Proposals() {
   type CreateFormData = typeof formData;
   type CreateFormField = keyof CreateFormData;
   const [createAttemptedSubmit, setCreateAttemptedSubmit] = useState(false);
+  const [createUmbrellaComboOpen, setCreateUmbrellaComboOpen] = useState(false);
 
   const createValidationErrors = useMemo(() => {
     const errors: Partial<Record<CreateFormField, string>> = {};
@@ -1137,6 +1163,7 @@ export default function Proposals() {
   const editInitialRef = useRef<EditFormData | null>(null);
   const [editTouched, setEditTouched] = useState<Partial<Record<EditFormField, boolean>>>({});
   const [editAttemptedSubmit, setEditAttemptedSubmit] = useState(false);
+  const [editUmbrellaComboOpen, setEditUmbrellaComboOpen] = useState(false);
 
   const isEditDirty = useMemo(() => {
     if (!editDialogOpen) return false;
@@ -1581,6 +1608,16 @@ export default function Proposals() {
     queryFn: () => proposalsApi.getAll(),
   });
 
+  const umbrellaProposalOptions = useMemo(() => {
+    return proposals
+      .filter((p) => p.type === 'umbrella')
+      .map((p) => ({
+        code: p.code,
+        label: p.title ? `${p.code} - ${p.title}` : p.code,
+      }))
+      .sort((a, b) => a.code.localeCompare(b.code, 'pt-BR', { sensitivity: 'base' }));
+  }, [proposals]);
+
   const [showProposalsLoader, setShowProposalsLoader] = useState<boolean>(isLoading);
   const proposalsLoaderStartedAtRef = useRef<number | null>(isLoading ? Date.now() : null);
 
@@ -1653,7 +1690,7 @@ export default function Proposals() {
       .forEach((u) => {
         const name = String(u.name || '').trim();
         if (!name) return;
-        const normalizedName = name.toLocaleLowerCase('pt-BR');
+        const normalizedName = normalizeUserNameKey(name);
         if (!uniqueByNormalizedName.has(normalizedName)) {
           uniqueByNormalizedName.set(normalizedName, name);
         }
@@ -1674,7 +1711,7 @@ export default function Proposals() {
     sortedActiveUsers.forEach((u) => {
       const name = String(u.name || '').trim();
       if (!name) return;
-      const normalizedName = name.toLocaleLowerCase('pt-BR');
+      const normalizedName = normalizeUserNameKey(name);
       if (!uniqueByNormalizedName.has(normalizedName)) {
         uniqueByNormalizedName.set(normalizedName, { id: u.id, name });
       }
@@ -1820,11 +1857,26 @@ export default function Proposals() {
 
   const generateTapMutation = useMutation({
     mutationFn: ({ proposalId, data }: { proposalId: string; data: ProposalTapDraft }) => proposalsApi.generateTap(proposalId, data),
-    onSuccess: ({ proposal, project }) => {
+    onSuccess: ({ proposal, project, isAdditive }) => {
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       syncProposalReferences(proposal);
       setTapDialogOpen(false);
+
+      if (isAdditive) {
+        toast({
+          title: proposal.tapStatus === 'failed' ? 'Aditivo vinculado, mas o e-mail falhou' : 'Aditivo vinculado ao projeto',
+          description: proposal.tapStatus === 'failed'
+            ? `Horas e valor orçados do projeto ${project.code} foram incrementados, mas o e-mail ao coordenador/analista não foi enviado.`
+            : `Horas e valor orçados do projeto ${project.code} foram incrementados e o coordenador/analista foram notificados por e-mail.`,
+          variant: proposal.tapStatus === 'failed' ? 'destructive' : 'success',
+        });
+        if (selectedProposal?.id === proposal.id) {
+          setSelectedProposal(proposal);
+        }
+        return;
+      }
+
       toast({
         title: proposal.tapStatus === 'failed' ? 'Projeto criado, mas o e-mail do TAP falhou' : 'TAP gerado com sucesso',
         description: proposal.tapStatus === 'failed'
@@ -2011,7 +2063,7 @@ export default function Proposals() {
   const openTapDialog = (proposal: Proposal, event?: React.MouseEvent) => {
     event?.stopPropagation();
 
-    if (!isLatestRevision(proposal)) {
+    if (!isLatestRevision(proposal) && !proposal.projectId) {
       toast({
         title: 'Somente a última revisão pode abrir o TAP',
         description: `Crie uma nova revisão para continuar a partir da proposta ${proposal.code}.`,
@@ -2036,6 +2088,25 @@ export default function Proposals() {
       projectAnalystId: userId || null,
       projectAnalystName: selectedUser?.name || null,
     }));
+  };
+
+  const handleTapCoordinatorChange = (userId: string) => {
+    const selectedUser = users.find((u) => u.id === userId);
+    setTapForm((current) => ({
+      ...current,
+      projectCoordinatorId: userId || null,
+      projectCoordinatorName: selectedUser?.name || null,
+    }));
+  };
+
+  const handleAdditiveProjectSelect = (project: Project) => {
+    setTapForm((current) => ({
+      ...current,
+      additiveProjectId: project.id,
+      projectCoordinatorId: project.coordinatorId || null,
+      projectCoordinatorName: project.coordinator?.name || null,
+    }));
+    setAdditiveProjectComboOpen(false);
   };
 
   const uploadTapAttachmentFiles = useCallback(async (files: File[]) => {
@@ -2094,6 +2165,7 @@ export default function Proposals() {
 
   const tapReadOnly = useMemo(() => isProposalTapReadOnly(tapProposal), [tapProposal]);
   const tapCanResendEmail = Boolean(tapProposal?.projectId);
+  const tapIsAdditive = tapProposal?.status === 'sucesso_aditivo';
   const tapProposalProjectId = tapProposal?.projectId || null;
   const { data: tapProposalProject } = useQuery<Project>({
     queryKey: ['/api/projects', tapProposalProjectId, 'tap-cost-center'],
@@ -2103,9 +2175,20 @@ export default function Proposals() {
   const { data: tapNextProjectCode } = useQuery<{ code: string }>({
     queryKey: ['/api/projects/next-code'],
     queryFn: () => projectsApi.getNextCode(),
-    enabled: tapDialogOpen && !tapProposalProjectId,
+    enabled: tapDialogOpen && !tapProposalProjectId && !tapIsAdditive,
   });
-  const tapCostCenterCode = tapProposalProject?.code || tapNextProjectCode?.code || '-';
+  const { data: tapAllProjects = [] } = useQuery<Project[]>({
+    queryKey: ['/api/projects', 'additive-options'],
+    queryFn: () => projectsApi.getAll(),
+    enabled: tapDialogOpen && tapIsAdditive && !tapProposalProjectId,
+  });
+  const tapSelectedAdditiveProject = useMemo(
+    () => tapAllProjects.find((project) => project.id === tapForm.additiveProjectId) || null,
+    [tapAllProjects, tapForm.additiveProjectId],
+  );
+  const tapCostCenterCode = tapProposalProject?.code
+    || (tapIsAdditive ? tapSelectedAdditiveProject?.code : tapNextProjectCode?.code)
+    || '-';
   const selectedProposalTapButtonState = useMemo(() => getProposalTapButtonState(selectedProposal), [selectedProposal]);
   const selectedProposalProjectId = selectedProposal?.projectId || null;
   const { data: selectedProposalProject, isLoading: isLoadingSelectedProposalProject } = useQuery<Project>({
@@ -2117,10 +2200,16 @@ export default function Proposals() {
     if (tapReadOnly) return null;
     if (generateTapMutation.isPending) return 'Gerando TAP...';
     if (isUploadingTapAttachment) return 'Aguarde o término do upload dos anexos.';
+    if (tapIsAdditive) {
+      if (!tapForm.additiveProjectId) return 'Selecione o projeto que receberá o aditivo.';
+      if (!tapForm.projectCoordinatorId) return 'Selecione o coordenador do projeto.';
+      if (!tapForm.projectAnalystId) return 'Selecione o analista de projeto.';
+      return null;
+    }
     if (!tapForm.projectName.trim()) return 'Informe o nome do projeto.';
     if (!tapForm.projectAnalystId) return 'Selecione o analista de projeto.';
     return null;
-  }, [generateTapMutation.isPending, isUploadingTapAttachment, tapForm.projectName, tapForm.projectAnalystId, tapReadOnly]);
+  }, [generateTapMutation.isPending, isUploadingTapAttachment, tapForm.projectName, tapForm.projectAnalystId, tapForm.additiveProjectId, tapForm.projectCoordinatorId, tapReadOnly, tapIsAdditive]);
 
   const handleEditProposal = (proposal: Proposal, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -2556,8 +2645,35 @@ export default function Proposals() {
     switch (columnId) {
       case 'code':
         return <span className="font-medium text-primary">{proposal.code}</span>;
-      case 'revision':
-        return proposal.revision || 0;
+      case 'revision': {
+        const revision = proposal.revision || 0;
+        const isAdditive = proposal.status === 'sucesso_aditivo';
+        if (revision <= 0 && !isAdditive) {
+          return revision;
+        }
+        const linked = Boolean(proposal.projectId);
+        const tooltipText = isAdditive
+          ? linked
+            ? `Aditivo vinculado ao projeto (${proposal.code})`
+            : `Aditivo pendente de vinculação (${proposal.code})`
+          : `Revisão ${revision} de ${proposal.code}`;
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center gap-1.5">
+                {revision}
+                <span
+                  className={cn(
+                    'h-1.5 w-1.5 rounded-full',
+                    isAdditive ? (linked ? 'bg-teal-500' : 'bg-amber-400') : 'bg-slate-300',
+                  )}
+                />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{tooltipText}</TooltipContent>
+          </Tooltip>
+        );
+      }
       case 'client':
         return (
           <span className="block leading-tight">
@@ -2780,27 +2896,51 @@ export default function Proposals() {
                 {formData.type === 'service_order' && (
                   <div className="space-y-2">
                     <Label>Proposta original (guarda-chuva) *</Label>
-                    <Select
-                      value={formData.umbrellaRef || undefined}
-                      onValueChange={(value) => setFormData({ ...formData, umbrellaRef: value })}
-                    >
-                      <SelectTrigger
-                        data-testid="select-proposal-umbrella"
-                        className={isCreateFieldInvalid('umbrellaRef') ? 'border-destructive' : ''}
-                      >
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {proposals
-                          .filter((p) => p.type === 'umbrella')
-                          .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
-                          .map((p) => (
-                            <SelectItem key={p.id} value={p.code}>
-                              {p.title ? `${p.code} - ${p.title}` : p.code}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={createUmbrellaComboOpen} onOpenChange={setCreateUmbrellaComboOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={createUmbrellaComboOpen}
+                          data-testid="select-proposal-umbrella"
+                          className={cn(
+                            'w-full justify-between font-normal',
+                            isCreateFieldInvalid('umbrellaRef') && 'border-destructive'
+                          )}
+                        >
+                          <span className="truncate text-left">
+                            {umbrellaProposalOptions.find((option) => option.code === formData.umbrellaRef)?.label || 'Selecione'}
+                          </span>
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Buscar por código ou título..." />
+                          <CommandList className="max-h-[280px]">
+                            <CommandEmpty>Nenhuma proposta guarda-chuva encontrada.</CommandEmpty>
+                            <CommandGroup>
+                              {umbrellaProposalOptions.map((option) => (
+                                <CommandItem
+                                  key={option.code}
+                                  value={option.label}
+                                  onSelect={() => {
+                                    setFormData({ ...formData, umbrellaRef: option.code });
+                                    setCreateUmbrellaComboOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={cn('mr-2 h-4 w-4', formData.umbrellaRef === option.code ? 'opacity-100' : 'opacity-0')}
+                                  />
+                                  {option.label}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                     {shouldShowCreateError('umbrellaRef') && (
                       <p className="text-xs text-destructive">{createValidationErrors.umbrellaRef}</p>
                     )}
@@ -2929,10 +3069,15 @@ export default function Proposals() {
                       </SelectTrigger>
                       <SelectContent>
                         {proposalStatusOptions.map(({ value, label }) => (
-                          <SelectItem key={value} value={value}>{label}</SelectItem>
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    <p className="text-xs text-muted-foreground">
+                      "Sucesso (aditivo)": use quando o cliente pedir que a aprovação entre dentro de um projeto já existente (sem criar projeto novo). Você escolherá o projeto ao confirmar o aditivo.
+                    </p>
                   </div>
                 </div>
 
@@ -3840,18 +3985,21 @@ export default function Proposals() {
                           ))}
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-                              {isLatestRevision(proposal) && canOpenProposalTap(proposal) && (
+                              {(isLatestRevision(proposal) || Boolean(proposal.projectId)) && canOpenProposalTap(proposal) && (
                                 <Button
                                   size="sm"
                                   variant="secondary"
-                                  className={cn('h-6 min-w-[90px] px-2 py-0 text-xs font-medium shadow-none', getProposalTapStatusBadgeClassName(proposal))}
+                                  className={cn(
+                                    'h-6 min-w-[90px] px-2 py-0 text-xs font-medium shadow-none',
+                                    proposal.status === 'sucesso_aditivo' ? 'bg-teal-500 text-white hover:bg-teal-500' : getProposalTapStatusBadgeClassName(proposal)
+                                  )}
                                   data-testid={`button-open-tap-${proposal.id}`}
                                   onClick={(e) => openTapDialog(proposal, e)}
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onPointerDown={(e) => e.stopPropagation()}
-                                  title="Abrir TAP"
+                                  title={proposal.status === 'sucesso_aditivo' ? 'Vincular aditivo ao projeto' : 'Abrir TAP'}
                                 >
-                                  TAP
+                                  {proposal.status === 'sucesso_aditivo' ? 'ADITIVO' : 'TAP'}
                                 </Button>
                               )}
 
@@ -3891,7 +4039,11 @@ export default function Proposals() {
                                   data-testid={`button-revision-proposal-${proposal.id}`}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    revisionProposalMutation.mutate(proposal.id);
+                                    if (proposal.projectId) {
+                                      setRevisionConfirmProposal(proposal);
+                                    } else {
+                                      revisionProposalMutation.mutate(proposal.id);
+                                    }
                                   }}
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onPointerDown={(e) => e.stopPropagation()}
@@ -4160,50 +4312,256 @@ export default function Proposals() {
         )}
 
         <Dialog open={tapDialogOpen} onOpenChange={setTapDialogOpen}>
-          <DialogContent className="max-w-6xl h-[92vh] flex flex-col overflow-hidden">
+          <DialogContent
+            className={cn(
+              'flex flex-col overflow-hidden',
+              tapIsAdditive ? 'max-w-2xl' : 'max-w-6xl h-[92vh]',
+            )}
+          >
             <DialogHeader className="flex-shrink-0">
               <DialogTitle className="flex items-center gap-2">
                 <FileText className="h-5 w-5 text-primary" />
-                TAP da proposta {tapProposal?.code || '-'}
+                {tapIsAdditive ? 'Aditivo da proposta' : 'TAP da proposta'} {tapProposal?.code || '-'}
+                {tapIsAdditive ? (
+                  <Badge className="bg-teal-500 text-white">ADITIVO</Badge>
+                ) : null}
               </DialogTitle>
               <DialogDescription>
                 {tapReadOnly
                   ? 'Documento bloqueado para edição após a geração do TAP. Consulte os dados e use o reenvio em caso de falha de e-mail.'
-                  : 'Complete os dados do termo de abertura, revise o escopo e gere o TAP para criar o projeto.'}
+                  : tapIsAdditive
+                    ? 'Esta proposta é um aditivo de sucesso: ela será vinculada ao projeto já existente, incrementando horas e valor orçados, sem criar um projeto novo.'
+                    : 'Complete os dados do termo de abertura, revise o escopo e gere o TAP para criar o projeto.'}
               </DialogDescription>
             </DialogHeader>
 
             {tapProposal ? (
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <ScrollArea className="h-full pr-4">
+              <div className={tapIsAdditive ? 'max-h-[80vh] overflow-y-auto' : 'flex-1 min-h-0 overflow-hidden'}>
+                <ScrollArea className={tapIsAdditive ? undefined : 'h-full pr-4'}>
                   <div className="space-y-6 pb-6">
-                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-                      <Card className="lg:col-span-3">
-                        <CardContent className="p-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Status do TAP</p>
-                              <p className="mt-1 text-base font-semibold">{proposalTapStatusLabels[tapProposal.tapStatus || 'not_started'] || 'Não iniciado'}</p>
+                    {!tapIsAdditive ? (
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+                        <Card className="lg:col-span-3">
+                          <CardContent className="p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Status do TAP</p>
+                                <p className="mt-1 text-base font-semibold">{proposalTapStatusLabels[tapProposal.tapStatus || 'not_started'] || 'Não iniciado'}</p>
+                              </div>
+                              {tapProposal.tapLastEmailError ? (
+                                <Badge variant="destructive" className="whitespace-normal text-left">
+                                  {formatTapEmailErrorMessage(tapProposal.tapLastEmailError)}
+                                </Badge>
+                              ) : null}
                             </div>
-                            {tapProposal.tapLastEmailError ? (
-                              <Badge variant="destructive" className="whitespace-normal text-left">
-                                {formatTapEmailErrorMessage(tapProposal.tapLastEmailError)}
-                              </Badge>
-                            ) : null}
-                          </div>
-                        </CardContent>
-                      </Card>
-                      <Card>
-                        <CardContent className="p-4">
-                          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Modo</p>
-                          <p className="mt-1 text-base font-semibold">{tapReadOnly ? 'Somente leitura' : 'Edição liberada'}</p>
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {tapProposal.projectId ? 'Projeto já criado a partir deste TAP.' : 'O projeto será criado no clique em Gerar TAP.'}
-                          </p>
-                        </CardContent>
-                      </Card>
-                    </div>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="p-4">
+                            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Modo</p>
+                            <p className="mt-1 text-base font-semibold">{tapReadOnly ? 'Somente leitura' : 'Edição liberada'}</p>
+                            <p className="mt-2 text-sm text-muted-foreground">
+                              {tapProposal.projectId
+                                ? 'Projeto já criado a partir deste TAP.'
+                                : 'O projeto será criado no clique em Gerar TAP.'}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    ) : null}
 
+                    {tapIsAdditive ? (
+                      <div className="mx-auto w-full max-w-2xl">
+                        <Card>
+                          <CardContent className="p-6 space-y-5">
+                            <div>
+                              <p className="text-sm font-semibold">Dados do aditivo</p>
+                              <p className="text-sm text-muted-foreground">Este aditivo será vinculado a um projeto já existente, incrementando horas e valor orçados.</p>
+                            </div>
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label>Proposta (aditivo)</Label>
+                                <Input value={tapProposal.code || '-'} disabled />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Título da proposta</Label>
+                                <Input value={tapProposal.title || '-'} disabled />
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Projeto a ser incrementado *</Label>
+                              {tapProposalProject ? (
+                                <Input value={`${tapProposalProject.code} - ${tapProposalProject.name}`} disabled />
+                              ) : (
+                                <Popover open={additiveProjectComboOpen} onOpenChange={setAdditiveProjectComboOpen}>
+                                  <PopoverTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      role="combobox"
+                                      aria-expanded={additiveProjectComboOpen}
+                                      data-testid="select-additive-project"
+                                      disabled={tapReadOnly}
+                                      className={cn(
+                                        'w-full justify-between font-normal',
+                                        !tapForm.additiveProjectId && 'border-destructive',
+                                      )}
+                                    >
+                                      <span className="truncate text-left">
+                                        {tapSelectedAdditiveProject
+                                          ? `${tapSelectedAdditiveProject.code} - ${tapSelectedAdditiveProject.name}`
+                                          : 'Selecione o projeto'}
+                                      </span>
+                                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
+                                    </Button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                                    <Command>
+                                      <CommandInput placeholder="Buscar por código ou nome..." />
+                                      <CommandList className="max-h-[280px]">
+                                        <CommandEmpty>Nenhum projeto encontrado.</CommandEmpty>
+                                        <CommandGroup>
+                                          {tapAllProjects.map((project) => (
+                                            <CommandItem
+                                              key={project.id}
+                                              value={`${project.code} ${project.name}`}
+                                              onSelect={() => handleAdditiveProjectSelect(project)}
+                                            >
+                                              <Check
+                                                className={cn('mr-2 h-4 w-4', tapForm.additiveProjectId === project.id ? 'opacity-100' : 'opacity-0')}
+                                              />
+                                              {project.code} - {project.name}
+                                            </CommandItem>
+                                          ))}
+                                        </CommandGroup>
+                                      </CommandList>
+                                    </Command>
+                                  </PopoverContent>
+                                </Popover>
+                              )}
+                              {!tapProposalProject && !tapForm.additiveProjectId && (
+                                <p className="text-xs text-destructive">Campo obrigatório</p>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label>Coordenador do projeto *</Label>
+                                <Select
+                                  value={tapForm.projectCoordinatorId || '__none__'}
+                                  onValueChange={(value) => handleTapCoordinatorChange(value === '__none__' ? '' : value)}
+                                  disabled={tapReadOnly}
+                                >
+                                  <SelectTrigger
+                                    data-testid="select-tap-additive-coordinator"
+                                    className={!tapForm.projectCoordinatorId ? 'border-destructive' : ''}
+                                  >
+                                    <SelectValue placeholder="Selecione um coordenador" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Selecione um coordenador</SelectItem>
+                                    {activeProjectCoordinators.map((user) => (
+                                      <SelectItem key={user.id} value={user.id}>
+                                        {user.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                {!tapForm.projectCoordinatorId && (
+                                  <p className="text-xs text-destructive">Campo obrigatório</p>
+                                )}
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Analista de projeto *</Label>
+                                <Select
+                                  value={tapForm.projectAnalystId || '__none__'}
+                                  onValueChange={(value) => handleTapAnalystChange(value === '__none__' ? '' : value)}
+                                  disabled={tapReadOnly}
+                                >
+                                  <SelectTrigger
+                                    data-testid="select-tap-additive-analyst"
+                                    className={!tapForm.projectAnalystId ? 'border-destructive' : ''}
+                                  >
+                                    <SelectValue placeholder="Selecione um analista" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Selecione um analista</SelectItem>
+                                    {activeProjectCoordinators.map((user) => (
+                                      <SelectItem key={user.id} value={user.id}>
+                                        {user.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                {!tapForm.projectAnalystId && (
+                                  <p className="text-xs text-destructive">Campo obrigatório</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label>Horas a incrementar</Label>
+                                <Input value={`${tapProposal.estimatedHours ?? 0} h`} disabled />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Valor a incrementar</Label>
+                                <Input value={formatCurrency(tapProposal.totalValue ?? 0)} disabled />
+                              </div>
+                            </div>
+
+                            <div className="space-y-2 border-t pt-4">
+                              {!tapReadOnly ? (
+                                <Button
+                                  type="button"
+                                  className="w-full sm:w-auto"
+                                  onClick={() => setTapGenerateConfirmOpen(true)}
+                                  disabled={Boolean(tapGenerateDisabledReason)}
+                                >
+                                  {generateTapMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}
+                                  Vincular Aditivo ao Projeto
+                                </Button>
+                              ) : null}
+                              {!tapReadOnly ? (
+                                <AlertDialog open={tapGenerateConfirmOpen} onOpenChange={setTapGenerateConfirmOpen}>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Confirmar vinculação do aditivo?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Esta ação vincula o aditivo ao projeto existente, incrementa suas horas e valor orçados e envia um e-mail ao coordenador e ao analista do projeto. Depois de confirmar, não é possível desfazer.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel
+                                        disabled={generateTapMutation.isPending}
+                                        className={destructiveCancelButtonClassName}
+                                      >
+                                        Cancelar
+                                      </AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={(event) => {
+                                          event.preventDefault();
+                                          if (!tapProposal) return;
+                                          generateTapMutation.mutate({ proposalId: tapProposal.id, data: tapForm });
+                                          setTapGenerateConfirmOpen(false);
+                                        }}
+                                        disabled={generateTapMutation.isPending}
+                                      >
+                                        {generateTapMutation.isPending ? 'Vinculando...' : 'Sim, vincular aditivo'}
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              ) : null}
+                              {tapGenerateDisabledReason ? (
+                                <p className="text-xs text-muted-foreground">{tapGenerateDisabledReason}</p>
+                              ) : null}
+                              {tapReadOnly && tapProposal.tapLastEmailError ? (
+                                <p className="text-xs text-destructive">{formatTapEmailErrorMessage(tapProposal.tapLastEmailError)}</p>
+                              ) : null}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    ) : (
                     <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_360px]">
                       <div className="space-y-6">
                         <Card>
@@ -4240,7 +4598,7 @@ export default function Proposals() {
                                   </SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="__none__">Selecione um analista</SelectItem>
-                                    {users.filter((user) => user.isActive).map((user) => (
+                                    {activeProjectCoordinators.map((user) => (
                                       <SelectItem key={user.id} value={user.id}>
                                         {user.name}
                                       </SelectItem>
@@ -4288,9 +4646,18 @@ export default function Proposals() {
                                   </SelectContent>
                                 </Select>
                               </div>
-                              <div className="space-y-2">
+                              <div className="space-y-2 md:col-span-2">
                                 <Label>Projeto contrato GC</Label>
-                                <Input value={tapProposal.umbrellaRef || tapProposal.contractCode || tapProposal.workOrders || '-'} disabled />
+                                <Input
+                                  value={
+                                    (tapProposal.umbrellaRef && umbrellaProposalOptions.find((option) => option.code === tapProposal.umbrellaRef)?.label)
+                                    || tapProposal.umbrellaRef
+                                    || tapProposal.contractCode
+                                    || tapProposal.workOrders
+                                    || '-'
+                                  }
+                                  disabled
+                                />
                               </div>
                               <div className="space-y-2">
                                 <Label>Prazo execução</Label>
@@ -4301,7 +4668,8 @@ export default function Proposals() {
                                 <Input
                                   type="date"
                                   value={tapForm.startDate || ''}
-                                  disabled
+                                  onChange={(event) => handleTapFieldChange('startDate', event.target.value)}
+                                  disabled={tapReadOnly}
                                   data-testid="input-tap-start-date"
                                 />
                               </div>
@@ -4616,16 +4984,20 @@ export default function Proposals() {
                                   disabled={Boolean(tapGenerateDisabledReason)}
                                 >
                                   {generateTapMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}
-                                  Gerar TAP
+                                  {tapIsAdditive ? 'Vincular Aditivo ao Projeto' : 'Gerar TAP'}
                                 </Button>
                               ) : null}
                               {!tapReadOnly ? (
                                 <AlertDialog open={tapGenerateConfirmOpen} onOpenChange={setTapGenerateConfirmOpen}>
                                   <AlertDialogContent>
                                     <AlertDialogHeader>
-                                      <AlertDialogTitle>Confirmar geração do TAP?</AlertDialogTitle>
+                                      <AlertDialogTitle>
+                                        {tapIsAdditive ? 'Confirmar vinculação do aditivo?' : 'Confirmar geração do TAP?'}
+                                      </AlertDialogTitle>
                                       <AlertDialogDescription>
-                                        Esta ação cria o projeto e bloqueia a edição do TAP. Depois de gerar, não é possível desfazer.
+                                        {tapIsAdditive
+                                          ? 'Esta ação vincula o aditivo ao projeto existente e incrementa suas horas e valor orçados. Depois de confirmar, não é possível desfazer.'
+                                          : 'Esta ação cria o projeto e bloqueia a edição do TAP. Depois de gerar, não é possível desfazer.'}
                                       </AlertDialogDescription>
                                     </AlertDialogHeader>
                                     <AlertDialogFooter>
@@ -4692,12 +5064,38 @@ export default function Proposals() {
                         </Card>
                       </div>
                     </div>
+                    )}
                   </div>
                 </ScrollArea>
               </div>
             ) : null}
           </DialogContent>
         </Dialog>
+
+        <AlertDialog open={Boolean(revisionConfirmProposal)} onOpenChange={(open) => { if (!open) setRevisionConfirmProposal(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Criar revisão desta proposta?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esta proposta já foi convertida em projeto ({revisionConfirmProposal?.code}). Ao marcar a nova revisão como sucesso novamente, o mesmo projeto será mantido e as horas/valor da revisão serão somados automaticamente a ele.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={revisionProposalMutation.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (!revisionConfirmProposal) return;
+                  revisionProposalMutation.mutate(revisionConfirmProposal.id);
+                  setRevisionConfirmProposal(null);
+                }}
+                disabled={revisionProposalMutation.isPending}
+              >
+                {revisionProposalMutation.isPending ? 'Criando...' : 'Sim, criar revisão'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Detail Sheet (Side Panel) */}
         <Sheet open={detailSheetOpen && !detailFullscreen} onOpenChange={setDetailSheetOpen}>
@@ -4746,12 +5144,12 @@ export default function Proposals() {
                   {canOpenProposalTap(selectedProposal) ? (
                     <Button
                       variant="outline"
-                      className={cn('flex-1', getProposalTapButtonClassName(selectedProposal))}
+                      className={cn('flex-1', selectedProposal.status === 'sucesso_aditivo' ? 'border-teal-500 bg-teal-500 text-white hover:border-teal-600 hover:bg-teal-600' : getProposalTapButtonClassName(selectedProposal))}
                       onClick={() => openTapDialog(selectedProposal)}
                       data-testid="button-open-tap-from-sheet"
                     >
                       <FileText className="h-4 w-4 mr-2" />
-                      TAP
+                      {selectedProposal.status === 'sucesso_aditivo' ? 'ADITIVO' : 'TAP'}
                     </Button>
                   ) : null}
                   <Button
@@ -4988,12 +5386,12 @@ export default function Proposals() {
                   {canOpenProposalTap(selectedProposal) ? (
                     <Button
                       variant="outline"
-                      className={getProposalTapButtonClassName(selectedProposal)}
+                      className={selectedProposal.status === 'sucesso_aditivo' ? 'border-teal-500 bg-teal-500 text-white hover:border-teal-600 hover:bg-teal-600' : getProposalTapButtonClassName(selectedProposal)}
                       onClick={() => openTapDialog(selectedProposal)}
                       data-testid="button-open-tap-from-fullscreen"
                     >
                       <FileText className="h-4 w-4 mr-2" />
-                      TAP
+                      {selectedProposal.status === 'sucesso_aditivo' ? 'ADITIVO' : 'TAP'}
                     </Button>
                   ) : null}
                   <Button
@@ -6173,30 +6571,52 @@ export default function Proposals() {
               {editFormData.type === 'service_order' && (
                 <div className="space-y-2">
                   <Label>Proposta original (guarda-chuva) *</Label>
-                  <Select
-                    value={editFormData.umbrellaRef || undefined}
-                    onValueChange={(value) => {
-                      setEditTouched((prev) => ({ ...prev, umbrellaRef: true }));
-                      setEditFormData({ ...editFormData, umbrellaRef: value });
-                    }}
-                  >
-                    <SelectTrigger
-                      data-testid="select-edit-proposal-umbrella"
-                      className={shouldShowEditError('umbrellaRef') ? 'border-destructive' : ''}
-                    >
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {proposals
-                        .filter((p) => p.type === 'umbrella')
-                        .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
-                        .map((p) => (
-                          <SelectItem key={p.id} value={p.code}>
-                            {p.title ? `${p.code} - ${p.title}` : p.code}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={editUmbrellaComboOpen} onOpenChange={setEditUmbrellaComboOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={editUmbrellaComboOpen}
+                        data-testid="select-edit-proposal-umbrella"
+                        className={cn(
+                          'w-full justify-between font-normal',
+                          shouldShowEditError('umbrellaRef') && 'border-destructive'
+                        )}
+                      >
+                        <span className="truncate text-left">
+                          {umbrellaProposalOptions.find((option) => option.code === editFormData.umbrellaRef)?.label || 'Selecione'}
+                        </span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Buscar por código ou título..." />
+                        <CommandList className="max-h-[280px]">
+                          <CommandEmpty>Nenhuma proposta guarda-chuva encontrada.</CommandEmpty>
+                          <CommandGroup>
+                            {umbrellaProposalOptions.map((option) => (
+                              <CommandItem
+                                key={option.code}
+                                value={option.label}
+                                onSelect={() => {
+                                  setEditTouched((prev) => ({ ...prev, umbrellaRef: true }));
+                                  setEditFormData({ ...editFormData, umbrellaRef: option.code });
+                                  setEditUmbrellaComboOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn('mr-2 h-4 w-4', editFormData.umbrellaRef === option.code ? 'opacity-100' : 'opacity-0')}
+                                />
+                                {option.label}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                   {shouldShowEditError('umbrellaRef') && (
                     <p className="text-xs text-destructive">{editValidationErrors.umbrellaRef}</p>
                   )}
@@ -6333,10 +6753,15 @@ export default function Proposals() {
                     </SelectTrigger>
                     <SelectContent>
                       {proposalStatusOptions.map(({ value, label }) => (
-                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    "Sucesso (aditivo)": use quando o cliente pedir que a aprovação entre dentro de um projeto já existente (sem criar projeto novo). Você escolherá o projeto ao confirmar o aditivo.
+                  </p>
                 </div>
               </div>
 

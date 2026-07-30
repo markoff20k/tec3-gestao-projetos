@@ -260,6 +260,8 @@ async function main() {
 
   if (!dryRun && replaceAll) {
     await prisma.$executeRawUnsafe('TRUNCATE TABLE "time_entries" RESTART IDENTITY CASCADE');
+  } else if (!dryRun) {
+    await prisma.timeEntry.deleteMany({ where: { isLegacyImport: true } });
   }
 
   const createRows: Array<{
@@ -271,6 +273,7 @@ async function main() {
     status: string;
     approvedById: string | null;
     approvedAt: Date | null;
+    isLegacyImport: boolean;
   }> = [];
 
   let skippedEntryMissingProject = 0;
@@ -315,6 +318,7 @@ async function main() {
         status: approved ? 'approved' : 'pending',
         approvedById: approved ? approvedById : null,
         approvedAt: approved ? entryDate : null,
+        isLegacyImport: true,
       });
     }
   }

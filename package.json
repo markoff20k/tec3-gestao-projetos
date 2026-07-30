@@ -31,7 +31,8 @@
     "link:proposal:legacy-fields": "tsx scripts/link-legacy-proposal-fields.ts",
     "link:proposal:remaining-fields": "tsx scripts/link-legacy-proposal-remaining-fields.ts",
     "normalize:proposal:revision-codes": "tsx scripts/normalize-proposal-revision-codes.ts",
-    "import:legacy:proposals:postload": "tsx scripts/run-legacy-proposals-postload.ts"
+    "import:legacy:proposals:postload": "tsx scripts/run-legacy-proposals-postload.ts",
+    "sync:legacy": "tsx scripts/sync-legacy-full.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.18.0",

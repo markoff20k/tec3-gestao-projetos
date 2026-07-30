@@ -62,12 +62,10 @@ async function main() {
     {
       label: 'Importar aditivos/despesas legados',
       scriptPath: 'scripts/import-legacy-proposal-extras-sql.ts',
-      args: ['--replace-all'],
     },
     {
       label: 'Importar valores por categoria legados',
       scriptPath: 'scripts/import-legacy-proposal-category-values-sql.ts',
-      args: ['--replace-all'],
     },
   ];
 

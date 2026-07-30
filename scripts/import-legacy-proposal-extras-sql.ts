@@ -302,6 +302,10 @@ async function main() {
     console.log('Modo replace-all ativado: limpando proposal_additives e proposal_expenses...');
     await prisma.$executeRawUnsafe('TRUNCATE TABLE "proposal_additives", "proposal_expenses" RESTART IDENTITY CASCADE');
     console.log('Tabelas de extras limpas com sucesso.');
+  } else {
+    console.log('Removendo apenas aditivos/despesas previamente importados do legado (preservando registros nativos)...');
+    await prisma.proposalAdditive.deleteMany({ where: { isLegacyImport: true } });
+    await prisma.proposalExpense.deleteMany({ where: { isLegacyImport: true } });
   }
 
   let additivesCreated = 0;
@@ -339,6 +343,7 @@ async function main() {
         subcontractValue: parseNumber(additive.valorSubcontratacao),
         mobilizationValue: parseNumber(additive.valorMobilizacao),
         readjustValue: parseNumber(additive.valorReajuste),
+        isLegacyImport: true,
       },
     });
 
@@ -379,6 +384,7 @@ async function main() {
         description: normalizeText(expense.descricao) ?? 'Despesa legada',
         reimbursable: (normalizeText(expense.reembolsavel) ?? '').toLowerCase() === 's',
         value: parseNumber(expense.valor),
+        isLegacyImport: true,
       },
     });
 

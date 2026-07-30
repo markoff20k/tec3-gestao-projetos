@@ -490,6 +490,9 @@ export interface ProposalTapDraft {
   subcontractForecastDetails?: string;
   projectAnalystId?: string | null;
   projectAnalystName?: string | null;
+  additiveProjectId?: string | null;
+  projectCoordinatorId?: string | null;
+  projectCoordinatorName?: string | null;
   notes: string;
   startDate?: string | null;
   endDate?: string | null;
@@ -501,6 +504,7 @@ export interface ProposalTapDraft {
 export interface ProposalTapGenerateResponse {
   proposal: Proposal;
   project: Project;
+  isAdditive?: boolean;
 }
 
 export interface ProposalExpenseItem {

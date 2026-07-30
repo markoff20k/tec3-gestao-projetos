@@ -398,6 +398,8 @@ async function main() {
   await prisma.$transaction(async (tx) => {
     if (replaceAll) {
       await tx.proposalCategoryValue.deleteMany({});
+    } else {
+      await tx.proposalCategoryValue.deleteMany({ where: { isLegacyImport: true } });
     }
 
     const chunkSize = 1000;
@@ -412,10 +414,11 @@ async function main() {
           customName: row.customName,
           value: row.value as any,
           hours: row.hours,
+          isLegacyImport: true,
         })),
       });
     }
-  });
+  }, { timeout: 120000 });
 
   const [totalImported, proposalsWithCategoryValues] = await Promise.all([
     prisma.proposalCategoryValue.count(),

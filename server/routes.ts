@@ -142,7 +142,7 @@ const JWT_EXPIRES_SECONDS = JWT_EXPIRES_MINUTES * 60;
 
 const ALLOWED_STATUS_TRANSITIONS: Record<string, string[]> = {
   // New (legacy) statuses - aligned with the screenshot
-  em_elaboracao: ['em_analise', 'com_sucesso', 'cancelada'],
+  em_elaboracao: ['em_analise', 'com_sucesso', 'sucesso_aditivo', 'cancelada'],
   em_analise: ['em_elaboracao', 'com_sucesso', 'sucesso_aditivo', 'nao_sucesso', 'cancelada', 'declinio'],
   com_sucesso: [],
   sucesso_aditivo: [],
@@ -526,6 +526,9 @@ type ProposalTapDraft = {
   subcontractForecastDetails: string;
   projectAnalystId?: string | null;
   projectAnalystName?: string | null;
+  additiveProjectId?: string | null;
+  projectCoordinatorId?: string | null;
+  projectCoordinatorName?: string | null;
   notes: string;
   startDate?: string | null;
   endDate?: string | null;
@@ -665,7 +668,11 @@ function resolveProposalTapErrorStatus(error: unknown): number {
     message === 'Informe o nome do projeto no TAP' ||
     message === 'Selecione o analista de projeto no TAP' ||
     message === 'Proposta ja convertida em projeto' ||
-    message === 'Apenas propostas com sucesso podem ser convertidas'
+    message === 'Apenas propostas com sucesso podem ser convertidas' ||
+    message === 'Selecione o projeto que recebera o aditivo' ||
+    message === 'Projeto selecionado para o aditivo nao foi encontrado.' ||
+    message === 'Selecione o analista de projeto para vincular o aditivo' ||
+    message === 'Selecione o coordenador do projeto para vincular o aditivo'
   ) {
     return 400;
   }
@@ -1014,6 +1021,61 @@ function renderProjectTapHtml(
 </html>`;
 }
 
+function renderProjectAdditiveHtml(payload: {
+  generatedAt: string;
+  proposal: { code: string; title: string };
+  project: { code: string; name: string };
+  additiveHours: number;
+  additiveValue: number;
+}) {
+  const proposalCode = escapeProjectTapEmailHtml(payload.proposal.code || '-');
+  const proposalTitle = escapeProjectTapEmailHtml(payload.proposal.title || '-');
+  const projectCode = escapeProjectTapEmailHtml(payload.project.code || '-');
+  const projectName = escapeProjectTapEmailHtml(payload.project.name || '-');
+  const additiveHours = escapeProjectTapEmailHtml(String(payload.additiveHours || 0));
+  const additiveValue = escapeProjectTapEmailHtml(formatProjectTapEmailCurrency(payload.additiveValue || 0));
+  const generatedAt = escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.generatedAt));
+
+  const row = (label: string, value: string) => `
+    <tr>
+      <td style="padding:10px 12px;border:1px solid #d1d5db;background:#f3f4f6;font-size:13px;font-weight:700;color:#111827;width:220px;">${escapeProjectTapEmailHtml(label)}</td>
+      <td style="padding:10px 12px;border:1px solid #d1d5db;background:#ffffff;font-size:13px;color:#111827;">${value}</td>
+    </tr>`;
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Aditivo ${proposalCode}</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#eef2f7;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#eef2f7;">
+      <tr>
+        <td align="center" style="padding:24px 12px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;max-width:640px;">
+            <tr>
+              <td style="padding:14px 18px;background:linear-gradient(90deg,#0d9488 0%,#14b8a6 100%);border-radius:10px 10px 0 0;color:#ffffff;font-size:13px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;">Registro de Aditivo</td>
+            </tr>
+            <tr>
+              <td style="background:#ffffff;border:1px solid #d1d5db;border-top:0;border-radius:0 0 10px 10px;padding:14px 10px 20px 10px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                  ${row('Proposta (aditivo)', proposalCode)}
+                  ${row('Título da proposta', proposalTitle)}
+                  ${row('Projeto incrementado', `${projectCode} - ${projectName}`)}
+                  ${row('Horas incrementadas', additiveHours)}
+                  ${row('Valor incrementado', additiveValue)}
+                </table>
+                <div style="padding-top:14px;font-size:12px;line-height:1.7;color:#475569;text-align:right;">Gerado em: ${generatedAt}</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
 type PostmarkEmailAttachment = {
   Name: string;
   Content: string;
@@ -1193,6 +1255,70 @@ async function sendProjectTapEmail(params: {
       TextBody: textBody,
       HtmlBody: htmlBody,
       Attachments: emailAttachments.length > 0 ? emailAttachments : undefined,
+      MessageStream: 'outbound',
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `Postmark returned ${response.status}`);
+  }
+
+  return { ok: true as const };
+}
+
+async function sendProjectAdditiveEmail(params: {
+  recipients: string[];
+  project: { id: string; code: string; name: string };
+  proposal: { code: string; title: string };
+  additiveHours: number;
+  additiveValue: number;
+}) {
+  const serverToken = String(process.env.POSTMARK_SERVER_TOKEN || '').trim();
+  const fromEmail = String(process.env.POSTMARK_FROM_EMAIL || '').trim();
+  const recipients = params.recipients.filter(Boolean);
+
+  if (!serverToken || !fromEmail || recipients.length === 0) {
+    return { ok: false, reason: 'postmark_not_configured' as const };
+  }
+
+  const { projectUrl } = buildProjectTapEmailLinks(params.project.id);
+  const subject = `Aditivo no Projeto ${params.project.code} · ${params.project.name}`;
+  const additiveValueFormatted = formatProjectTapEmailCurrency(params.additiveValue || 0);
+
+  const textBody = [
+    `Um aditivo foi vinculado ao projeto ${params.project.code} - ${params.project.name}.`,
+    '',
+    `Proposta (aditivo): ${params.proposal.code}`,
+    `Título da proposta: ${params.proposal.title}`,
+    `Horas incrementadas: ${params.additiveHours}`,
+    `Valor incrementado: ${additiveValueFormatted}`,
+    projectUrl ? `Acesse o projeto: ${projectUrl}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const htmlBody = renderProjectAdditiveHtml({
+    generatedAt: new Date().toISOString(),
+    proposal: { code: params.proposal.code, title: params.proposal.title },
+    project: { code: params.project.code, name: params.project.name },
+    additiveHours: params.additiveHours,
+    additiveValue: params.additiveValue,
+  });
+
+  const response = await fetch('https://api.postmarkapp.com/email', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Postmark-Server-Token': serverToken,
+    },
+    body: JSON.stringify({
+      From: fromEmail,
+      To: recipients.join(','),
+      Subject: subject,
+      TextBody: textBody,
+      HtmlBody: htmlBody,
       MessageStream: 'outbound',
     }),
   });
@@ -1457,6 +1583,172 @@ export async function registerRoutes(
     'approved',
   ]);
 
+  async function findPreviousRevisionProjectId(proposal: any): Promise<string | null> {
+    const baseCode = String(proposal.code || '').replace(/-R\d+$/i, '');
+    const revision = proposal.revision ?? 0;
+    if (!baseCode || revision <= 0) return null;
+
+    const previousRevision = revision - 1;
+    const previousProposal = await prisma.proposal.findFirst({
+      where: {
+        revision: previousRevision,
+        OR: [
+          { code: baseCode },
+          { code: `${baseCode}-R${previousRevision}` },
+        ],
+      },
+    });
+
+    return previousProposal?.projectId ?? null;
+  }
+
+  const linkProposalAdditiveToProject = async (params: {
+    proposal: any;
+    tapDraft?: Partial<ProposalTapDraft> | null;
+    actorUserId?: string | null;
+    req: Request;
+  }) => {
+    const { proposal, actorUserId, req } = params;
+
+    if (proposal.projectId) {
+      throw new Error('Proposta ja convertida em projeto');
+    }
+
+    const projectAnalystId = typeof params.tapDraft?.projectAnalystId === 'string' && params.tapDraft.projectAnalystId.trim()
+      ? params.tapDraft.projectAnalystId.trim()
+      : null;
+    const projectAnalystName = typeof params.tapDraft?.projectAnalystName === 'string' ? params.tapDraft.projectAnalystName.trim() : null;
+
+    if (!projectAnalystId) {
+      throw new Error('Selecione o analista de projeto para vincular o aditivo');
+    }
+
+    const projectCoordinatorId = typeof params.tapDraft?.projectCoordinatorId === 'string' && params.tapDraft.projectCoordinatorId.trim()
+      ? params.tapDraft.projectCoordinatorId.trim()
+      : null;
+    const projectCoordinatorName = typeof params.tapDraft?.projectCoordinatorName === 'string' ? params.tapDraft.projectCoordinatorName.trim() : null;
+
+    if (!projectCoordinatorId) {
+      throw new Error('Selecione o coordenador do projeto para vincular o aditivo');
+    }
+
+    const additiveProjectId = typeof params.tapDraft?.additiveProjectId === 'string' && params.tapDraft.additiveProjectId.trim()
+      ? params.tapDraft.additiveProjectId.trim()
+      : null;
+
+    if (!additiveProjectId) {
+      throw new Error('Selecione o projeto que recebera o aditivo');
+    }
+
+    const project = await storage.getProject(additiveProjectId);
+    if (!project) {
+      throw new Error('Projeto selecionado para o aditivo nao foi encontrado.');
+    }
+
+    const additiveHours = Number(proposal.estimatedHours || 0);
+    const additiveValue = Number(proposal.totalValue || 0);
+
+    await storage.updateProject(project.id, {
+      budgetHours: Number(project.budgetHours || 0) + additiveHours,
+      budgetValue: Number(project.budgetValue || 0) + additiveValue,
+      coordinatorId: projectCoordinatorId,
+    } as any);
+
+    const generatedAt = new Date();
+    const additivePayload = {
+      generatedAt: generatedAt.toISOString(),
+      proposal: { id: proposal.id, code: proposal.code, revision: proposal.revision ?? 0, title: proposal.title },
+      project: { id: project.id, code: project.code, name: project.name },
+      additiveHours,
+      additiveValue,
+      projectAnalystId,
+      projectAnalystName,
+      projectCoordinatorId,
+      projectCoordinatorName,
+    };
+
+    const tap = await storage.createProjectTap({
+      projectId: project.id,
+      title: `Aditivo ${proposal.code}`,
+      payload: additivePayload as any,
+      htmlContent: renderProjectAdditiveHtml(additivePayload),
+      generatedById: actorUserId ?? null,
+    });
+
+    await storage.updateProposal(proposal.id, {
+      projectId: project.id,
+      tapPayload: { projectAnalystId, projectAnalystName, projectCoordinatorId, projectCoordinatorName } as any,
+      tapStatus: PROPOSAL_TAP_STATUS.GENERATED,
+      tapGeneratedAt: generatedAt,
+      tapGeneratedById: actorUserId ?? null,
+      tapLastEmailError: null,
+    } as any);
+
+    const [coordinator, analyst] = await Promise.all([
+      storage.getUser(projectCoordinatorId),
+      storage.getUser(projectAnalystId),
+    ]);
+
+    const recipients = Array.from(new Set(
+      [coordinator?.email, analyst?.email].filter((email): email is string => Boolean(email))
+    ));
+
+    let emailError: string | null = null;
+    if (recipients.length === 0) {
+      emailError = 'Coordenador e analista do projeto nao possuem e-mail cadastrado';
+    } else {
+      try {
+        const emailResult = await sendProjectAdditiveEmail({
+          recipients,
+          project,
+          proposal: { code: proposal.code, title: proposal.title },
+          additiveHours,
+          additiveValue,
+        });
+        if (!emailResult.ok) {
+          emailError = 'Postmark não configurado para envio do aditivo';
+        }
+      } catch (error) {
+        emailError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    await storage.updateProposal(proposal.id, {
+      tapStatus: emailError ? PROPOSAL_TAP_STATUS.FAILED : PROPOSAL_TAP_STATUS.SENT,
+      tapSentAt: emailError ? null : new Date(),
+      tapLastEmailError: emailError,
+    } as any);
+
+    if (typeof actorUserId === 'string') {
+      await safeCreateUserActivity(req, actorUserId, {
+        category: 'system',
+        action: 'PROPOSAL_ADDITIVE_LINKED',
+        title: `Aditivo vinculado ao projeto — ${proposal.code} -> ${project.code}`,
+        metadata: {
+          proposalId: proposal.id,
+          code: proposal.code,
+          revision: proposal.revision ?? null,
+          projectId: project.id,
+          projectCode: project.code,
+          additiveHours,
+          additiveValue,
+          tapId: tap.id,
+          notifiedEmails: recipients,
+          emailError,
+        },
+      });
+    }
+
+    const finalProject = await storage.getProject(project.id);
+    const finalProposal = await storage.getProposal(proposal.id);
+
+    return {
+      project: finalProject,
+      proposal: finalProposal,
+      isAdditive: true,
+    };
+  };
+
   const generateProposalTapFromProposal = async (params: {
     proposal: any;
     tapDraft?: ProposalTapDraft | null;
@@ -1464,8 +1756,6 @@ export async function registerRoutes(
     req: Request;
   }) => {
     const { proposal, actorUserId, req } = params;
-    const previousTapDraft = normalizeProposalTapDraft(proposal, proposal.tapPayload ?? null);
-    const tapDraft = normalizeProposalTapDraft(proposal, params.tapDraft ?? proposal.tapPayload ?? null);
 
     if (proposal.projectId) {
       throw new Error('Proposta ja convertida em projeto');
@@ -1474,6 +1764,13 @@ export async function registerRoutes(
     if (!conversionAllowedStatuses.has(proposal.status)) {
       throw new Error('Apenas propostas com sucesso podem ser convertidas');
     }
+
+    if (proposal.status === 'sucesso_aditivo') {
+      return linkProposalAdditiveToProject({ proposal, tapDraft: params.tapDraft, actorUserId, req });
+    }
+
+    const previousTapDraft = normalizeProposalTapDraft(proposal, proposal.tapPayload ?? null);
+    const tapDraft = normalizeProposalTapDraft(proposal, params.tapDraft ?? proposal.tapPayload ?? null);
 
     validateProposalTapDraft(tapDraft);
 
@@ -2429,13 +2726,33 @@ export async function registerRoutes(
         }
       }
 
-      const proposal = await storage.updateProposal(req.params.id, req.body);
+      const updateData = { ...req.body };
+      let autoLinkedProjectId: string | null = null;
+
+      if (updateData.status === 'com_sucesso' && existing.status !== 'com_sucesso' && !existing.projectId && (existing.revision ?? 0) > 0) {
+        const previousProjectId = await findPreviousRevisionProjectId(existing);
+        if (previousProjectId) {
+          const previousProject = await storage.getProject(previousProjectId);
+          if (previousProject) {
+            const additiveHours = Number(existing.estimatedHours || 0);
+            const additiveValue = Number(existing.totalValue || 0);
+            await storage.updateProject(previousProject.id, {
+              budgetHours: Number(previousProject.budgetHours || 0) + additiveHours,
+              budgetValue: Number(previousProject.budgetValue || 0) + additiveValue,
+            } as any);
+            updateData.projectId = previousProject.id;
+            autoLinkedProjectId = previousProject.id;
+          }
+        }
+      }
+
+      const proposal = await storage.updateProposal(req.params.id, updateData);
 
       const responseProposal = await storage.getProposal(req.params.id);
 
       const userId = (req as any).user?.sub;
       if (typeof userId === 'string') {
-        const requestedStatus = typeof req.body?.status === 'string' ? req.body.status : undefined;
+        const requestedStatus = typeof updateData?.status === 'string' ? updateData.status : undefined;
         const statusChanged = Boolean(requestedStatus && requestedStatus !== existing.status);
         const fieldsChanged = req.body && typeof req.body === 'object' ? Object.keys(req.body) : [];
 
@@ -2455,6 +2772,20 @@ export async function registerRoutes(
               : {}),
           },
         });
+
+        if (autoLinkedProjectId) {
+          await safeCreateUserActivity(req, userId, {
+            category: 'system',
+            action: 'PROPOSAL_PROJECT_INCREMENTED',
+            title: `Projeto incrementado por revisão — ${existing.code}`,
+            metadata: {
+              proposalId: existing.id,
+              code: existing.code,
+              revision: (existing as any).revision ?? null,
+              projectId: autoLinkedProjectId,
+            },
+          });
+        }
       }
 
       res.json(responseProposal || proposal);

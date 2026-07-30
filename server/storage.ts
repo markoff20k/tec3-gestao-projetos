@@ -1240,7 +1240,7 @@ export class PrismaStorage implements IStorage {
           estimatedHours: latest.estimatedHours,
           expectedStartDate: latest.expectedStartDate,
           expectedEndDate: latest.expectedEndDate,
-          projectId: latest.projectId,
+          projectId: null,
           sentDate: latest.sentDate,
 
           activityType: latest.activityType,
