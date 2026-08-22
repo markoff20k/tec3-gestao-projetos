@@ -9,6 +9,7 @@ import {
   Landmark,
   Settings,
   Users,
+  HeartPulse,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -64,6 +65,7 @@ export const adminMenuItems: NavigationItem[] = [
   { path: '/categories', label: 'Categorias', icon: Tags, roles: ['admin'], description: 'Gerenciar categorias de proposta' },
   { path: '/cost-centers', label: 'Centros de Custo', icon: Landmark, roles: ['admin'], description: 'Gerenciar centros de custo' },
   { path: '/users', label: 'Profissionais da Tec3', icon: Users, roles: ['admin'], description: 'Gerenciar profissionais da Tec3' },
+  { path: '/project-health-rules', label: 'Regra Padrão de Saúde', icon: HeartPulse, roles: ['admin'], description: 'Configurar regra padrão do semáforo de saúde' },
 ];
 
 export const settingsNavigationItem: NavigationItem = {
@@ -86,6 +88,7 @@ export const pageDescriptions: Record<string, string> = {
   '/categories': 'Gerenciar categorias de proposta',
   '/cost-centers': 'Gerenciar centros de custo',
   '/users': 'Gerenciar profissionais da Tec3',
+  '/project-health-rules': 'Configurar regra padrão do semáforo de saúde',
   '/settings': 'Gerenciar preferências da conta',
 };
 

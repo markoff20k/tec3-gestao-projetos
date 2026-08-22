@@ -9,9 +9,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { Project, projectsApi, TimeEntry } from '@/lib/api';
@@ -67,6 +69,8 @@ function TimeApprovalsListSkeleton() {
 function PendingProjectRow({ project, canManageApprovals, isOpen, onOpenChange }: PendingProjectRowProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [rejectTarget, setRejectTarget] = useState<{ type: 'single'; entryId: string } | { type: 'bulk' } | null>(null);
+  const [rejectReasonInput, setRejectReasonInput] = useState('');
 
   const { data: projectEntries = [], isLoading: isLoadingProjectEntries } = useQuery<TimeEntry[]>({
     queryKey: ['/api/projects', project.id, 'time-entries'],
@@ -146,14 +150,8 @@ function PendingProjectRow({ project, canManageApprovals, isOpen, onOpenChange }
   };
 
   const handleRejectEntry = (entryId: string) => {
-    const reason = window.prompt('Motivo da rejeição (opcional):', '');
-    if (reason === null) return;
-
-    updateEntryStatusMutation.mutate({
-      entryId,
-      status: 'rejected',
-      rejectionReason: reason.trim() || null,
-    });
+    setRejectReasonInput('');
+    setRejectTarget({ type: 'single', entryId });
   };
 
   const handleApproveProjectPending = () => {
@@ -168,14 +166,29 @@ function PendingProjectRow({ project, canManageApprovals, isOpen, onOpenChange }
   const handleRejectProjectPending = () => {
     if (pendingEntries.length === 0) return;
 
-    const reason = window.prompt('Motivo da rejeição para os lançamentos deste projeto (opcional):', '');
-    if (reason === null) return;
+    setRejectReasonInput('');
+    setRejectTarget({ type: 'bulk' });
+  };
 
-    bulkUpdateEntryStatusMutation.mutate({
-      entryIds: pendingEntries.map((entry) => entry.id),
-      status: 'rejected',
-      rejectionReason: reason.trim() || null,
-    });
+  const confirmReject = () => {
+    if (!rejectTarget) return;
+    const rejectionReason = rejectReasonInput.trim() || null;
+
+    if (rejectTarget.type === 'single') {
+      updateEntryStatusMutation.mutate({
+        entryId: rejectTarget.entryId,
+        status: 'rejected',
+        rejectionReason,
+      });
+    } else {
+      bulkUpdateEntryStatusMutation.mutate({
+        entryIds: pendingEntries.map((entry) => entry.id),
+        status: 'rejected',
+        rejectionReason,
+      });
+    }
+
+    setRejectTarget(null);
   };
 
   const disableActions = updateEntryStatusMutation.isPending || bulkUpdateEntryStatusMutation.isPending;
@@ -190,7 +203,7 @@ function PendingProjectRow({ project, canManageApprovals, isOpen, onOpenChange }
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="text-xs">
-              {pendingEntries.length || Number(project.pendingHours || 0) > 0 ? pendingEntries.length || '...' : 0} pendente(s)
+              {isOpen ? pendingEntries.length : (Number(project.pendingHours || 0) > 0 ? '–' : 0)} pendente(s)
             </Badge>
             <Badge variant="outline" className="text-xs">
               {isOpen ? pendingHours.toFixed(1) : Number(project.pendingHours || 0).toFixed(1)}h pendentes
@@ -300,6 +313,34 @@ function PendingProjectRow({ project, canManageApprovals, isOpen, onOpenChange }
           </div>
         </CollapsibleContent>
       </div>
+
+      <Dialog open={Boolean(rejectTarget)} onOpenChange={(open) => { if (!open) setRejectTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {rejectTarget?.type === 'bulk' ? 'Rejeitar lançamentos pendentes' : 'Rejeitar lançamento'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reject-reason">Motivo da rejeição (opcional)</Label>
+            <Textarea
+              id="reject-reason"
+              value={rejectReasonInput}
+              onChange={(event) => setRejectReasonInput(event.target.value)}
+              placeholder="Explique o motivo da rejeição..."
+              rows={3}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setRejectTarget(null)} disabled={disableActions}>
+              Cancelar
+            </Button>
+            <Button type="button" variant="destructive" onClick={confirmReject} disabled={disableActions}>
+              Confirmar rejeição
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Collapsible>
   );
 }

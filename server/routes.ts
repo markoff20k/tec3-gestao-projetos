@@ -1,7 +1,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { type Server } from "http";
 import { prisma } from "./db";
-import { storage, type NotificationType } from "./storage";
+import { storage, type NotificationType, type HealthRuleInput } from "./storage";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
@@ -216,6 +216,153 @@ function isProjectMembersTableMissing(error: unknown): boolean {
 
 function normalizeStatus(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
+}
+
+type ProjectHealthLevel = 'green' | 'yellow' | 'red';
+
+interface ProjectHealthRuleFields {
+  hoursEnabled: boolean;
+  hoursYellow: number;
+  hoursRed: number;
+  financialEnabled: boolean;
+  financialYellow: number;
+  financialRed: number;
+  pendingHoursEnabled: boolean;
+  pendingHoursYellow: number;
+  pendingHoursRed: number;
+  scheduleEnabled: boolean;
+  scheduleYellowDays: number;
+  scheduleRedDays: number;
+}
+
+interface ProjectHealthMetricResult {
+  key: 'hours' | 'financial' | 'pendingHours' | 'schedule';
+  label: string;
+  level: ProjectHealthLevel;
+  value: number;
+  displayValue: string;
+}
+
+interface ProjectHealthResult {
+  level: ProjectHealthLevel;
+  ruleSource: 'project' | 'global';
+  metrics: ProjectHealthMetricResult[];
+}
+
+function classifyHealthMetric(value: number, yellowThreshold: number, redThreshold: number): ProjectHealthLevel {
+  if (value >= redThreshold) return 'red';
+  if (value >= yellowThreshold) return 'yellow';
+  return 'green';
+}
+
+function computeProjectHealth(
+  project: { budgetHours: number; consumedHours: number; pendingHours: number; budgetValue: number; endDate: Date | null; status: string },
+  rule: ProjectHealthRuleFields,
+  ruleSource: 'project' | 'global'
+): ProjectHealthResult {
+  const metrics: ProjectHealthMetricResult[] = [];
+
+  if (rule.hoursEnabled) {
+    const consumptionPct = project.budgetHours > 0 ? (project.consumedHours / project.budgetHours) * 100 : 0;
+    metrics.push({
+      key: 'hours',
+      label: 'Consumo de horas',
+      level: classifyHealthMetric(consumptionPct, rule.hoursYellow, rule.hoursRed),
+      value: Number(consumptionPct.toFixed(1)),
+      displayValue: `${consumptionPct.toFixed(1)}%`,
+    });
+  }
+
+  if (rule.financialEnabled) {
+    const budgetValue = project.budgetValue;
+    const hourRate = project.budgetHours > 0 && budgetValue > 0 ? budgetValue / project.budgetHours : 0;
+    const eac = Math.max(budgetValue, (project.consumedHours + project.pendingHours) * hourRate);
+    const variancePct = budgetValue > 0 ? ((eac - budgetValue) / budgetValue) * 100 : 0;
+    metrics.push({
+      key: 'financial',
+      label: 'Desvio financeiro (EAC)',
+      level: classifyHealthMetric(variancePct, rule.financialYellow, rule.financialRed),
+      value: Number(variancePct.toFixed(1)),
+      displayValue: `${variancePct.toFixed(1)}%`,
+    });
+  }
+
+  if (rule.pendingHoursEnabled) {
+    metrics.push({
+      key: 'pendingHours',
+      label: 'Horas pendentes de aprovação',
+      level: classifyHealthMetric(project.pendingHours, rule.pendingHoursYellow, rule.pendingHoursRed),
+      value: Number(project.pendingHours.toFixed(1)),
+      displayValue: `${project.pendingHours.toFixed(1)}h`,
+    });
+  }
+
+  if (rule.scheduleEnabled) {
+    let delayDays = 0;
+    if (project.endDate && project.status !== 'completed' && project.status !== 'cancelled') {
+      delayDays = Math.max(0, Math.floor((Date.now() - project.endDate.getTime()) / (1000 * 60 * 60 * 24)));
+    }
+    metrics.push({
+      key: 'schedule',
+      label: 'Atraso de prazo',
+      level: classifyHealthMetric(delayDays, rule.scheduleYellowDays, rule.scheduleRedDays),
+      value: delayDays,
+      displayValue: delayDays > 0 ? `${delayDays} dia(s)` : 'No prazo',
+    });
+  }
+
+  const level: ProjectHealthLevel = metrics.some((metric) => metric.level === 'red')
+    ? 'red'
+    : metrics.some((metric) => metric.level === 'yellow')
+      ? 'yellow'
+      : 'green';
+
+  return { level, ruleSource, metrics };
+}
+
+async function resolveEffectiveHealthRule(projectId: string): Promise<{ rule: ProjectHealthRuleFields; source: 'project' | 'global' }> {
+  const projectRule = await storage.getProjectHealthRule(projectId);
+  if (projectRule) return { rule: projectRule, source: 'project' };
+  const globalRule = await storage.getGlobalHealthRule();
+  return { rule: globalRule, source: 'global' };
+}
+
+function sanitizeHealthRuleInput(body: any): { data: HealthRuleInput; error: string | null } {
+  const toBool = (value: any, fallback: boolean) => (typeof value === 'boolean' ? value : fallback);
+  const toInt = (value: any, fallback: number) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : fallback;
+  };
+
+  const data: HealthRuleInput = {
+    hoursEnabled: toBool(body.hoursEnabled, true),
+    hoursYellow: toInt(body.hoursYellow, 80),
+    hoursRed: toInt(body.hoursRed, 100),
+    financialEnabled: toBool(body.financialEnabled, true),
+    financialYellow: toInt(body.financialYellow, 5),
+    financialRed: toInt(body.financialRed, 12),
+    pendingHoursEnabled: toBool(body.pendingHoursEnabled, true),
+    pendingHoursYellow: toInt(body.pendingHoursYellow, 16),
+    pendingHoursRed: toInt(body.pendingHoursRed, 40),
+    scheduleEnabled: toBool(body.scheduleEnabled, true),
+    scheduleYellowDays: toInt(body.scheduleYellowDays, 7),
+    scheduleRedDays: toInt(body.scheduleRedDays, 15),
+  };
+
+  const pairs: Array<[keyof HealthRuleInput, keyof HealthRuleInput, string]> = [
+    ['hoursYellow', 'hoursRed', 'Consumo de horas'],
+    ['financialYellow', 'financialRed', 'Desvio financeiro'],
+    ['pendingHoursYellow', 'pendingHoursRed', 'Horas pendentes'],
+    ['scheduleYellowDays', 'scheduleRedDays', 'Atraso de prazo'],
+  ];
+
+  for (const [yellowKey, redKey, label] of pairs) {
+    if (Number(data[yellowKey]) > Number(data[redKey])) {
+      return { data, error: `O limite amarelo de "${label}" deve ser menor ou igual ao limite vermelho.` };
+    }
+  }
+
+  return { data, error: null };
 }
 
 function parseNumericValue(value: unknown): number {
@@ -2636,11 +2783,31 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  app.get('/api/proposals', authenticateToken, requireRoles(['commercial']), async (_req, res) => {
-    const proposals = await storage.getAllProposals();
+  app.get('/api/proposals', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const clients = await storage.getAllClients();
     const clientMap = new Map(clients.map(c => [c.id, c]));
-    
+
+    const pageRaw = typeof req.query.page === 'string' ? Number.parseInt(req.query.page, 10) : NaN;
+    const pageSizeRaw = typeof req.query.pageSize === 'string' ? Number.parseInt(req.query.pageSize, 10) : NaN;
+    const isPaginated = Number.isFinite(pageRaw) && Number.isFinite(pageSizeRaw) && pageRaw > 0 && pageSizeRaw > 0;
+
+    if (isPaginated) {
+      const page = pageRaw;
+      const pageSize = Math.min(pageSizeRaw, 200);
+      const [proposals, total] = await Promise.all([
+        storage.getAllProposals({ skip: (page - 1) * pageSize, take: pageSize }),
+        storage.getProposalsCount(),
+      ]);
+
+      const enriched = proposals.map(p => ({
+        ...p,
+        client: clientMap.get(p.clientId),
+      }));
+
+      return res.json({ items: enriched, total, page, pageSize });
+    }
+
+    const proposals = await storage.getAllProposals();
     const enriched = proposals.map(p => ({
       ...p,
       client: clientMap.get(p.clientId),
@@ -2656,6 +2823,83 @@ export async function registerRoutes(
     const client = await storage.getClient(proposal.clientId);
     res.json({ ...proposal, client });
   });
+
+  app.get('/api/proposals/:id/activities', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+    const proposal = await storage.getProposal(req.params.id);
+    if (!proposal) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+    const activities = await storage.getEntityActivities('proposalId', req.params.id);
+    res.json(activities);
+  });
+
+  function validateProposalDateOrdering(
+    body: Record<string, any>,
+    existing?: Record<string, any> | null,
+  ): string | null {
+    const resolveDate = (field: string): Date | null => {
+      const raw = Object.prototype.hasOwnProperty.call(body, field) ? body[field] : existing?.[field];
+      if (!raw) return null;
+      const parsed = new Date(raw);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const expectedStartDate = resolveDate('expectedStartDate');
+    const expectedEndDate = resolveDate('expectedEndDate');
+    if (expectedStartDate && expectedEndDate && expectedEndDate < expectedStartDate) {
+      return 'A data prevista de término não pode ser anterior à data prevista de início';
+    }
+
+    const sentDate = resolveDate('sentDate');
+    const dueDate = resolveDate('dueDate');
+    if (sentDate && dueDate && dueDate < sentDate) {
+      return 'A data de validade não pode ser anterior à data de emissão';
+    }
+
+    return null;
+  }
+
+  function validateProjectBusinessData(
+    body: Record<string, any>,
+    existing?: Record<string, any> | null,
+  ): string | null {
+    const resolveNumber = (field: string): number | null => {
+      const raw = Object.prototype.hasOwnProperty.call(body, field) ? body[field] : existing?.[field];
+      if (raw === undefined || raw === null || raw === '') return null;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : null;
+    };
+
+    const resolveDate = (field: string): Date | null => {
+      const raw = Object.prototype.hasOwnProperty.call(body, field) ? body[field] : existing?.[field];
+      if (!raw) return null;
+      const parsed = new Date(raw);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const budgetHours = resolveNumber('budgetHours');
+    if (budgetHours !== null && budgetHours < 0) {
+      return 'O orçamento em horas do projeto não pode ser negativo';
+    }
+
+    const budgetValue = resolveNumber('budgetValue');
+    if (budgetValue !== null && budgetValue < 0) {
+      return 'O valor do projeto não pode ser negativo';
+    }
+
+    const dailyLimitHours = resolveNumber('dailyLimitHours');
+    if (dailyLimitHours !== null && dailyLimitHours <= 0) {
+      return 'O limite diário de horas do projeto deve ser maior que zero';
+    }
+
+    const startDate = resolveDate('startDate');
+    const endDate = resolveDate('endDate');
+    if (startDate && endDate && endDate < startDate) {
+      return 'A data fim do projeto não pode ser anterior à data de início';
+    }
+
+    return null;
+  }
 
   app.post('/api/proposals', authenticateToken, requireRoles(['commercial']), async (req, res) => {
     const body = req.body ?? {};
@@ -2683,6 +2927,11 @@ export async function registerRoutes(
     }
     if (type === 'service_order' && !umbrellaRef) {
       return res.status(400).json({ message: 'Proposta original (guarda-chuva) é obrigatória' });
+    }
+
+    const dateOrderingError = validateProposalDateOrdering(body);
+    if (dateOrderingError) {
+      return res.status(400).json({ message: dateOrderingError });
     }
 
     const proposal = await storage.createProposal(req.body);
@@ -2724,6 +2973,11 @@ export async function registerRoutes(
             message: `Transicao de status invalida de '${existing.status}' para '${req.body.status}'. Permitidos: ${allowed.join(', ') || 'nenhum'}`,
           });
         }
+      }
+
+      const dateOrderingError = validateProposalDateOrdering(req.body ?? {}, existing);
+      if (dateOrderingError) {
+        return res.status(400).json({ message: dateOrderingError });
       }
 
       const updateData = { ...req.body };
@@ -2881,36 +3135,6 @@ export async function registerRoutes(
       const message = typeof error?.message === 'string' ? error.message : 'Erro ao excluir proposta';
       res.status(500).json({ message });
     }
-  });
-
-  app.post('/api/proposals/convert', authenticateToken, requireRoles(['commercial']), async (req, res) => {
-    const { proposalId, projectName, startDate } = req.body;
-    
-    const proposal = await storage.getProposal(proposalId);
-    if (!proposal) {
-      return res.status(404).json({ message: 'Proposta nao encontrada' });
-    }
-
-    if (proposal.projectId) {
-      return res.status(400).json({ message: 'Proposta ja convertida em projeto' });
-    }
-
-    if (!conversionAllowedStatuses.has(proposal.status)) {
-      return res.status(400).json({ message: 'Apenas propostas com sucesso podem ser convertidas' });
-    }
-
-    const result = await generateProposalTapFromProposal({
-      proposal,
-      tapDraft: normalizeProposalTapDraft(proposal, {
-        ...(proposal.tapPayload && typeof proposal.tapPayload === 'object' ? proposal.tapPayload : {}),
-        projectName,
-        startDate,
-      }),
-      actorUserId: typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null,
-      req,
-    });
-
-    res.status(201).json(result.project);
   });
 
   app.put('/api/proposals/:id/tap', authenticateToken, requireRoles(['commercial']), async (req, res) => {
@@ -3179,14 +3403,39 @@ export async function registerRoutes(
         );
       }
     }
-    
-    const enriched = projects.map(p => ({
-      ...p,
-      client: clientMap.get(p.clientId),
-      consumedHours: approvedHoursByProject.get(p.id) || 0,
-      pendingHours: pendingHoursByProject.get(p.id) || 0,
-      isCurrentUserAllocated: requesterId ? allocatedProjectIds.has(p.id) : false,
-    }));
+
+    const globalHealthRule = await storage.getGlobalHealthRule();
+    const projectHealthRules = await prisma.projectHealthRule.findMany({
+      where: { projectId: { in: projects.map((p) => p.id) } },
+    });
+    const healthRuleByProject = new Map(projectHealthRules.map((rule) => [rule.projectId as string, rule]));
+
+    const enriched = projects.map(p => {
+      const consumedHours = approvedHoursByProject.get(p.id) || 0;
+      const pendingHours = pendingHoursByProject.get(p.id) || 0;
+      const projectRule = healthRuleByProject.get(p.id);
+      const health = computeProjectHealth(
+        {
+          budgetHours: p.budgetHours,
+          consumedHours,
+          pendingHours,
+          budgetValue: Number(p.budgetValue),
+          endDate: p.endDate,
+          status: p.status,
+        },
+        projectRule || globalHealthRule,
+        projectRule ? 'project' : 'global'
+      );
+
+      return {
+        ...p,
+        client: clientMap.get(p.clientId),
+        consumedHours,
+        pendingHours,
+        health,
+        isCurrentUserAllocated: requesterId ? allocatedProjectIds.has(p.id) : false,
+      };
+    });
     res.json(enriched);
   });
 
@@ -3281,6 +3530,20 @@ export async function registerRoutes(
     const pendingEntriesCount = entries.filter((entry) => entry.status === 'pending').length;
     const rejectedEntriesCount = entries.filter((entry) => entry.status === 'rejected').length;
 
+    const { rule: effectiveHealthRule, source: healthRuleSource } = await resolveEffectiveHealthRule(project.id);
+    const health = computeProjectHealth(
+      {
+        budgetHours: project.budgetHours,
+        consumedHours: approvedHours,
+        pendingHours: pendingApprovalHours,
+        budgetValue: Number(project.budgetValue),
+        endDate: project.endDate,
+        status: project.status,
+      },
+      effectiveHealthRule,
+      healthRuleSource
+    );
+
     res.json({
       ...project,
       client,
@@ -3302,7 +3565,92 @@ export async function registerRoutes(
         rejectedEntriesCount,
       },
       hoursByCollaborator,
+      health,
     });
+  });
+
+  app.get('/api/projects/health-rules/global', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const rule = await storage.getGlobalHealthRule();
+    res.json(rule);
+  });
+
+  app.put('/api/projects/health-rules/global', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const { data, error } = sanitizeHealthRuleInput(req.body || {});
+    if (error) {
+      return res.status(400).json({ message: error });
+    }
+
+    const actorId = (req as any).user?.sub as string | undefined;
+    const rule = await storage.upsertGlobalHealthRule(data, actorId ?? null);
+    res.json(rule);
+  });
+
+  app.get('/api/projects/:id/health-rule', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const actorId = (req as any).user?.sub as string | undefined;
+    const actorRole = (req as any).user?.role as Role | undefined;
+    const isAdmin = actorRole === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+
+    const { rule, source } = await resolveEffectiveHealthRule(project.id);
+    res.json({ rule, source, canEdit: isAdmin || isCoordinator });
+  });
+
+  app.put('/api/projects/:id/health-rule', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const actorId = (req as any).user?.sub as string | undefined;
+    const actorRole = (req as any).user?.role as Role | undefined;
+    const isAdmin = actorRole === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+
+    if (!isAdmin && !isCoordinator) {
+      return res.status(403).json({ message: 'Apenas o coordenador do projeto ou um administrador pode configurar as regras de saúde' });
+    }
+
+    const { data, error } = sanitizeHealthRuleInput(req.body || {});
+    if (error) {
+      return res.status(400).json({ message: error });
+    }
+
+    const rule = await storage.upsertProjectHealthRule(project.id, data, actorId ?? null);
+    res.json({ rule, source: 'project' as const });
+  });
+
+  app.delete('/api/projects/:id/health-rule', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const actorId = (req as any).user?.sub as string | undefined;
+    const actorRole = (req as any).user?.role as Role | undefined;
+    const isAdmin = actorRole === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+
+    if (!isAdmin && !isCoordinator) {
+      return res.status(403).json({ message: 'Apenas o coordenador do projeto ou um administrador pode remover a personalização de regras' });
+    }
+
+    await storage.deleteProjectHealthRule(project.id);
+    const globalRule = await storage.getGlobalHealthRule();
+    res.json({ rule: globalRule, source: 'global' as const });
+  });
+
+  app.get('/api/projects/:id/activities', authenticateToken, requireRoles(['projects', 'commercial']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+    const activities = await storage.getEntityActivities('projectId', req.params.id);
+    res.json(activities);
   });
 
   app.get('/api/projects/:id/tap', authenticateToken, requireRoles(['projects']), async (req, res) => {
@@ -3340,7 +3688,13 @@ export async function registerRoutes(
   });
 
   app.post('/api/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
-    const project = await storage.createProject(req.body);
+    const body = req.body ?? {};
+    const validationError = validateProjectBusinessData(body);
+    if (validationError) {
+      return res.status(400).json({ message: validationError });
+    }
+
+    const project = await storage.createProject(body);
     res.status(201).json(project);
   });
 
@@ -3569,6 +3923,16 @@ export async function registerRoutes(
   });
 
   app.put('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const existing = await storage.getProject(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const validationError = validateProjectBusinessData(req.body ?? {}, existing as Record<string, any>);
+    if (validationError) {
+      return res.status(400).json({ message: validationError });
+    }
+
     const project = await storage.updateProject(req.params.id, req.body);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -3721,6 +4085,11 @@ export async function registerRoutes(
       return res.status(401).json({ message: 'Usuário autenticado inválido' });
     }
 
+    const parsedHours = Number(hours);
+    if (!Number.isFinite(parsedHours) || parsedHours <= 0 || parsedHours > 24) {
+      return res.status(400).json({ message: 'Horas invalidas. Informe um valor entre 0.5 e 24.' });
+    }
+
     const normalizedAttachments = Array.isArray(attachments)
       ? attachments
           .filter((item: unknown) => item && typeof item === 'object')
@@ -3752,6 +4121,7 @@ export async function registerRoutes(
       if (!isProjectMembersTableMissing(error)) {
         throw error;
       }
+      console.warn(`Tabela project_members ausente; liberando lancamento de horas sem checagem de alocacao (projeto ${project.id}, usuario ${collaboratorId}).`);
       allocatedCount = 1;
     }
 
@@ -3767,10 +4137,10 @@ export async function registerRoutes(
       }
     }
 
-    const dailyEntries = await storage.getTimeEntriesByCollaboratorAndDate(collaboratorId, entryDate);
+    const dailyEntries = await storage.getTimeEntriesByCollaboratorAndDate(collaboratorId, entryDate, projectId);
     const totalDailyHours = dailyEntries.reduce((sum, e) => sum + parseFloat(String(e.hours)), 0);
 
-    if (totalDailyHours + hours > project.dailyLimitHours) {
+    if (totalDailyHours + parsedHours > project.dailyLimitHours) {
       return res.status(400).json({
         message: `Limite diario excedido. Atual: ${totalDailyHours}h, Limite: ${project.dailyLimitHours}h`,
       });
@@ -3781,16 +4151,110 @@ export async function registerRoutes(
       collaboratorId,
       costCenterId: normalizedCostCenterId,
       entryDate,
-      hours: String(hours),
+      hours: String(parsedHours),
       description,
       attachments: normalizedAttachments,
       status: project.requiresApproval ? 'pending' : 'approved',
-      approvedById: project.requiresApproval ? null : collaboratorId,
+      approvedById: null,
       approvedAt: project.requiresApproval ? null : new Date(),
       rejectionReason: null,
     });
 
     res.status(201).json(entry);
+  });
+
+  app.put('/api/projects/time-entries/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const entry = await storage.getTimeEntry(req.params.id);
+    if (!entry) {
+      return res.status(404).json({ message: 'Lançamento não encontrado' });
+    }
+
+    const actorId = (req as any).user?.sub as string | undefined;
+    if (!actorId || entry.collaboratorId !== actorId) {
+      return res.status(403).json({ message: 'Você só pode editar os seus próprios lançamentos' });
+    }
+
+    if (entry.status !== 'pending') {
+      return res.status(400).json({ message: 'Somente lançamentos pendentes podem ser editados' });
+    }
+
+    const project = await storage.getProject(entry.projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto não encontrado para este lançamento' });
+    }
+
+    const { costCenterId, entryDate, hours, description, attachments } = req.body;
+
+    const parsedHours = Number(hours);
+    if (!Number.isFinite(parsedHours) || parsedHours <= 0 || parsedHours > 24) {
+      return res.status(400).json({ message: 'Horas invalidas. Informe um valor entre 0.5 e 24.' });
+    }
+
+    const normalizedAttachments = Array.isArray(attachments)
+      ? attachments
+          .filter((item: unknown) => item && typeof item === 'object')
+          .map((item: any) => ({
+            name: typeof item.name === 'string' ? item.name.trim() : '',
+            objectPath: typeof item.objectPath === 'string' ? item.objectPath.trim() : '',
+            contentType: typeof item.contentType === 'string' ? item.contentType.trim() : 'application/octet-stream',
+            size: Number(item.size) || 0,
+          }))
+          .filter((item) => item.name && item.objectPath)
+      : entry.attachments;
+
+    const normalizedCostCenterId = typeof costCenterId === 'string' && costCenterId.trim() ? costCenterId.trim() : null;
+    if (normalizedCostCenterId) {
+      const costCenter = await storage.getCostCenter(normalizedCostCenterId);
+      if (!costCenter || !costCenter.isActive) {
+        return res.status(400).json({ message: 'Centro de custo inválido' });
+      }
+    }
+
+    const normalizedEntryDate = typeof entryDate === 'string' && entryDate ? entryDate : entry.entryDate;
+
+    const dailyEntries = await storage.getTimeEntriesByCollaboratorAndDate(entry.collaboratorId, normalizedEntryDate as any, entry.projectId);
+    const totalDailyHours = dailyEntries
+      .filter((e) => e.id !== entry.id)
+      .reduce((sum, e) => sum + parseFloat(String(e.hours)), 0);
+
+    if (totalDailyHours + parsedHours > project.dailyLimitHours) {
+      return res.status(400).json({
+        message: `Limite diario excedido. Atual: ${totalDailyHours}h, Limite: ${project.dailyLimitHours}h`,
+      });
+    }
+
+    const updatedEntry = await storage.updateTimeEntry(entry.id, {
+      costCenterId: normalizedCostCenterId,
+      entryDate: new Date(normalizedEntryDate as any),
+      hours: String(parsedHours),
+      description,
+      attachments: normalizedAttachments,
+    } as Partial<any>);
+
+    res.json(updatedEntry);
+  });
+
+  app.delete('/api/projects/time-entries/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const entry = await storage.getTimeEntry(req.params.id);
+    if (!entry) {
+      return res.status(404).json({ message: 'Lançamento não encontrado' });
+    }
+
+    const actorId = (req as any).user?.sub as string | undefined;
+    if (!actorId || entry.collaboratorId !== actorId) {
+      return res.status(403).json({ message: 'Você só pode excluir os seus próprios lançamentos' });
+    }
+
+    if (entry.status !== 'pending') {
+      return res.status(400).json({ message: 'Somente lançamentos pendentes podem ser excluídos' });
+    }
+
+    const deleted = await storage.deleteTimeEntry(entry.id);
+    if (!deleted) {
+      return res.status(500).json({ message: 'Não foi possível excluir o lançamento' });
+    }
+
+    res.status(204).send();
   });
 
   app.patch('/api/projects/time-entries/:id/status', authenticateToken, requireRoles(['projects']), async (req, res) => {
@@ -3829,6 +4293,24 @@ export async function registerRoutes(
     if (!updatedEntry) {
       return res.status(500).json({ message: 'Não foi possível atualizar o lançamento' });
     }
+
+    await storage.createNotification({
+      userId: entry.collaboratorId,
+      type: nextStatus === 'approved' ? 'time_entry_approved' : 'time_entry_rejected',
+      title: nextStatus === 'approved' ? 'Lançamento de horas aprovado' : 'Lançamento de horas rejeitado',
+      message: nextStatus === 'approved'
+        ? `Seu lançamento de ${entry.hours}h no projeto ${project.code} · ${project.name} foi aprovado.`
+        : `Seu lançamento de ${entry.hours}h no projeto ${project.code} · ${project.name} foi rejeitado.${rawRejectionReason ? ` Motivo: ${rawRejectionReason}` : ''}`,
+      link: '/time-entries',
+      sourceKey: `time_entry_${nextStatus}:${entry.id}:${Date.now()}`,
+      metadata: {
+        timeEntryId: entry.id,
+        projectId: project.id,
+        projectCode: project.code,
+        status: nextStatus,
+        rejectionReason: nextStatus === 'rejected' ? (rawRejectionReason || null) : null,
+      },
+    });
 
     return res.json(updatedEntry);
   });
@@ -4525,7 +5007,7 @@ export async function registerRoutes(
     const value = typeof req.body?.value === 'number' ? req.body.value : Number(req.body?.value);
     const reimbursable = Boolean(req.body?.reimbursable);
 
-    if (!description || !Number.isFinite(value)) {
+    if (!description || !Number.isFinite(value) || value < 0) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
 
@@ -4566,7 +5048,7 @@ export async function registerRoutes(
     if (updates.description !== undefined && !updates.description) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
-    if (updates.value !== undefined && !Number.isFinite(updates.value)) {
+    if (updates.value !== undefined && (!Number.isFinite(updates.value) || updates.value < 0)) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
 
@@ -4665,6 +5147,9 @@ export async function registerRoutes(
     if (termMonths !== null && termMonths < 0) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
+    if (subcontractValue < 0 || mobilizationValue < 0 || readjustValue < 0) {
+      return res.status(400).json({ message: 'Dados invalidos' });
+    }
 
     const result = await storage.createProposalAdditive(proposalId, {
       termMonths,
@@ -4719,13 +5204,13 @@ export async function registerRoutes(
     if (updates.termMonths !== undefined && updates.termMonths !== null && updates.termMonths < 0) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
-    if (updates.subcontractValue !== undefined && !Number.isFinite(updates.subcontractValue)) {
+    if (updates.subcontractValue !== undefined && (!Number.isFinite(updates.subcontractValue) || updates.subcontractValue < 0)) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
-    if (updates.mobilizationValue !== undefined && !Number.isFinite(updates.mobilizationValue)) {
+    if (updates.mobilizationValue !== undefined && (!Number.isFinite(updates.mobilizationValue) || updates.mobilizationValue < 0)) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
-    if (updates.readjustValue !== undefined && !Number.isFinite(updates.readjustValue)) {
+    if (updates.readjustValue !== undefined && (!Number.isFinite(updates.readjustValue) || updates.readjustValue < 0)) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
 

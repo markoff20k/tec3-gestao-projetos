@@ -56,9 +56,12 @@ import {
 } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { projectsApi, clientsApi, usersApi, projectFavoritesApi, Project, Client, ProjectTap, ProjectMember, UserOption } from '@/lib/api';
+import { cn } from '@/lib/utils';
+import { projectsApi, clientsApi, usersApi, projectFavoritesApi, Project, Client, ProjectTap, ProjectMember, UserOption, EntityActivity, ProjectHealthRuleInput, ProjectHealthRuleResponse } from '@/lib/api';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 import { DangerZoneConfirm } from '@/components/DangerZoneConfirm';
+import { ProjectHealthDot, ProjectHealthSummary } from '@/components/ProjectHealthBadge';
+import { ProjectHealthRuleForm } from '@/components/ProjectHealthRuleForm';
 
 const statusColors: Record<string, string> = {
   planning: 'bg-gray-500',
@@ -68,6 +71,8 @@ const statusColors: Record<string, string> = {
   completed: 'bg-green-500',
   cancelled: 'bg-red-500',
 };
+
+const projectStatusBadgeClassName = 'inline-flex min-w-[112px] h-7 items-center justify-center px-2.5 text-xs font-medium text-white leading-none';
 
 const statusLabels: Record<string, string> = {
   planning: 'Planejamento',
@@ -127,6 +132,30 @@ type ViewMode = 'cards' | 'table';
 type SortColumn = 'name' | 'code' | 'client' | 'status' | 'hours' | 'value' | 'createdAt';
 type SortDirection = 'asc' | 'desc';
 type SortPreset = 'recent' | 'oldest' | 'name_asc' | 'value_desc' | 'custom';
+
+function ProjectMetricProgress({
+  label,
+  displayValue,
+  rawPercent,
+  toneClassName,
+}: {
+  label: string;
+  displayValue: string;
+  rawPercent: number | null;
+  toneClassName: string;
+}) {
+  const clampedPercent = rawPercent === null ? 0 : Math.min(100, Math.max(0, rawPercent));
+
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between text-xs">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-medium">{displayValue}</span>
+      </div>
+      <Progress value={clampedPercent} className="h-1.5" indicatorClassName={toneClassName} />
+    </div>
+  );
+}
 
 export default function Projects() {
   const queryClient = useQueryClient();
@@ -409,6 +438,49 @@ export default function Projects() {
     enabled: detailsOpen && !!selectedProjectId,
   });
 
+  const { data: selectedProjectActivities = [], isLoading: isLoadingSelectedProjectActivities } = useQuery<EntityActivity[]>({
+    queryKey: ['/api/projects', selectedProjectId, 'activities'],
+    queryFn: () => projectsApi.getActivities(selectedProjectId as string),
+    enabled: detailsOpen && !!selectedProjectId,
+  });
+
+  const { data: selectedProjectHealthRule } = useQuery<ProjectHealthRuleResponse>({
+    queryKey: ['/api/projects', selectedProjectId, 'health-rule'],
+    queryFn: () => projectsApi.getHealthRule(selectedProjectId as string),
+    enabled: detailsOpen && !!selectedProjectId,
+  });
+
+  const [healthRuleDialogOpen, setHealthRuleDialogOpen] = useState(false);
+  const [healthRuleDraft, setHealthRuleDraft] = useState<ProjectHealthRuleInput | null>(null);
+
+  const updateHealthRuleMutation = useMutation({
+    mutationFn: (data: ProjectHealthRuleInput) => projectsApi.updateHealthRule(selectedProjectId as string, data),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId, 'health-rule'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      toast({ title: 'Regras de saúde do projeto atualizadas', variant: 'success' });
+      setHealthRuleDialogOpen(false);
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao atualizar regras de saúde', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const resetHealthRuleMutation = useMutation({
+    mutationFn: () => projectsApi.resetHealthRule(selectedProjectId as string),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId, 'health-rule'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      toast({ title: 'Projeto voltou a usar a regra padrão do sistema', variant: 'success' });
+      setHealthRuleDialogOpen(false);
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao restaurar a regra padrão', description: error.message, variant: 'destructive' });
+    },
+  });
+
   const createMutation = useMutation({
     mutationFn: (data: Partial<Project>) => projectsApi.create(data),
     onSuccess: () => {
@@ -586,6 +658,35 @@ export default function Projects() {
     const consumedHours = getConsumedHours(project);
     return Math.min(100, Math.max(0, (consumedHours / budgetHours) * 100));
   };
+  const getHourRate = (project: Project) => {
+    const budgetHours = getBudgetHours(project);
+    const budgetValue = Number(project.budgetValue || 0);
+    return budgetHours > 0 && budgetValue > 0 ? budgetValue / budgetHours : 0;
+  };
+  const getScheduleElapsedRawPercent = (project: Project): number | null => {
+    if (!project.startDate || !project.endDate) return null;
+    const start = new Date(project.startDate).getTime();
+    const end = new Date(project.endDate).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+    return ((Date.now() - start) / (end - start)) * 100;
+  };
+  const getHoursConsumedRawPercent = (project: Project): number | null => {
+    const budgetHours = getBudgetHours(project);
+    if (budgetHours <= 0) return null;
+    return (getConsumedHours(project) / budgetHours) * 100;
+  };
+  const getCostConsumedRawPercent = (project: Project): number | null => {
+    const budgetValue = Number(project.budgetValue || 0);
+    const hourRate = getHourRate(project);
+    if (budgetValue <= 0 || hourRate <= 0) return null;
+    return ((getConsumedHours(project) * hourRate) / budgetValue) * 100;
+  };
+  const getProgressToneClass = (rawPercent: number | null) => {
+    if (rawPercent === null) return 'bg-muted-foreground/40';
+    if (rawPercent > 100) return 'bg-red-500';
+    if (rawPercent >= 80) return 'bg-amber-500';
+    return 'bg-emerald-500';
+  };
   const hasProjectExecutionStarted = (project: Project) =>
     project.status !== 'planning' || Number(project.timeSummary?.entriesCount || 0) > 0;
 
@@ -637,6 +738,26 @@ export default function Projects() {
     selectedProject && user?.id && selectedProject.coordinatorId === user.id
   );
   const canManageTeamAllocation = Boolean(selectedProject && (isAdmin || isCoordinatorOfSelectedProject));
+  const canManageHealthRule = canManageTeamAllocation;
+
+  const openHealthRuleDialog = () => {
+    const currentRule = selectedProjectHealthRule?.rule;
+    setHealthRuleDraft({
+      hoursEnabled: currentRule?.hoursEnabled ?? true,
+      hoursYellow: currentRule?.hoursYellow ?? 80,
+      hoursRed: currentRule?.hoursRed ?? 100,
+      financialEnabled: currentRule?.financialEnabled ?? true,
+      financialYellow: currentRule?.financialYellow ?? 5,
+      financialRed: currentRule?.financialRed ?? 12,
+      pendingHoursEnabled: currentRule?.pendingHoursEnabled ?? true,
+      pendingHoursYellow: currentRule?.pendingHoursYellow ?? 16,
+      pendingHoursRed: currentRule?.pendingHoursRed ?? 40,
+      scheduleEnabled: currentRule?.scheduleEnabled ?? true,
+      scheduleYellowDays: currentRule?.scheduleYellowDays ?? 7,
+      scheduleRedDays: currentRule?.scheduleRedDays ?? 15,
+    });
+    setHealthRuleDialogOpen(true);
+  };
 
   const currentTeamMemberIds = useMemo(
     () => selectedProjectMembers.map((member) => member.userId).sort(),
@@ -1444,11 +1565,23 @@ export default function Projects() {
                       <TableCell>{project.code}</TableCell>
                       <TableCell>{project.client?.razaoSocial || '-'}</TableCell>
                       <TableCell>
-                        <Badge className={`text-xs text-white ${statusColors[project.status]}`}>
-                          {statusLabels[project.status] || project.status}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <ProjectHealthDot health={project.health} />
+                          <Badge className={cn(projectStatusBadgeClassName, statusColors[project.status])}>
+                            {statusLabels[project.status] || project.status}
+                          </Badge>
+                        </div>
                       </TableCell>
-                      <TableCell>{getProgressText(project)}</TableCell>
+                      <TableCell>
+                        <div className="min-w-[120px] space-y-1">
+                          <span className="text-sm">{getProgressText(project)}</span>
+                          <Progress
+                            value={getHoursConsumedRawPercent(project) === null ? 0 : Math.min(100, Math.max(0, getHoursConsumedRawPercent(project) as number))}
+                            className="h-1.5"
+                            indicatorClassName={getProgressToneClass(getHoursConsumedRawPercent(project))}
+                          />
+                        </div>
+                      </TableCell>
                       <TableCell>{formatCurrency(project.budgetValue)}</TableCell>
                       <TableCell className="text-right">
                         <div className="inline-flex gap-2">
@@ -1536,18 +1669,40 @@ export default function Projects() {
                     >
                       <Star className={`h-4 w-4 transition-colors ${favoriteProjectsSet.has(project.id) ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground hover:text-yellow-400'}`} />
                     </Button>
-                    <Badge className={`text-xs text-white ${statusColors[project.status]}`}>
+                    <Badge className={cn(projectStatusBadgeClassName, statusColors[project.status])}>
                       {statusLabels[project.status] || project.status}
                     </Badge>
+                    <ProjectHealthDot health={project.health} />
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Progresso</span>
-                      <span>{getProgressText(project)}</span>
-                    </div>
-                    <Progress value={getProgressPercent(project)} className="h-2" />
+                  <div className="space-y-3">
+                    <ProjectMetricProgress
+                      label="Tempo decorrido"
+                      displayValue={
+                        getScheduleElapsedRawPercent(project) === null
+                          ? 'Sem datas'
+                          : `${Math.min(100, Math.max(0, getScheduleElapsedRawPercent(project) as number)).toFixed(0)}%`
+                      }
+                      rawPercent={getScheduleElapsedRawPercent(project)}
+                      toneClassName={getProgressToneClass(getScheduleElapsedRawPercent(project))}
+                    />
+                    <ProjectMetricProgress
+                      label="Horas apontadas"
+                      displayValue={getProgressText(project)}
+                      rawPercent={getHoursConsumedRawPercent(project)}
+                      toneClassName={getProgressToneClass(getHoursConsumedRawPercent(project))}
+                    />
+                    <ProjectMetricProgress
+                      label="Custo consumido"
+                      displayValue={
+                        getCostConsumedRawPercent(project) === null
+                          ? '-'
+                          : formatCurrency(getConsumedHours(project) * getHourRate(project))
+                      }
+                      rawPercent={getCostConsumedRawPercent(project)}
+                      toneClassName={getProgressToneClass(getCostConsumedRawPercent(project))}
+                    />
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <div className="text-sm">
@@ -1755,7 +1910,7 @@ export default function Projects() {
                       </div>
                       <p className="text-sm text-muted-foreground">{selectedProject.client?.razaoSocial || '-'}</p>
                     </div>
-                    <Badge className={`text-xs text-white w-fit ${statusColors[selectedProject.status]}`}>
+                    <Badge className={cn(projectStatusBadgeClassName, 'w-fit', statusColors[selectedProject.status])}>
                       {statusLabels[selectedProject.status] || selectedProject.status}
                     </Badge>
                   </div>
@@ -2193,6 +2348,27 @@ export default function Projects() {
                   </Dialog>
                 </div>
 
+                <Card>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold">Saúde do projeto</p>
+                      {canManageHealthRule ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={openHealthRuleDialog}
+                          data-testid="button-configure-health-rule"
+                        >
+                          <SlidersHorizontal className="h-3 w-3 mr-1" />
+                          Configurar regras
+                        </Button>
+                      ) : null}
+                    </div>
+                    <ProjectHealthSummary health={selectedProject.health} />
+                  </CardContent>
+                </Card>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
                   <Card>
                     <CardContent className="p-3">
@@ -2332,10 +2508,93 @@ export default function Projects() {
                     </div>
                   )}
                 </div>
+
+                <div className="rounded-xl border bg-card p-4 sm:p-5 dark:bg-[#14305f] dark:border-white/10">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Atividades recentes</p>
+                  <div className="mt-3 space-y-3">
+                    {isLoadingSelectedProjectActivities ? (
+                      <p className="text-sm text-muted-foreground">Carregando atividades...</p>
+                    ) : selectedProjectActivities.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Nenhuma atividade registrada para este projeto.</p>
+                    ) : (
+                      selectedProjectActivities.map((activity) => (
+                        <div key={activity.id} className="flex items-start justify-between gap-3 border-b border-border/60 pb-3 last:border-b-0 last:pb-0">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">{activity.title}</p>
+                            <p className="text-xs text-muted-foreground">{activity.actorName || 'Sistema'}</p>
+                          </div>
+                          <p className="shrink-0 text-xs text-muted-foreground">
+                            {new Date(activity.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="py-12 text-center text-muted-foreground">Projeto não encontrado.</div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={healthRuleDialogOpen} onOpenChange={setHealthRuleDialogOpen}>
+          <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Regras de saúde do projeto</DialogTitle>
+              <DialogDescription>
+                Defina quais métricas entram no cálculo do semáforo e os limites de alerta (amarelo) e crítico (vermelho) para este projeto.
+              </DialogDescription>
+            </DialogHeader>
+
+            {healthRuleDraft ? (
+              <div className="space-y-4">
+                {selectedProjectHealthRule?.source === 'project' ? (
+                  <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary">
+                    Este projeto usa uma regra personalizada, diferente do padrão do sistema.
+                  </div>
+                ) : (
+                  <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    Este projeto ainda usa a regra padrão do sistema. Ao salvar, uma regra específica será criada para ele.
+                  </div>
+                )}
+
+                <ProjectHealthRuleForm value={healthRuleDraft} onChange={setHealthRuleDraft} />
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  {selectedProjectHealthRule?.source === 'project' ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => resetHealthRuleMutation.mutate()}
+                      disabled={resetHealthRuleMutation.isPending || updateHealthRuleMutation.isPending}
+                      data-testid="button-reset-health-rule"
+                    >
+                      Restaurar regra padrão
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => setHealthRuleDialogOpen(false)}
+                    disabled={updateHealthRuleMutation.isPending || resetHealthRuleMutation.isPending}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    className="flex-1"
+                    onClick={() => healthRuleDraft && updateHealthRuleMutation.mutate(healthRuleDraft)}
+                    disabled={updateHealthRuleMutation.isPending || resetHealthRuleMutation.isPending}
+                    data-testid="button-save-health-rule"
+                  >
+                    {updateHealthRuleMutation.isPending ? 'Salvando...' : 'Salvar regras'}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </DialogContent>
         </Dialog>
       </div>

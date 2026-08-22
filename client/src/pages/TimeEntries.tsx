@@ -1,12 +1,16 @@
 import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  CalendarDays,
   Check,
   ChevronDown,
   Clock3,
   Loader2,
   Paperclip,
+  Pencil,
   Plus,
+  Search,
+  Trash2,
   Upload,
   X,
 } from 'lucide-react';
@@ -29,12 +33,25 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar as DateCalendar } from '@/components/ui/calendar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { useUpload } from '@/hooks/use-upload';
+import { useAuth } from '@/contexts/AuthContext';
 import { costCentersApi, CostCenter, projectsApi, Project, TimeEntry, TimeEntryAttachment } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +59,12 @@ const statusLabels: Record<string, string> = {
   pending: 'Pendente',
   approved: 'Aprovado',
   rejected: 'Rejeitado',
+};
+
+const statusBadgeClass: Record<string, string> = {
+  pending: 'border-amber-200 bg-amber-50 text-amber-700',
+  approved: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  rejected: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 
 const PROJECT_COST_CENTER_OPTION = 'project';
@@ -91,13 +114,169 @@ function isProjectLaunchable(project: Project) {
   return status === 'in_progress' || status === 'active' || status === 'em_andamento';
 }
 
+type ProjectEntriesPanelProps = {
+  project: Project;
+  isExpanded: boolean;
+  currentUserId?: string;
+  onOpenModal: (projectId: string) => void;
+  onOpenEditModal: (projectId: string, entry: TimeEntry) => void;
+  onDeleteEntry: (entryId: string) => void;
+};
+
+function ProjectEntriesPanel({
+  project,
+  isExpanded,
+  currentUserId,
+  onOpenModal,
+  onOpenEditModal,
+  onDeleteEntry,
+}: ProjectEntriesPanelProps) {
+  const { data: entries = [], isLoading } = useQuery<TimeEntry[]>({
+    queryKey: ['/api/projects', project.id, 'time-entries'],
+    queryFn: () => projectsApi.getTimeEntries(project.id),
+    enabled: isExpanded,
+  });
+
+  const myEntries = useMemo(
+    () => entries
+      .filter((entry) => entry.collaboratorId === currentUserId)
+      .sort((entryA, entryB) => getEntryDate(entryB).getTime() - getEntryDate(entryA).getTime()),
+    [entries, currentUserId]
+  );
+
+  const summary = useMemo(() => buildDaySummary(myEntries), [myEntries]);
+
+  if (isLoading) {
+    return (
+      <div className="text-center text-sm text-muted-foreground">
+        Carregando informações do projeto...
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="grid gap-3 md:grid-cols-4">
+        <Card className="border-border/60 bg-muted/20 shadow-none">
+          <CardContent className="p-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              Minhas horas
+            </p>
+            <p className="mt-1 text-lg font-semibold text-foreground">
+              {summary.totalHours.toFixed(1)}h
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/60 bg-muted/20 shadow-none">
+          <CardContent className="p-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              Aprovadas
+            </p>
+            <p className="mt-1 text-lg font-semibold text-foreground">
+              {summary.approvedHours.toFixed(1)}h
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/60 bg-muted/20 shadow-none">
+          <CardContent className="p-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              Pendentes
+            </p>
+            <p className="mt-1 text-lg font-semibold text-foreground">
+              {summary.pendingCount}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/60 bg-muted/20 shadow-none">
+          <CardContent className="p-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              Status
+            </p>
+            <p className="mt-1 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+              Ativo para lançamento
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Button
+        onClick={() => onOpenModal(project.id)}
+        className="w-full"
+        data-testid={`button-open-modal-${project.id}`}
+      >
+        <Plus className="mr-2 h-4 w-4" />
+        Apontar horas
+      </Button>
+
+      {myEntries.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+            Meus lançamentos
+          </p>
+          <div className="space-y-2">
+            {myEntries.map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-border bg-background px-3 py-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-foreground">
+                        {Number(entry.hours).toFixed(1)}h · {format(getEntryDate(entry), 'dd/MM/yyyy', { locale: ptBR })}
+                      </p>
+                      <Badge className={cn('border text-[10px]', statusBadgeClass[entry.status] ?? 'border-border bg-muted text-foreground')}>
+                        {statusLabels[entry.status] ?? entry.status}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">{entry.description || 'Sem descrição'}</p>
+                    {entry.status === 'rejected' && entry.rejectionReason ? (
+                      <p className="mt-1 text-xs text-rose-600">Motivo: {entry.rejectionReason}</p>
+                    ) : null}
+                  </div>
+                  {entry.status === 'pending' ? (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => onOpenEditModal(project.id, entry)}
+                        data-testid={`button-edit-entry-${entry.id}`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-destructive hover:text-destructive"
+                        onClick={() => onDeleteEntry(entry.id)}
+                        data-testid={`button-delete-entry-${entry.id}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function TimeEntries() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
   
   const [modalOpen, setModalOpen] = useState(false);
   const [modalProjectId, setModalProjectId] = useState<string>('');
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [deleteConfirmEntryId, setDeleteConfirmEntryId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [hoursValue, setHoursValue] = useState('');
   const [selectedCostCenterId, setSelectedCostCenterId] = useState('');
@@ -125,6 +304,14 @@ export default function TimeEntries() {
     [projects]
   );
 
+  const filteredProjects = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return launchableProjects;
+    return launchableProjects.filter((project) =>
+      `${project.code} ${project.name}`.toLowerCase().includes(query)
+    );
+  }, [launchableProjects, searchQuery]);
+
   const availableCostCenters = useMemo(
     () => costCenters.filter((costCenter) => costCenter.isActive),
     [costCenters]
@@ -141,12 +328,12 @@ export default function TimeEntries() {
     enabled: !!modalProjectId,
   });
 
-  const projectSummaryByWeek = useMemo(() => {
-    if (!modalProjectId || !timeEntries.length) {
-      return { totalHours: 0, approvedHours: 0, pendingCount: 0 };
-    }
-    return buildDaySummary(timeEntries);
-  }, [modalProjectId, timeEntries]);
+  const myEntries = useMemo(
+    () => timeEntries
+      .filter((entry) => entry.collaboratorId === user?.id)
+      .sort((entryA, entryB) => getEntryDate(entryB).getTime() - getEntryDate(entryA).getTime()),
+    [timeEntries, user?.id]
+  );
 
   const canLaunchHours = !!modalProject && isProjectLaunchable(modalProject);
   const hasHoursValue = (Number.parseFloat(hoursValue) || 0) > 0;
@@ -154,6 +341,28 @@ export default function TimeEntries() {
   const shouldHighlightHoursField = Boolean(modalProject && canLaunchHours && !hasHoursValue);
   const shouldHighlightDescriptionField = Boolean(modalProject && canLaunchHours && !hasDescriptionValue);
   const pendingRequiredFieldsCount = Number(shouldHighlightHoursField) + Number(shouldHighlightDescriptionField);
+  const isEditing = Boolean(editingEntryId);
+
+  const dailyHoursAlreadyOnSelectedDate = useMemo(() => {
+    if (!modalProject || !modalProject.dailyLimitHours) return 0;
+    const key = dateKey(selectedDate);
+    return myEntries
+      .filter((entry) => getEntryDateKey(entry) === key && entry.id !== editingEntryId)
+      .reduce((sum, entry) => sum + Number(entry.hours || 0), 0);
+  }, [editingEntryId, modalProject, myEntries, selectedDate]);
+
+  const dailyHoursRemaining = useMemo(() => {
+    if (!modalProject || !modalProject.dailyLimitHours) return null;
+    return Math.max(0, modalProject.dailyLimitHours - dailyHoursAlreadyOnSelectedDate);
+  }, [dailyHoursAlreadyOnSelectedDate, modalProject]);
+
+  const previewHours = Number.parseFloat(hoursValue) || 0;
+  const willExceedDailyLimit = Boolean(
+    modalProject &&
+      modalProject.dailyLimitHours &&
+      previewHours > 0 &&
+      dailyHoursAlreadyOnSelectedDate + previewHours > modalProject.dailyLimitHours
+  );
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<TimeEntry>) => projectsApi.createTimeEntry(data),
@@ -165,6 +374,31 @@ export default function TimeEntries() {
     },
     onError: (error) => {
       toast({ title: 'Erro ao lançar horas', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<TimeEntry> }) => projectsApi.updateTimeEntry(id, data),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects', modalProjectId, 'time-entries'] });
+      toast({ title: 'Lançamento atualizado com sucesso', variant: 'success' });
+      resetForm();
+      setModalOpen(false);
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao atualizar lançamento', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => projectsApi.deleteTimeEntry(id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects', modalProjectId, 'time-entries'] });
+      toast({ title: 'Lançamento excluído com sucesso', variant: 'success' });
+      setDeleteConfirmEntryId(null);
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao excluir lançamento', description: error.message, variant: 'destructive' });
     },
   });
 
@@ -223,6 +457,7 @@ export default function TimeEntries() {
   };
 
   const resetForm = () => {
+    setEditingEntryId(null);
     setHoursValue('');
     setSelectedCostCenterId('');
     setDescriptionValue('');
@@ -234,6 +469,17 @@ export default function TimeEntries() {
     setModalProjectId(projectId);
     setModalOpen(true);
     resetForm();
+  };
+
+  const handleOpenEditModal = (projectId: string, entry: TimeEntry) => {
+    setModalProjectId(projectId);
+    setEditingEntryId(entry.id);
+    setHoursValue(String(entry.hours));
+    setSelectedCostCenterId(entry.costCenterId || '');
+    setDescriptionValue(entry.description || '');
+    setAttachments(entry.attachments || []);
+    setSelectedDate(getEntryDate(entry));
+    setModalOpen(true);
   };
 
   const handleSubmit = (event: React.FormEvent) => {
@@ -257,8 +503,8 @@ export default function TimeEntries() {
     const key = dateKey(selectedDate);
 
     if (modalProject.dailyLimitHours && requestedHours > 0) {
-      const hoursAlreadyLaunchedInDay = timeEntries
-        .filter((entry) => getEntryDateKey(entry) === key)
+      const hoursAlreadyLaunchedInDay = myEntries
+        .filter((entry) => getEntryDateKey(entry) === key && entry.id !== editingEntryId)
         .reduce((sum, entry) => sum + Number(entry.hours || 0), 0);
 
       if (hoursAlreadyLaunchedInDay + requestedHours > modalProject.dailyLimitHours) {
@@ -269,6 +515,20 @@ export default function TimeEntries() {
         });
         return;
       }
+    }
+
+    if (editingEntryId) {
+      updateMutation.mutate({
+        id: editingEntryId,
+        data: {
+          costCenterId: selectedCostCenterId || null,
+          entryDate: key,
+          hours: requestedHours,
+          description: descriptionValue,
+          attachments,
+        },
+      });
+      return;
     }
 
     createMutation.mutate({
@@ -297,6 +557,19 @@ export default function TimeEntries() {
           <p className="text-muted-foreground">Selecione um projeto, expanda para ver detalhes e aponte suas horas.</p>
         </div>
 
+        {launchableProjects.length > 0 && (
+          <div className="relative max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Buscar por código ou nome do projeto..."
+              className="pl-9"
+              data-testid="input-search-project"
+            />
+          </div>
+        )}
+
         {isLoadingProjects ? (
           <Card>
             <CardContent className="p-6 text-center text-muted-foreground">
@@ -310,9 +583,15 @@ export default function TimeEntries() {
               Nenhum projeto ativo encontrado para apontamento de horas.
             </CardContent>
           </Card>
+        ) : filteredProjects.length === 0 ? (
+          <Card>
+            <CardContent className="p-6 text-center text-muted-foreground">
+              Nenhum projeto encontrado para "{searchQuery}".
+            </CardContent>
+          </Card>
         ) : (
           <div className="space-y-3">
-            {launchableProjects.map((project) => {
+            {filteredProjects.map((project) => {
               const isExpanded = expandedProjects[project.id];
 
               return (
@@ -350,65 +629,14 @@ export default function TimeEntries() {
 
                     <CollapsibleContent>
                       <CardContent className="space-y-4 border-t border-border pt-4">
-                        {isLoadingEntries && isExpanded ? (
-                          <div className="text-center text-sm text-muted-foreground">
-                            Carregando informações do projeto...
-                          </div>
-                        ) : (
-                          <>
-                            <div className="grid gap-3 md:grid-cols-4">
-                              <Card className="border-border/60 bg-muted/20 shadow-none">
-                                <CardContent className="p-3">
-                                  <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
-                                    Período
-                                  </p>
-                                  <p className="mt-1 text-lg font-semibold text-foreground">
-                                    {projectSummaryByWeek.totalHours.toFixed(1)}h
-                                  </p>
-                                </CardContent>
-                              </Card>
-                              <Card className="border-border/60 bg-muted/20 shadow-none">
-                                <CardContent className="p-3">
-                                  <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
-                                    Aprovadas
-                                  </p>
-                                  <p className="mt-1 text-lg font-semibold text-foreground">
-                                    {projectSummaryByWeek.approvedHours.toFixed(1)}h
-                                  </p>
-                                </CardContent>
-                              </Card>
-                              <Card className="border-border/60 bg-muted/20 shadow-none">
-                                <CardContent className="p-3">
-                                  <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
-                                    Pendentes
-                                  </p>
-                                  <p className="mt-1 text-lg font-semibold text-foreground">
-                                    {projectSummaryByWeek.pendingCount}
-                                  </p>
-                                </CardContent>
-                              </Card>
-                              <Card className="border-border/60 bg-muted/20 shadow-none">
-                                <CardContent className="p-3">
-                                  <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
-                                    Status
-                                  </p>
-                                  <p className="mt-1 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
-                                    Ativo para lançamento
-                                  </p>
-                                </CardContent>
-                              </Card>
-                            </div>
-
-                            <Button
-                              onClick={() => handleOpenModal(project.id)}
-                              className="w-full"
-                              data-testid={`button-open-modal-${project.id}`}
-                            >
-                              <Plus className="mr-2 h-4 w-4" />
-                              Apontar horas
-                            </Button>
-                          </>
-                        )}
+                        <ProjectEntriesPanel
+                          project={project}
+                          isExpanded={isExpanded}
+                          currentUserId={user?.id}
+                          onOpenModal={handleOpenModal}
+                          onOpenEditModal={handleOpenEditModal}
+                          onDeleteEntry={setDeleteConfirmEntryId}
+                        />
                       </CardContent>
                     </CollapsibleContent>
                   </Card>
@@ -422,20 +650,49 @@ export default function TimeEntries() {
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>
-                {modalProject ? `Apontar horas - ${modalProject.code}` : 'Apontar horas'}
+                {modalProject
+                  ? `${isEditing ? 'Editar lançamento' : 'Apontar horas'} - ${modalProject.code}`
+                  : 'Apontar horas'}
               </DialogTitle>
             </DialogHeader>
 
             {modalProject ? (
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
-                    Data selecionada
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-foreground">
-                    {format(selectedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
-                    {isToday(selectedDate) && <Badge className="ml-2">Hoje</Badge>}
-                  </p>
+                <div className="space-y-2">
+                  <Label>Data do lançamento *</Label>
+                  <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full justify-start font-normal"
+                        disabled={createMutation.isPending || updateMutation.isPending}
+                        data-testid="button-open-date-picker"
+                      >
+                        <CalendarDays className="mr-2 h-4 w-4" />
+                        {format(selectedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
+                        {isToday(selectedDate) && <Badge className="ml-2">Hoje</Badge>}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <DateCalendar
+                        mode="single"
+                        locale={ptBR}
+                        selected={selectedDate}
+                        onSelect={(date) => {
+                          if (!date) return;
+                          setSelectedDate(date);
+                          setDatePickerOpen(false);
+                        }}
+                        disabled={(date) => date > new Date()}
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  {modalProject.dailyLimitHours ? (
+                    <p className="text-xs text-muted-foreground">
+                      Limite diário deste projeto: {modalProject.dailyLimitHours}h por dia.
+                    </p>
+                  ) : null}
                 </div>
 
                 {pendingRequiredFieldsCount > 0 ? (
@@ -445,6 +702,13 @@ export default function TimeEntries() {
                       : shouldHighlightHoursField
                         ? 'Preencha o campo: Horas.'
                         : 'Preencha o campo: Descrição.'}
+                  </div>
+                ) : null}
+
+                {modalProject?.dailyLimitHours && willExceedDailyLimit ? (
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                    A soma escolhida ({previewHours.toFixed(1)}h) ultrapassa o limite diário do projeto para esta data.
+                    Restam {Math.max(0, modalProject.dailyLimitHours - dailyHoursAlreadyOnSelectedDate).toFixed(1)}h disponíveis.
                   </div>
                 ) : null}
 
@@ -462,10 +726,40 @@ export default function TimeEntries() {
                       value={hoursValue}
                       onChange={(event) => setHoursValue(event.target.value)}
                       placeholder="Ex.: 4"
-                      className={cn(shouldHighlightHoursField && 'border-primary/40 bg-primary/5')}
+                      className={cn(
+                        'transition-colors',
+                        shouldHighlightHoursField && 'border-primary/40 bg-primary/5',
+                        willExceedDailyLimit && 'border-destructive/60 bg-destructive/5'
+                      )}
                       disabled={createMutation.isPending || isLoadingEntries}
                       required
                     />
+
+                    {modalProject?.dailyLimitHours ? (
+                      <div className="rounded-md border border-border bg-muted/20 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                        <span className="font-medium text-foreground">Disponível no dia:</span>{' '}
+                        <span className={cn(dailyHoursRemaining === 0 ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400')}>
+                          {dailyHoursRemaining !== null ? `${dailyHoursRemaining.toFixed(1)}h` : 'Sem limite'}
+                        </span>
+                      </div>
+                    ) : null}
+
+                    {modalProject?.dailyLimitHours ? (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {[0.5, 1, 2, 4, 8].map((quickHours) => (
+                          <Button
+                            key={quickHours}
+                            type="button"
+                            variant={Number.parseFloat(hoursValue) === quickHours ? 'default' : 'outline'}
+                            size="sm"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => setHoursValue(String(quickHours))}
+                          >
+                            {quickHours}h
+                          </Button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="modal-cost-center">Centro de custo</Label>
@@ -572,20 +866,25 @@ export default function TimeEntries() {
                     type="button"
                     variant="outline"
                     onClick={() => setModalOpen(false)}
-                    disabled={createMutation.isPending}
+                    disabled={createMutation.isPending || updateMutation.isPending}
                     className="flex-1"
                   >
                     Cancelar
                   </Button>
                   <Button
                     type="submit"
-                    disabled={createMutation.isPending || !hasHoursValue || !hasDescriptionValue}
+                    disabled={createMutation.isPending || updateMutation.isPending || !hasHoursValue || !hasDescriptionValue}
                     className="flex-1"
                   >
-                    {createMutation.isPending ? (
+                    {createMutation.isPending || updateMutation.isPending ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         Salvando...
+                      </>
+                    ) : isEditing ? (
+                      <>
+                        <Check className="mr-2 h-4 w-4" />
+                        Salvar alterações
                       </>
                     ) : (
                       <>
@@ -603,6 +902,30 @@ export default function TimeEntries() {
             )}
           </DialogContent>
         </Dialog>
+
+        <AlertDialog open={Boolean(deleteConfirmEntryId)} onOpenChange={(open) => { if (!open) setDeleteConfirmEntryId(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Excluir lançamento?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esta ação não pode ser desfeita. O lançamento de horas será removido permanentemente.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteMutation.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (!deleteConfirmEntryId) return;
+                  deleteMutation.mutate(deleteConfirmEntryId);
+                }}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? 'Excluindo...' : 'Sim, excluir'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </Layout>
   );

@@ -272,7 +272,7 @@ export const usersApi = {
 };
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'time_entry_approved' | 'time_entry_rejected';
 
 export interface UserActivity {
   id: string;
@@ -289,6 +289,10 @@ export interface UserActivity {
 export interface UserActivitiesResponse {
   items: UserActivity[];
   nextCursor: string | null;
+}
+
+export interface EntityActivity extends UserActivity {
+  actorName: string | null;
 }
 
 export interface UserNotification {
@@ -573,6 +577,55 @@ export const proposalAdditivesApi = {
     api.delete<{ total: number }>(`/proposals/${proposalId}/additives/${additiveId}`),
 };
 
+export type ProjectHealthLevel = 'green' | 'yellow' | 'red';
+
+export interface ProjectHealthMetric {
+  key: 'hours' | 'financial' | 'pendingHours' | 'schedule';
+  label: string;
+  level: ProjectHealthLevel;
+  value: number;
+  displayValue: string;
+}
+
+export interface ProjectHealth {
+  level: ProjectHealthLevel;
+  ruleSource: 'project' | 'global';
+  metrics: ProjectHealthMetric[];
+}
+
+export interface ProjectHealthRule {
+  id: string;
+  projectId: string | null;
+  updatedById: string | null;
+  createdAt: string;
+  updatedAt: string;
+  hoursEnabled: boolean;
+  hoursYellow: number;
+  hoursRed: number;
+  financialEnabled: boolean;
+  financialYellow: number;
+  financialRed: number;
+  pendingHoursEnabled: boolean;
+  pendingHoursYellow: number;
+  pendingHoursRed: number;
+  scheduleEnabled: boolean;
+  scheduleYellowDays: number;
+  scheduleRedDays: number;
+}
+
+export type ProjectHealthRuleInput = Pick<ProjectHealthRule,
+  | 'hoursEnabled' | 'hoursYellow' | 'hoursRed'
+  | 'financialEnabled' | 'financialYellow' | 'financialRed'
+  | 'pendingHoursEnabled' | 'pendingHoursYellow' | 'pendingHoursRed'
+  | 'scheduleEnabled' | 'scheduleYellowDays' | 'scheduleRedDays'
+>;
+
+export interface ProjectHealthRuleResponse {
+  rule: ProjectHealthRule;
+  source: 'project' | 'global';
+  canEdit?: boolean;
+}
+
 export interface Project {
   id: string;
   code: string;
@@ -628,6 +681,7 @@ export interface Project {
     entriesCount: number;
   }>;
   isCurrentUserAllocated?: boolean;
+  health?: ProjectHealth;
   createdAt: string;
 }
 
@@ -800,10 +854,10 @@ const TAP_RESEND_TIMEOUT_MS = 20000;
 export const proposalsApi = {
   getAll: () => api.get<Proposal[]>('/proposals'),
   getOne: (id: string) => api.get<Proposal>(`/proposals/${id}`),
+  getActivities: (id: string) => api.get<EntityActivity[]>(`/proposals/${id}/activities`),
   create: (data: Partial<Proposal>) => api.post<Proposal>('/proposals', data),
   update: (id: string, data: Partial<Proposal>) => api.put<Proposal>(`/proposals/${id}`, data),
   delete: (id: string) => api.delete(`/proposals/${id}`),
-  convert: (proposalId: string) => api.post<Project>('/proposals/convert', { proposalId }),
   saveTap: (proposalId: string, data: ProposalTapDraft) =>
     request<Proposal>(`/proposals/${proposalId}/tap`, {
       method: 'PUT',
@@ -850,10 +904,19 @@ export const projectsApi = {
   completeSetup: (id: string) => api.post<Project>(`/projects/${id}/setup/complete`),
   activate: (id: string) => api.post<Project>(`/projects/${id}/activate`),
   getStats: (id: string) => api.get<any>(`/projects/${id}/stats`),
+  getActivities: (id: string) => api.get<EntityActivity[]>(`/projects/${id}/activities`),
   getTimeEntries: (id: string) => api.get<TimeEntry[]>(`/projects/${id}/time-entries`),
   createTimeEntry: (data: Partial<TimeEntry>) => api.post<TimeEntry>('/projects/time-entries', data),
+  updateTimeEntry: (id: string, data: Partial<TimeEntry>) => api.put<TimeEntry>(`/projects/time-entries/${id}`, data),
+  deleteTimeEntry: (id: string) => api.delete(`/projects/time-entries/${id}`),
   updateTimeEntryStatus: (id: string, data: { status: 'approved' | 'rejected'; rejectionReason?: string | null }) =>
     api.patch<TimeEntry>(`/projects/time-entries/${id}/status`, data),
+  getGlobalHealthRule: () => api.get<ProjectHealthRule>('/projects/health-rules/global'),
+  updateGlobalHealthRule: (data: ProjectHealthRuleInput) => api.put<ProjectHealthRule>('/projects/health-rules/global', data),
+  getHealthRule: (id: string) => api.get<ProjectHealthRuleResponse>(`/projects/${id}/health-rule`),
+  updateHealthRule: (id: string, data: ProjectHealthRuleInput) =>
+    api.put<ProjectHealthRuleResponse>(`/projects/${id}/health-rule`, data),
+  resetHealthRule: (id: string) => api.delete<ProjectHealthRuleResponse>(`/projects/${id}/health-rule`),
 };
 
 export const reportsApi = {

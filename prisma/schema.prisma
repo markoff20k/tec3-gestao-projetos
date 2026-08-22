@@ -251,8 +251,37 @@ model Project {
   members          ProjectMember[]
   timeEntries      TimeEntry[]
   taps             ProjectTap[]
+  healthRule       ProjectHealthRule?
 
   @@map("projects")
+}
+
+model ProjectHealthRule {
+  id          String   @id @default(uuid())
+  projectId   String?  @unique @map("project_id")
+  updatedById String?  @map("updated_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  hoursEnabled        Boolean @default(true) @map("hours_enabled")
+  hoursYellow         Int     @default(80) @map("hours_yellow")
+  hoursRed            Int     @default(100) @map("hours_red")
+
+  financialEnabled    Boolean @default(true) @map("financial_enabled")
+  financialYellow     Int     @default(5) @map("financial_yellow")
+  financialRed        Int     @default(12) @map("financial_red")
+
+  pendingHoursEnabled Boolean @default(true) @map("pending_hours_enabled")
+  pendingHoursYellow  Int     @default(16) @map("pending_hours_yellow")
+  pendingHoursRed     Int     @default(40) @map("pending_hours_red")
+
+  scheduleEnabled     Boolean @default(true) @map("schedule_enabled")
+  scheduleYellowDays  Int     @default(7) @map("schedule_yellow_days")
+  scheduleRedDays     Int     @default(15) @map("schedule_red_days")
+
+  project             Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_health_rules")
 }
 
 model ProjectMember {

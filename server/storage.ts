@@ -1,11 +1,11 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
-import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification, ProjectTap, EmailOutbox, CostCenter } from "../generated/prisma/client.ts";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification, ProjectTap, EmailOutbox, CostCenter, ProjectHealthRule } from "../generated/prisma/client.ts";
 import { Prisma } from "../generated/prisma/client.ts";
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'time_entry_approved' | 'time_entry_rejected';
 
 export interface CreateUserActivityInput {
   category: UserActivityCategory;
@@ -79,6 +79,13 @@ export type InsertCostCenter = { code: string; name: string; isActive?: boolean 
 export type InsertProposalCategory = { code?: string; name: string; isActive?: boolean };
 export type InsertProposalCategoryValue = { proposalId: string; categoryId?: string; customName?: string; value: number; hours: number };
 
+export type HealthRuleInput = Partial<Pick<ProjectHealthRule,
+  | 'hoursEnabled' | 'hoursYellow' | 'hoursRed'
+  | 'financialEnabled' | 'financialYellow' | 'financialRed'
+  | 'pendingHoursEnabled' | 'pendingHoursYellow' | 'pendingHoursRed'
+  | 'scheduleEnabled' | 'scheduleYellowDays' | 'scheduleRedDays'
+>>;
+
 export interface CreateProjectTapInput {
   projectId: string;
   title: string;
@@ -113,6 +120,11 @@ export interface IStorage {
     userId: string,
     options?: { category?: UserActivityCategory; limit?: number; cursor?: string }
   ): Promise<{ items: UserActivity[]; nextCursor: string | null }>;
+  getEntityActivities(
+    metadataKey: 'proposalId' | 'projectId',
+    entityId: string,
+    limit?: number
+  ): Promise<(UserActivity & { actorName: string | null })[]>;
   syncProposalDueNotifications(): Promise<void>;
   getUserNotifications(
     userId: string,
@@ -137,7 +149,8 @@ export interface IStorage {
   updateClient(id: string, client: Partial<Client>): Promise<Client | null>;
   deleteClient(id: string): Promise<boolean>;
   
-  getAllProposals(): Promise<(Proposal & { categoryValuesTotal?: number })[]>;
+  getAllProposals(options?: { skip?: number; take?: number }): Promise<(Proposal & { categoryValuesTotal?: number })[]>;
+  getProposalsCount(): Promise<number>;
   getProposal(id: string): Promise<Proposal | null>;
   getLatestProposalByCode(code: string): Promise<Proposal | null>;
   createProposal(proposal: InsertProposal): Promise<Proposal>;
@@ -180,6 +193,12 @@ export interface IStorage {
   queueEmailOutbox(input: QueueEmailOutboxInput): Promise<EmailOutbox>;
   updateEmailOutbox(id: string, updates: Partial<EmailOutbox>): Promise<EmailOutbox | null>;
 
+  getGlobalHealthRule(): Promise<ProjectHealthRule>;
+  upsertGlobalHealthRule(updates: HealthRuleInput, updatedById?: string | null): Promise<ProjectHealthRule>;
+  getProjectHealthRule(projectId: string): Promise<ProjectHealthRule | null>;
+  upsertProjectHealthRule(projectId: string, updates: HealthRuleInput, updatedById?: string | null): Promise<ProjectHealthRule>;
+  deleteProjectHealthRule(projectId: string): Promise<boolean>;
+
   getAllCostCenters(options?: { includeInactive?: boolean }): Promise<CostCenter[]>;
   getCostCenter(id: string): Promise<CostCenter | null>;
   createCostCenter(input: InsertCostCenter): Promise<CostCenter>;
@@ -188,7 +207,7 @@ export interface IStorage {
   
   getTimeEntriesByProject(projectId: string): Promise<TimeEntryWithCostCenter[]>;
   getTimeEntry(id: string): Promise<TimeEntry | null>;
-  getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string): Promise<TimeEntry[]>;
+  getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string, projectId?: string): Promise<TimeEntry[]>;
   getAllTimeEntries(): Promise<TimeEntry[]>;
   createTimeEntry(entry: InsertTimeEntry): Promise<TimeEntryWithCostCenter>;
   updateTimeEntry(id: string, entry: Partial<TimeEntry>): Promise<TimeEntry | null>;
@@ -529,6 +548,29 @@ export class PrismaStorage implements IStorage {
     return { items: sliced, nextCursor };
   }
 
+  async getEntityActivities(
+    metadataKey: 'proposalId' | 'projectId',
+    entityId: string,
+    limit = 50
+  ): Promise<(UserActivity & { actorName: string | null })[]> {
+    const items = await prisma.userActivity.findMany({
+      where: {
+        metadata: {
+          path: [metadataKey],
+          equals: entityId,
+        },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: Math.min(Math.max(limit, 1), 100),
+      include: { user: { select: { name: true } } },
+    });
+
+    return items.map(({ user, ...activity }) => ({
+      ...activity,
+      actorName: user?.name ?? null,
+    }));
+  }
+
   async syncProposalDueNotifications(): Promise<void> {
     const today = this.startOfUtcDay(new Date());
     const threshold = new Date(today);
@@ -845,11 +887,14 @@ export class PrismaStorage implements IStorage {
     return `T${yearTwoDigits}${nextSequence}`;
   }
 
-  async getAllProposals(): Promise<(Proposal & { categoryValuesTotal?: number })[]> {
+  async getAllProposals(options?: { skip?: number; take?: number }): Promise<(Proposal & { categoryValuesTotal?: number })[]> {
     const proposals = await prisma.proposal.findMany({
       include: {
         categoryValues: true,
       },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      ...(typeof options?.skip === 'number' ? { skip: options.skip } : {}),
+      ...(typeof options?.take === 'number' ? { take: options.take } : {}),
     });
 
     const users = await prisma.user.findMany({
@@ -897,6 +942,10 @@ export class PrismaStorage implements IStorage {
         return sum + value * hours;
       }, 0) || 0,
     }));
+  }
+
+  async getProposalsCount(): Promise<number> {
+    return prisma.proposal.count();
   }
 
   async getProposal(id: string): Promise<Proposal | null> {
@@ -1387,6 +1436,41 @@ export class PrismaStorage implements IStorage {
     });
   }
 
+  async getGlobalHealthRule(): Promise<ProjectHealthRule> {
+    const existing = await prisma.projectHealthRule.findFirst({ where: { projectId: null } });
+    if (existing) return existing;
+    return prisma.projectHealthRule.create({ data: { projectId: null } });
+  }
+
+  async upsertGlobalHealthRule(updates: HealthRuleInput, updatedById?: string | null): Promise<ProjectHealthRule> {
+    const existing = await this.getGlobalHealthRule();
+    return prisma.projectHealthRule.update({
+      where: { id: existing.id },
+      data: { ...updates, updatedById: updatedById ?? null },
+    });
+  }
+
+  async getProjectHealthRule(projectId: string): Promise<ProjectHealthRule | null> {
+    return prisma.projectHealthRule.findUnique({ where: { projectId } });
+  }
+
+  async upsertProjectHealthRule(projectId: string, updates: HealthRuleInput, updatedById?: string | null): Promise<ProjectHealthRule> {
+    return prisma.projectHealthRule.upsert({
+      where: { projectId },
+      create: { projectId, ...updates, updatedById: updatedById ?? null },
+      update: { ...updates, updatedById: updatedById ?? null },
+    });
+  }
+
+  async deleteProjectHealthRule(projectId: string): Promise<boolean> {
+    try {
+      await prisma.projectHealthRule.delete({ where: { projectId } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async createProjectTap(input: CreateProjectTapInput): Promise<ProjectTap> {
     const latestTap = await prisma.projectTap.findFirst({
       where: { projectId: input.projectId },
@@ -1516,11 +1600,12 @@ export class PrismaStorage implements IStorage {
     return prisma.timeEntry.findUnique({ where: { id } });
   }
 
-  async getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string): Promise<TimeEntry[]> {
+  async getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string, projectId?: string): Promise<TimeEntry[]> {
     return prisma.timeEntry.findMany({
       where: {
         collaboratorId,
         entryDate: new Date(date),
+        ...(projectId ? { projectId } : {}),
       }
     });
   }
@@ -1765,4 +1850,4 @@ export class PrismaStorage implements IStorage {
 
 export const storage = new PrismaStorage();
 
-export type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, CostCenter };
+export type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, CostCenter, ProjectHealthRule };

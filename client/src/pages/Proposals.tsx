@@ -70,7 +70,7 @@ import {
 } from '@/components/ui/tooltip';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
-import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, projectsApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse, ProposalTapDraft, ProposalTapAttachment, Project } from '@/lib/api';
+import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, projectsApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse, ProposalTapDraft, ProposalTapAttachment, Project, EntityActivity } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -133,6 +133,8 @@ const statusLabels: Record<string, string> = {
   cancelled: 'Cancelada',
   converted: 'Sucesso',
 };
+
+const proposalStatusBadgeClassName = 'inline-flex min-w-[128px] h-7 items-center justify-center px-2.5 text-[11px] font-medium text-white leading-none';
 
 const proposalStatusOptions: Array<{ value: string; label: string }> = [
   { value: 'em_elaboracao', label: 'Em elaboração' },
@@ -1828,19 +1830,6 @@ export default function Proposals() {
     return `Campos obrigatórios pendentes:\n${pending.map((label) => `• ${label}`).join('\n')}`;
   }, [createMutation.isPending, createValidationErrors, isCreateValid]);
 
-  const convertMutation = useMutation({
-    mutationFn: (proposalId: string) => proposalsApi.convert(proposalId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
-      toast({ title: 'Proposta convertida em projeto com sucesso', variant: 'success' });
-      setDetailSheetOpen(false);
-    },
-    onError: (error) => {
-      toast({ title: 'Erro ao converter proposta', description: error.message, variant: 'destructive' });
-    },
-  });
-
   const saveTapMutation = useMutation({
     mutationFn: ({ proposalId, data }: { proposalId: string; data: ProposalTapDraft }) => proposalsApi.saveTap(proposalId, data),
     onSuccess: (updatedProposal) => {
@@ -2195,6 +2184,11 @@ export default function Proposals() {
     queryKey: ['/api/projects', selectedProposalProjectId, 'proposal-traceability'],
     queryFn: () => projectsApi.getOne(selectedProposalProjectId as string),
     enabled: (detailSheetOpen || traceabilityOpen || projectSummaryOpen) && !!selectedProposalProjectId,
+  });
+  const { data: selectedProposalActivities = [], isLoading: isLoadingSelectedProposalActivities } = useQuery<EntityActivity[]>({
+    queryKey: ['/api/proposals', selectedProposal?.id, 'activities'],
+    queryFn: () => proposalsApi.getActivities(selectedProposal!.id),
+    enabled: traceabilityOpen && !!selectedProposal?.id,
   });
   const tapGenerateDisabledReason = useMemo(() => {
     if (tapReadOnly) return null;
@@ -2577,17 +2571,9 @@ export default function Proposals() {
           aValue = a.sentDate ? new Date(a.sentDate).getTime() : 0;
           bValue = b.sentDate ? new Date(b.sentDate).getTime() : 0;
           break;
-        case 'approvalDate':
-          aValue = (a as any).approvalDate ? new Date((a as any).approvalDate).getTime() : 0;
-          bValue = (b as any).approvalDate ? new Date((b as any).approvalDate).getTime() : 0;
-          break;
         case 'currentRevision':
           aValue = (a as any).currentRevision || 0;
           bValue = (b as any).currentRevision || 0;
-          break;
-        case 'probability':
-          aValue = (a as any).probability || 0;
-          bValue = (b as any).probability || 0;
           break;
         default:
           aValue = (a as any)[sortColumn] || '';
@@ -2688,15 +2674,18 @@ export default function Proposals() {
         );
       case 'status':
         return (
-          <Badge
-            className={`w-full h-6 px-2 py-0 inline-flex items-center justify-center text-xs text-white text-center ${
-              statusColors[proposal.status] || 'bg-gray-400'
-            }`}
-          >
-            <span className="truncate max-w-full">
-              {statusLabels[proposal.status] || proposal.status}
-            </span>
-          </Badge>
+          <div className="flex min-h-[32px] items-center justify-center">
+            <Badge
+              className={cn(
+                proposalStatusBadgeClassName,
+                statusColors[proposal.status] || 'bg-gray-400'
+              )}
+            >
+              <span className="truncate max-w-full">
+                {statusLabels[proposal.status] || proposal.status}
+              </span>
+            </Badge>
+          </div>
         );
       case 'type':
         return (
@@ -3859,7 +3848,7 @@ export default function Proposals() {
                   {primaryColumns.map((col) => (
                     <col key={col.id} style={{ width: estimateColumnWidthPx(col.width) }} />
                   ))}
-                  <col style={{ width: 220 }} />
+                  <col style={{ width: 236 }} />
                 </colgroup>
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -3912,7 +3901,7 @@ export default function Proposals() {
                         </div>
                       </TableHead>
                     ))}
-                    <TableHead className="w-[220px] text-right">Ações</TableHead>
+                    <TableHead className="w-[236px] text-center">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
               </Table>
@@ -3926,7 +3915,7 @@ export default function Proposals() {
                   {primaryColumns.map((col) => (
                     <col key={col.id} style={{ width: estimateColumnWidthPx(col.width) }} />
                   ))}
-                  <col style={{ width: 220 }} />
+                  <col style={{ width: 236 }} />
                 </colgroup>
                 <TableBody>
                   {paginatedProposals.map((proposal) => {
@@ -3978,103 +3967,155 @@ export default function Proposals() {
                             <TableCell 
                               key={col.id} 
                               style={{ width: estimateColumnWidthPx(col.width) }}
-                              className={`text-sm py-2 whitespace-normal break-words overflow-hidden align-top ${col.width || 'w-24'}`}
+                              className={`text-sm py-2 whitespace-normal break-words overflow-hidden align-middle ${col.width || 'w-24'}`}
                             >
                               {getCellValue(proposal, col.id)}
                             </TableCell>
                           ))}
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-                              {(isLatestRevision(proposal) || Boolean(proposal.projectId)) && canOpenProposalTap(proposal) && (
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  className={cn(
-                                    'h-6 min-w-[90px] px-2 py-0 text-xs font-medium shadow-none',
-                                    proposal.status === 'sucesso_aditivo' ? 'bg-teal-500 text-white hover:bg-teal-500' : getProposalTapStatusBadgeClassName(proposal)
+                          <TableCell className="w-[236px] min-w-[236px] px-2 py-0 align-middle">
+                            <div className="flex h-8 items-center justify-center">
+                              <div className="grid h-8 grid-cols-[92px_32px_32px_32px_32px] items-center gap-1 justify-center">
+                                <div className="flex h-8 w-[92px] shrink-0 items-center justify-center">
+                                  {(isLatestRevision(proposal) || Boolean(proposal.projectId)) && canOpenProposalTap(proposal) ? (
+                                    <Button
+                                      size="sm"
+                                      variant="secondary"
+                                      className={cn(
+                                        'h-7 w-full px-2 py-0 text-[11px] font-medium shadow-none leading-none',
+                                        proposal.status === 'sucesso_aditivo' ? 'bg-teal-500 text-white hover:bg-teal-500' : getProposalTapStatusBadgeClassName(proposal)
+                                      )}
+                                      data-testid={`button-open-tap-${proposal.id}`}
+                                      onClick={(e) => openTapDialog(proposal, e)}
+                                      onMouseDown={(e) => e.stopPropagation()}
+                                      onPointerDown={(e) => e.stopPropagation()}
+                                      title={proposal.status === 'sucesso_aditivo' ? 'Vincular aditivo ao projeto' : 'Abrir TAP'}
+                                    >
+                                      {proposal.status === 'sucesso_aditivo' ? 'ADITIVO' : 'TAP'}
+                                    </Button>
+                                  ) : (
+                                    <div className="h-7 w-full" aria-hidden="true" />
                                   )}
-                                  data-testid={`button-open-tap-${proposal.id}`}
-                                  onClick={(e) => openTapDialog(proposal, e)}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onPointerDown={(e) => e.stopPropagation()}
-                                  title={proposal.status === 'sucesso_aditivo' ? 'Vincular aditivo ao projeto' : 'Abrir TAP'}
-                                >
-                                  {proposal.status === 'sucesso_aditivo' ? 'ADITIVO' : 'TAP'}
-                                </Button>
-                              )}
+                                </div>
 
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7"
-                                data-testid={`button-open-traceability-${proposal.id}`}
-                                onClick={(e) => openTraceabilityDialog(proposal, e)}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onPointerDown={(e) => e.stopPropagation()}
-                                title="Abrir rastreabilidade"
-                              >
-                                <Route className="h-4 w-4" />
-                              </Button>
+                                <div className="flex h-8 w-8 items-center justify-center">
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-7 w-7"
+                                    data-testid={`button-open-traceability-${proposal.id}`}
+                                    onClick={(e) => openTraceabilityDialog(proposal, e)}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    title="Abrir rastreabilidade"
+                                  >
+                                    <Route className="h-4 w-4" />
+                                  </Button>
+                                </div>
 
-                              {isLatestRevision(proposal) && (
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-7 w-7"
-                                  data-testid={`button-edit-proposal-${proposal.id}`}
-                                  onClick={(e) => handleEditProposal(proposal, e)}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onPointerDown={(e) => e.stopPropagation()}
-                                  title="Editar"
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                              )}
+                                {isLatestRevision(proposal) ? (
+                                  <div className="flex h-8 w-8 items-center justify-center">
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-7 w-7"
+                                      data-testid={`button-edit-proposal-${proposal.id}`}
+                                      onClick={(e) => handleEditProposal(proposal, e)}
+                                      onMouseDown={(e) => e.stopPropagation()}
+                                      onPointerDown={(e) => e.stopPropagation()}
+                                      title="Editar"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="h-8 w-8" aria-hidden="true" />
+                                )}
 
-                              {isLatestRevision(proposal) && (
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-7 w-7"
-                                  data-testid={`button-revision-proposal-${proposal.id}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (proposal.projectId) {
-                                      setRevisionConfirmProposal(proposal);
-                                    } else {
-                                      revisionProposalMutation.mutate(proposal.id);
-                                    }
-                                  }}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onPointerDown={(e) => e.stopPropagation()}
-                                  disabled={
-                                    revisionProposalMutation.isPending &&
-                                    revisionProposalMutation.variables === proposal.id
-                                  }
-                                  title="Revisão"
-                                >
-                                  <RotateCcw className="h-4 w-4" />
-                                </Button>
-                              )}
+                                {isLatestRevision(proposal) ? (
+                                  <div className="flex h-8 w-8 items-center justify-center">
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-7 w-7"
+                                      data-testid={`button-revision-proposal-${proposal.id}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (proposal.projectId) {
+                                          setRevisionConfirmProposal(proposal);
+                                        } else {
+                                          revisionProposalMutation.mutate(proposal.id);
+                                        }
+                                      }}
+                                      onMouseDown={(e) => e.stopPropagation()}
+                                      onPointerDown={(e) => e.stopPropagation()}
+                                      disabled={
+                                        revisionProposalMutation.isPending &&
+                                        revisionProposalMutation.variables === proposal.id
+                                      }
+                                      title="Revisão"
+                                    >
+                                      <RotateCcw className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="h-8 w-8" aria-hidden="true" />
+                                )}
 
-                              {isLatestRevision(proposal) && (
-                                (() => {
-                                  const deleteDisabled = Boolean(proposal.projectId);
-                                  const deleteTooltip = deleteDisabled
-                                    ? 'Exclusão não permitida. A proposta já foi convertida em projeto.'
-                                    : null;
+                                {isLatestRevision(proposal) ? (
+                                  <div className="flex h-8 w-8 items-center justify-center">
+                                    {(() => {
+                                      const deleteDisabled = Boolean(proposal.projectId);
+                                      const deleteTooltip = deleteDisabled
+                                        ? 'Exclusão não permitida. A proposta já foi convertida em projeto.'
+                                        : null;
 
-                                  if (deleteDisabled) {
-                                    return (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <span>
+                                      if (deleteDisabled) {
+                                        return (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span>
+                                                <Button
+                                                  size="icon"
+                                                  variant="ghost"
+                                                  className="h-7 w-7"
+                                                  data-testid={`button-delete-proposal-${proposal.id}`}
+                                                  disabled
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  onMouseDown={(e) => e.stopPropagation()}
+                                                  onPointerDown={(e) => e.stopPropagation()}
+                                                  title="Excluir"
+                                                >
+                                                  <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">
+                                              {deleteTooltip}
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        );
+                                      }
+
+                                      return (
+                                        <AlertDialog
+                                          onOpenChange={(open) => {
+                                            if (open) {
+                                              setDeleteConfirmProposalId(proposal.id);
+                                              setDeleteConfirmInput('');
+                                              return;
+                                            }
+                                            if (deleteConfirmProposalId === proposal.id) {
+                                              setDeleteConfirmProposalId(null);
+                                              setDeleteConfirmInput('');
+                                            }
+                                          }}
+                                        >
+                                          <AlertDialogTrigger asChild>
                                             <Button
                                               size="icon"
                                               variant="ghost"
                                               className="h-7 w-7"
                                               data-testid={`button-delete-proposal-${proposal.id}`}
-                                              disabled
                                               onClick={(e) => e.stopPropagation()}
                                               onMouseDown={(e) => e.stopPropagation()}
                                               onPointerDown={(e) => e.stopPropagation()}
@@ -4082,110 +4123,80 @@ export default function Proposals() {
                                             >
                                               <Trash2 className="h-4 w-4" />
                                             </Button>
-                                          </span>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top">
-                                          {deleteTooltip}
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    );
-                                  }
+                                          </AlertDialogTrigger>
 
-                                  return (
-                                    <AlertDialog
-                                      onOpenChange={(open) => {
-                                        if (open) {
-                                          setDeleteConfirmProposalId(proposal.id);
-                                          setDeleteConfirmInput('');
-                                          return;
-                                        }
-                                        if (deleteConfirmProposalId === proposal.id) {
-                                          setDeleteConfirmProposalId(null);
-                                          setDeleteConfirmInput('');
-                                        }
-                                      }}
-                                    >
-                                      <AlertDialogTrigger asChild>
-                                        <Button
-                                          size="icon"
-                                          variant="ghost"
-                                          className="h-7 w-7"
-                                          data-testid={`button-delete-proposal-${proposal.id}`}
-                                          onClick={(e) => e.stopPropagation()}
-                                          onMouseDown={(e) => e.stopPropagation()}
-                                          onPointerDown={(e) => e.stopPropagation()}
-                                          title="Excluir"
-                                        >
-                                          <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                      </AlertDialogTrigger>
-                                      <AlertDialogContent
-                                        onClick={(e) => e.stopPropagation()}
-                                        onMouseDown={(e) => e.stopPropagation()}
-                                        onPointerDown={(e) => e.stopPropagation()}
-                                      >
-                                        <AlertDialogHeader>
-                                          <AlertDialogTitle>Excluir proposta?</AlertDialogTitle>
-                                          <AlertDialogDescription>
-                                            Esta ação não pode ser desfeita. A proposta “{proposal.code}” será removida.
-                                          </AlertDialogDescription>
-                                        </AlertDialogHeader>
-
-                                        <DangerZoneConfirm
-                                          description="Para confirmar a exclusão, digite o código da proposta exatamente como abaixo:"
-                                          expectedValue={proposal.code}
-                                          value={deleteConfirmProposalId === proposal.id ? deleteConfirmInput : ''}
-                                          onValueChange={setDeleteConfirmInput}
-                                          inputTestId={`input-confirm-delete-proposal-${proposal.id}`}
-                                        />
-
-                                        <AlertDialogFooter>
-                                          <AlertDialogCancel
-                                            className={destructiveCancelButtonClassName}
+                                          <AlertDialogContent
                                             onClick={(e) => e.stopPropagation()}
-                                            onMouseDown={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                            }}
-                                            onPointerDown={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                            }}
+                                            onMouseDown={(e) => e.stopPropagation()}
+                                            onPointerDown={(e) => e.stopPropagation()}
                                           >
-                                            Cancelar
-                                          </AlertDialogCancel>
-                                          <AlertDialogAction
-                                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                            disabled={
-                                              deleteProposalMutation.isPending ||
-                                              deleteConfirmProposalId !== proposal.id ||
-                                              deleteConfirmInput.trim() !== proposal.code
-                                            }
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              if (deleteConfirmInput.trim() !== proposal.code) return;
-                                              deleteProposalMutation.mutate(proposal.id);
-                                            }}
-                                            onMouseDown={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                            }}
-                                            onPointerDown={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                            }}
-                                          >
-                                            Excluir
-                                          </AlertDialogAction>
-                                        </AlertDialogFooter>
-                                      </AlertDialogContent>
-                                    </AlertDialog>
-                                  );
-                                })()
-                              )}
+                                            <AlertDialogHeader>
+                                              <AlertDialogTitle>Excluir proposta?</AlertDialogTitle>
+                                              <AlertDialogDescription>
+                                                Esta ação não pode ser desfeita. A proposta “{proposal.code}” será removida.
+                                              </AlertDialogDescription>
+                                            </AlertDialogHeader>
+
+                                            <DangerZoneConfirm
+                                              description="Para confirmar a exclusão, digite o código da proposta exatamente como abaixo:"
+                                              expectedValue={proposal.code}
+                                              value={deleteConfirmProposalId === proposal.id ? deleteConfirmInput : ''}
+                                              onValueChange={setDeleteConfirmInput}
+                                              inputTestId={`input-confirm-delete-proposal-${proposal.id}`}
+                                            />
+
+                                            <AlertDialogFooter>
+                                              <AlertDialogCancel
+                                                className={destructiveCancelButtonClassName}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onMouseDown={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                }}
+                                                onPointerDown={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                }}
+                                              >
+                                                Cancelar
+                                              </AlertDialogCancel>
+                                              <AlertDialogAction
+                                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                                disabled={
+                                                  deleteProposalMutation.isPending ||
+                                                  deleteConfirmProposalId !== proposal.id ||
+                                                  deleteConfirmInput.trim() !== proposal.code
+                                                }
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (deleteConfirmInput.trim() !== proposal.code) return;
+                                                  deleteProposalMutation.mutate(proposal.id);
+                                                }}
+                                                onMouseDown={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                }}
+                                                onPointerDown={(e) => {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                }}
+                                              >
+                                                Excluir
+                                              </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                          </AlertDialogContent>
+                                        </AlertDialog>
+                                      );
+                                    })()}
+                                  </div>
+                                ) : (
+                                  <div className="h-8 w-8" aria-hidden="true" />
+                                )}
+                              </div>
                             </div>
                           </TableCell>
                         </TableRow>
+
                         {hasOverflowColumns && isExpanded && (
                           <TableRow
                             key={`${proposal.id}-expanded`}
@@ -5116,7 +5127,7 @@ export default function Proposals() {
               <SheetTitle className="flex items-center gap-2">
                 <span className="text-primary font-mono">{selectedProposal?.code}</span>
                 {selectedProposal && (
-                  <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
+                  <Badge className={cn(proposalStatusBadgeClassName, statusColors[selectedProposal.status])}>
                     {statusLabels[selectedProposal.status]}
                   </Badge>
                 )}
@@ -5359,7 +5370,7 @@ export default function Proposals() {
               <DialogTitle className="flex items-center gap-2">
                 <span className="text-primary font-mono">{selectedProposal?.code}</span>
                 {selectedProposal && (
-                  <Badge className={`text-white ${statusColors[selectedProposal.status]}`}>
+                  <Badge className={cn(proposalStatusBadgeClassName, statusColors[selectedProposal.status])}>
                     {statusLabels[selectedProposal.status]}
                   </Badge>
                 )}
@@ -5694,6 +5705,29 @@ export default function Proposals() {
                   <div className="rounded-2xl border bg-card p-4">
                     <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Projeto vinculado</p>
                     <p className="mt-2 text-sm font-semibold text-foreground">{selectedProposalProject?.code || 'Ainda não criado'}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border bg-card p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Atividades recentes</p>
+                  <div className="mt-3 space-y-3">
+                    {isLoadingSelectedProposalActivities ? (
+                      <p className="text-sm text-muted-foreground">Carregando atividades...</p>
+                    ) : selectedProposalActivities.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Nenhuma atividade registrada para esta proposta.</p>
+                    ) : (
+                      selectedProposalActivities.map((activity) => (
+                        <div key={activity.id} className="flex items-start justify-between gap-3 border-b border-border/60 pb-3 last:border-b-0 last:pb-0">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">{activity.title}</p>
+                            <p className="text-xs text-muted-foreground">{activity.actorName || 'Sistema'}</p>
+                          </div>
+                          <p className="shrink-0 text-xs text-muted-foreground">
+                            {format(new Date(activity.createdAt), "dd/MM/yyyy 'às' HH:mm")}
+                          </p>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
 
