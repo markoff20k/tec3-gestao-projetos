@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info, Star, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, UserPlus, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info, Star, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,16 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,7 +56,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -174,6 +183,7 @@ export default function Projects() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [clientFilter, setClientFilter] = useState('');
+  const [coordinatorFilter, setCoordinatorFilter] = useState('');
   const [onboardingOriginFilter, setOnboardingOriginFilter] = useState<'all' | 'native' | 'legacy'>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -831,6 +841,16 @@ export default function Projects() {
     [users]
   );
 
+  const allocatedTeamMembers = useMemo(
+    () => teamAllocationCandidates.filter((candidate) => selectedTeamMemberIds.includes(candidate.id)),
+    [teamAllocationCandidates, selectedTeamMemberIds]
+  );
+
+  const availableTeamCandidates = useMemo(
+    () => teamAllocationCandidates.filter((candidate) => !selectedTeamMemberIds.includes(candidate.id)),
+    [teamAllocationCandidates, selectedTeamMemberIds]
+  );
+
   const toggleTeamMember = (userId: string) => {
     setSelectedTeamMemberIds((current) => (
       current.includes(userId)
@@ -855,6 +875,7 @@ export default function Projects() {
     setSearch('');
     setStatusFilters([]);
     setClientFilter('');
+    setCoordinatorFilter('');
     setOnboardingOriginFilter('all');
     setDateFrom('');
     setDateTo('');
@@ -868,6 +889,7 @@ export default function Projects() {
   const activeFilterCount =
     statusFilters.length +
     (clientFilter ? 1 : 0) +
+    (coordinatorFilter ? 1 : 0) +
     (onboardingOriginFilter !== 'all' ? 1 : 0) +
     (dateFrom ? 1 : 0) +
     (dateTo ? 1 : 0) +
@@ -886,6 +908,7 @@ export default function Projects() {
       const normalizedStatusFilters = statusFilters.map(normalizeFilterValue);
       const statusMatch = normalizedStatusFilters.length === 0 || normalizedStatusFilters.includes(projectStatus);
       const clientMatch = !clientFilter || p.clientId === clientFilter;
+      const coordinatorMatch = !coordinatorFilter || p.coordinatorId === coordinatorFilter;
       const onboardingOriginMatch =
         onboardingOriginFilter === 'all' ||
         (onboardingOriginFilter === 'legacy' ? isLegacyCompatibilityProject(p) : !isLegacyCompatibilityProject(p));
@@ -915,7 +938,7 @@ export default function Projects() {
 
       const favoriteMatch = !showOnlyFavorites || favoriteProjectsSet.has(p.id);
 
-      return searchMatch && statusMatch && clientMatch && onboardingOriginMatch && dateMatch && valueMatch && hoursMatch && favoriteMatch;
+      return searchMatch && statusMatch && clientMatch && coordinatorMatch && onboardingOriginMatch && dateMatch && valueMatch && hoursMatch && favoriteMatch;
     });
 
     return filtered.sort((a, b) => {
@@ -966,7 +989,7 @@ export default function Projects() {
       return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
     });
 
-  }, [projects, search, statusFilters, clientFilter, onboardingOriginFilter, dateFrom, dateTo, valueMin, valueMax, hoursMin, hoursMax, sortColumn, sortDirection, showOnlyFavorites, favoriteProjectsSet]);
+  }, [projects, search, statusFilters, clientFilter, coordinatorFilter, onboardingOriginFilter, dateFrom, dateTo, valueMin, valueMax, hoursMin, hoursMax, sortColumn, sortDirection, showOnlyFavorites, favoriteProjectsSet]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProjects.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -1425,6 +1448,29 @@ export default function Projects() {
                           {clients.map((client) => (
                             <SelectItem key={client.id} value={client.id}>
                               {client.razaoSocial}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="font-medium">Coordenador do Projeto</Label>
+                      <Select
+                        value={coordinatorFilter}
+                        onValueChange={(value) => {
+                          setCoordinatorFilter(value === '_all' ? '' : value);
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger data-testid="filter-project-coordinator">
+                          <SelectValue placeholder="Todos os coordenadores" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_all">Todos os coordenadores</SelectItem>
+                          {users.filter((u) => u.isActive).map((coordinator) => (
+                            <SelectItem key={coordinator.id} value={coordinator.id}>
+                              {coordinator.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -2185,11 +2231,58 @@ export default function Projects() {
                       </div>
 
                       <div ref={teamSectionRef} className="space-y-4 border-t pt-4">
-                        <div>
-                          <p className="text-base font-semibold">Alocação da equipe</p>
-                          <p className="text-xs text-muted-foreground">
-                            Defina quais colaboradores estão autorizados a lançar horas neste projeto.
-                          </p>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-base font-semibold">Alocação da equipe</p>
+                            <p className="text-xs text-muted-foreground">
+                              Defina quais colaboradores estão autorizados a lançar horas neste projeto.
+                            </p>
+                          </div>
+
+                          {canManageTeamAllocation ? (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={updateMembersMutation.isPending}
+                                  data-testid="button-add-team-member"
+                                >
+                                  <UserPlus className="h-4 w-4 mr-1" />
+                                  Adicionar
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent align="end" className="w-72 p-0">
+                                <Command>
+                                  <CommandInput placeholder="Buscar colaborador..." />
+                                  <CommandList>
+                                    <CommandEmpty>Nenhum colaborador encontrado.</CommandEmpty>
+                                    <CommandGroup>
+                                      {availableTeamCandidates.map((candidate) => (
+                                        <CommandItem
+                                          key={candidate.id}
+                                          value={candidate.name}
+                                          onSelect={() => toggleTeamMember(candidate.id)}
+                                          data-testid={`option-add-team-member-${candidate.id}`}
+                                        >
+                                          <Avatar className="h-6 w-6">
+                                            <AvatarFallback className="text-[10px]">
+                                              {candidate.name.charAt(0).toUpperCase()}
+                                            </AvatarFallback>
+                                          </Avatar>
+                                          <div className="min-w-0">
+                                            <p className="truncate text-sm">{candidate.name}</p>
+                                            <p className="truncate text-[11px] text-muted-foreground">{candidate.role}</p>
+                                          </div>
+                                        </CommandItem>
+                                      ))}
+                                    </CommandGroup>
+                                  </CommandList>
+                                </Command>
+                              </PopoverContent>
+                            </Popover>
+                          ) : null}
                         </div>
 
                         {!canManageTeamAllocation ? (
@@ -2199,28 +2292,40 @@ export default function Projects() {
                         ) : null}
 
                         <div className="max-h-[240px] space-y-2 overflow-y-auto rounded-xl border p-3 dark:border-white/10 dark:bg-[#102247]">
-                          {teamAllocationCandidates.length === 0 ? (
-                            <p className="text-xs text-muted-foreground">Nenhum colaborador ativo disponível.</p>
+                          {allocatedTeamMembers.length === 0 ? (
+                            <p className="p-2 text-center text-xs text-muted-foreground">Nenhum colaborador alocado ainda.</p>
                           ) : (
-                            teamAllocationCandidates.map((candidate) => {
-                              const checked = selectedTeamMemberIds.includes(candidate.id);
-                              return (
-                                <label
-                                  key={candidate.id}
-                                  className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm dark:border-white/10"
-                                >
+                            allocatedTeamMembers.map((candidate) => (
+                              <div
+                                key={candidate.id}
+                                className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm dark:border-white/10"
+                                data-testid={`row-team-member-${candidate.id}`}
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <Avatar className="h-8 w-8">
+                                    <AvatarFallback className="text-xs">
+                                      {candidate.name.charAt(0).toUpperCase()}
+                                    </AvatarFallback>
+                                  </Avatar>
                                   <div className="min-w-0">
                                     <p className="truncate font-medium">{candidate.name}</p>
                                     <p className="truncate text-[11px] text-muted-foreground">{candidate.role}</p>
                                   </div>
-                                  <Checkbox
-                                    checked={checked}
-                                    disabled={!canManageTeamAllocation || updateMembersMutation.isPending}
-                                    onCheckedChange={() => toggleTeamMember(candidate.id)}
-                                  />
-                                </label>
-                              );
-                            })
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                  disabled={!canManageTeamAllocation || updateMembersMutation.isPending}
+                                  onClick={() => toggleTeamMember(candidate.id)}
+                                  title="Remover da equipe"
+                                  data-testid={`button-remove-team-member-${candidate.id}`}
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ))
                           )}
                         </div>
 
