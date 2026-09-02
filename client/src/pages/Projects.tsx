@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, UserPlus, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info, Star, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, UserPlus, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info, Star, ArrowUpDown, ArrowUp, ArrowDown, Flag } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -196,6 +196,8 @@ export default function Projects() {
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [deleteConfirmProjectInput, setDeleteConfirmProjectInput] = useState('');
+  const [closeProjectDialogOpen, setCloseProjectDialogOpen] = useState(false);
+  const [closeConfirmProjectInput, setCloseConfirmProjectInput] = useState('');
   const [tapPreviewOpen, setTapPreviewOpen] = useState(false);
   const [tapDetailsOpen, setTapDetailsOpen] = useState(false);
   const [detailsInitialSection, setDetailsInitialSection] = useState<'overview' | 'config' | 'team'>('overview');
@@ -555,6 +557,20 @@ export default function Projects() {
     },
   });
 
+  const closeProjectMutation = useMutation({
+    mutationFn: () => projectsApi.close(selectedProjectId as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId] });
+      toast({ title: 'Projeto encerrado com sucesso', variant: 'success' });
+      setCloseProjectDialogOpen(false);
+      setCloseConfirmProjectInput('');
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao encerrar projeto', description: error.message, variant: 'destructive' });
+    },
+  });
+
   const updateMembersMutation = useMutation({
     mutationFn: (memberIds: string[]) => projectsApi.setMembers(selectedProjectId as string, memberIds),
     onSuccess: () => {
@@ -749,6 +765,16 @@ export default function Projects() {
   );
   const canManageTeamAllocation = Boolean(selectedProject && (isAdmin || isCoordinatorOfSelectedProject));
   const canManageHealthRule = canManageTeamAllocation;
+
+  const isProjectClosed = Boolean(
+    selectedProject && (selectedProject.status === 'completed' || selectedProject.status === 'cancelled')
+  );
+  const pendingApprovalEntriesCount = Number(selectedProject?.timeSummary?.pendingEntriesCount || 0);
+  const pendingApprovalHours = Number(selectedProject?.timeSummary?.pendingApprovalHours || 0);
+  const hasPendingHoursApproval = pendingApprovalEntriesCount > 0;
+  const canCloseProject = Boolean(
+    selectedProject && canManageTeamAllocation && !isProjectClosed && isProjectExecutionStarted
+  );
 
   const openHealthRuleDialog = () => {
     const currentRule = selectedProjectHealthRule?.rule;
@@ -1105,6 +1131,14 @@ export default function Projects() {
         : 'Ative o projeto após concluir o onboarding.',
       complete: isProjectExecutionStarted,
       icon: ArrowRightCircle,
+    },
+    {
+      title: 'Encerramento',
+      description: isProjectClosed
+        ? 'Projeto encerrado. Novos lançamentos de horas estão bloqueados.'
+        : 'Encerre o projeto após concluir a execução e resolver todas as horas pendentes.',
+      complete: isProjectClosed,
+      icon: Flag,
     },
   ] : [];
 
@@ -1860,6 +1894,78 @@ export default function Projects() {
           </AlertDialogContent>
         </AlertDialog>
 
+        <AlertDialog
+          open={closeProjectDialogOpen}
+          onOpenChange={(open) => {
+            if (!open && !closeProjectMutation.isPending) {
+              setCloseProjectDialogOpen(false);
+              setCloseConfirmProjectInput('');
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Encerrar projeto?</AlertDialogTitle>
+              <AlertDialogDescription>
+                O projeto “{selectedProject?.code}” será marcado como concluído. Esta ação não pode ser desfeita
+                e, a partir dela, nenhum colaborador poderá lançar ou editar horas neste projeto.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            {hasPendingHoursApproval ? (
+              <div className="space-y-3 rounded-lg border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-300/30 dark:bg-[#3a3018] dark:text-amber-100">
+                <p>
+                  Este projeto tem {pendingApprovalEntriesCount} lançamento(s) de horas pendentes de aprovação
+                  ({pendingApprovalHours.toFixed(1)}h). Aprove ou rejeite essas horas antes de encerrar.
+                </p>
+                {selectedProjectId ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => openProjectTimeApprovals(selectedProjectId)}
+                    data-testid="button-close-project-review-hours"
+                  >
+                    <Clock className="mr-1 h-4 w-4" />
+                    Revisar horas pendentes
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <DangerZoneConfirm
+                title="Confirmação de encerramento"
+                description="Para confirmar o encerramento, digite o código do projeto exatamente como abaixo:"
+                expectedValue={selectedProject?.code || ''}
+                value={closeConfirmProjectInput}
+                onValueChange={setCloseConfirmProjectInput}
+                inputTestId={selectedProject ? `input-confirm-close-project-${selectedProject.id}` : undefined}
+              />
+            )}
+
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={closeProjectMutation.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={
+                  closeProjectMutation.isPending ||
+                  !selectedProject ||
+                  hasPendingHoursApproval ||
+                  closeConfirmProjectInput.trim() !== (selectedProject?.code || '')
+                }
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (!selectedProject || hasPendingHoursApproval) return;
+                  if (closeConfirmProjectInput.trim() !== (selectedProject.code || '')) return;
+                  closeProjectMutation.mutate();
+                }}
+                data-testid="button-confirm-close-project"
+              >
+                {closeProjectMutation.isPending ? 'Encerrando...' : 'Encerrar projeto'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         {filteredProjects.length > 0 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 flex-shrink-0">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -2210,6 +2316,15 @@ export default function Projects() {
                           </div>
                         ) : null}
 
+                        {isProjectClosed ? (
+                          <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-white/10 dark:bg-[#16305e] dark:text-slate-100">
+                            Projeto encerrado
+                            {selectedProject.completedAt ? ` em ${formatDate(selectedProject.completedAt ?? undefined)}` : ''}
+                            {selectedProject.completedBy?.name ? ` por ${selectedProject.completedBy.name}` : ''}
+                            . Novos lançamentos de horas estão bloqueados.
+                          </div>
+                        ) : null}
+
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                           <Button
                             type="button"
@@ -2227,6 +2342,23 @@ export default function Projects() {
                                 ? 'Projeto já iniciado'
                                 : 'Iniciar projeto'}
                           </Button>
+
+                          {canCloseProject ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive sm:w-auto sm:min-w-[210px]"
+                              disabled={closeProjectMutation.isPending}
+                              onClick={() => {
+                                setCloseConfirmProjectInput('');
+                                setCloseProjectDialogOpen(true);
+                              }}
+                              data-testid="button-close-project"
+                            >
+                              <Flag className="mr-1 h-4 w-4" />
+                              {closeProjectMutation.isPending ? 'Encerrando...' : 'Encerrar projeto'}
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
 
@@ -2483,7 +2615,7 @@ export default function Projects() {
                   </Card>
                   <Card>
                     <CardContent className="p-3">
-                      <p className="text-muted-foreground">Encerramento</p>
+                      <p className="text-muted-foreground">Término previsto</p>
                       <p className="font-medium">{formatDate(selectedProject.endDate)}</p>
                     </CardContent>
                   </Card>
@@ -2499,6 +2631,17 @@ export default function Projects() {
                       <p className="font-medium">{formatCurrency(selectedProject.budgetValue || 0)}</p>
                     </CardContent>
                   </Card>
+                  {isProjectClosed ? (
+                    <Card>
+                      <CardContent className="p-3">
+                        <p className="text-muted-foreground">Encerrado em</p>
+                        <p className="font-medium">{formatDate(selectedProject.completedAt ?? undefined)}</p>
+                        {selectedProject.completedBy?.name ? (
+                          <p className="text-xs text-muted-foreground">por {selectedProject.completedBy.name}</p>
+                        ) : null}
+                      </CardContent>
+                    </Card>
+                  ) : null}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">

@@ -58,7 +58,6 @@ export const mainMenuItems: NavigationItem[] = [
       },
     ],
   },
-  { path: '/reports', label: 'Relatórios', icon: BarChart3, roles: ['admin'], description: 'Visualizar relatórios' },
 ];
 
 export const adminMenuItems: NavigationItem[] = [
@@ -84,7 +83,6 @@ export const pageDescriptions: Record<string, string> = {
   '/time-entries': 'Registrar horas trabalhadas',
   '/time-approvals': 'Analisar e aprovar lançamentos pendentes',
   '/projects/indicators': 'Explorar KPIs, correlacoes e widgets de projetos',
-  '/reports': 'Visualizar relatórios',
   '/categories': 'Gerenciar categorias de proposta',
   '/cost-centers': 'Gerenciar centros de custo',
   '/users': 'Gerenciar profissionais da Tec3',

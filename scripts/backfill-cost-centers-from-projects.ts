@@ -6,13 +6,15 @@ async function main() {
   const dryRun = args.includes('--dry-run');
 
   const projects = await prisma.project.findMany({
+    where: { isAdministrative: false },
     select: {
+      id: true,
       code: true,
       name: true,
     },
   });
 
-  const byCode = new Map<string, { code: string; name: string }>();
+  const byCode = new Map<string, { code: string; name: string; projectId: string }>();
 
   for (const project of projects) {
     const rawCode = String(project.code ?? '').trim();
@@ -22,7 +24,7 @@ async function main() {
     const name = String(project.name ?? '').trim() || code;
 
     if (!byCode.has(code)) {
-      byCode.set(code, { code, name });
+      byCode.set(code, { code, name, projectId: project.id });
     }
   }
 
@@ -42,6 +44,8 @@ async function main() {
             code: center.code,
             name: center.name,
             isActive: true,
+            isAdministrative: false,
+            projectId: center.projectId,
           },
         });
       }
@@ -49,11 +53,19 @@ async function main() {
       continue;
     }
 
+    // Centros de custo administrativos são mantidos pelo admin e nunca são
+    // sobrescritos por um projeto de mesmo código.
+    if (existing.isAdministrative) {
+      unchanged += 1;
+      continue;
+    }
+
     const nextName = center.name;
     const sameName = existing.name.trim() === nextName;
     const sameActive = existing.isActive === true;
+    const sameProject = existing.projectId === center.projectId;
 
-    if (sameName && sameActive) {
+    if (sameName && sameActive && sameProject) {
       unchanged += 1;
       continue;
     }
@@ -64,6 +76,7 @@ async function main() {
         data: {
           name: nextName,
           isActive: true,
+          projectId: center.projectId,
         },
       });
     }

@@ -45,6 +45,20 @@ const PROJECT_READY_TAP_STATUSES = new Set<string>([
   PROJECT_TAP_STATUS.FAILED,
 ]);
 
+const PROJECT_STATUS = {
+  PLANNING: 'planning',
+  ACTIVE: 'active',
+  IN_PROGRESS: 'in_progress',
+  ON_HOLD: 'on_hold',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled',
+} as const;
+
+const PROJECT_CLOSED_STATUSES = new Set<string>([
+  PROJECT_STATUS.COMPLETED,
+  PROJECT_STATUS.CANCELLED,
+]);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 },
@@ -3410,6 +3424,11 @@ export async function registerRoutes(
     });
     const healthRuleByProject = new Map(projectHealthRules.map((rule) => [rule.projectId as string, rule]));
 
+    const projectCostCenters = await storage.getCostCentersByProjectIds(projects.map((p) => p.id));
+    const costCenterByProject = new Map(
+      projectCostCenters.map((costCenter) => [costCenter.projectId as string, costCenter])
+    );
+
     const enriched = projects.map(p => {
       const consumedHours = approvedHoursByProject.get(p.id) || 0;
       const pendingHours = pendingHoursByProject.get(p.id) || 0;
@@ -3430,6 +3449,7 @@ export async function registerRoutes(
       return {
         ...p,
         client: clientMap.get(p.clientId),
+        costCenter: costCenterByProject.get(p.id) ?? null,
         consumedHours,
         pendingHours,
         health,
@@ -3456,6 +3476,9 @@ export async function registerRoutes(
     const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
     const coordinator = project.coordinatorId
       ? userMap.get(project.coordinatorId) || null
+      : null;
+    const completedBy = project.completedById
+      ? userMap.get(project.completedById) || null
       : null;
 
     const parseHours = (value: unknown) => {
@@ -3552,6 +3575,13 @@ export async function registerRoutes(
             id: coordinator.id,
             name: coordinator.name,
             email: coordinator.email,
+          }
+        : null,
+      completedBy: completedBy
+        ? {
+            id: completedBy.id,
+            name: completedBy.name,
+            email: completedBy.email,
           }
         : null,
       timeSummary: {
@@ -3933,7 +3963,21 @@ export async function registerRoutes(
       return res.status(400).json({ message: validationError });
     }
 
-    const project = await storage.updateProject(req.params.id, req.body);
+    const { completedAt: _completedAt, completedById: _completedById, ...updates } = (req.body ?? {}) as Record<string, any>;
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'status')) {
+      const nextStatus = String(updates.status ?? '').trim().toLowerCase();
+      if (nextStatus !== String(existing.status)) {
+        if (nextStatus === PROJECT_STATUS.COMPLETED) {
+          return res.status(400).json({ message: 'Use a ação "Encerrar projeto" para concluir um projeto' });
+        }
+        if (PROJECT_CLOSED_STATUSES.has(String(existing.status))) {
+          return res.status(400).json({ message: 'Projeto encerrado. O status não pode mais ser alterado.' });
+        }
+      }
+    }
+
+    const project = await storage.updateProject(req.params.id, updates);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
@@ -4025,6 +4069,73 @@ export async function registerRoutes(
     res.json(updatedProject);
   });
 
+  app.post('/api/projects/:id/close', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const actorId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    const actorRole = (req as any).user?.role as Role | undefined;
+    const isAdmin = actorRole === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+
+    if (!isAdmin && !isCoordinator) {
+      return res.status(403).json({ message: 'Apenas o coordenador do projeto ou um administrador pode encerrar o projeto' });
+    }
+
+    if (PROJECT_CLOSED_STATUSES.has(String(project.status))) {
+      return res.status(400).json({ message: 'Este projeto já está encerrado' });
+    }
+
+    const entries = await storage.getTimeEntriesByProject(project.id);
+
+    if (String(project.status) === PROJECT_STATUS.PLANNING && entries.length === 0) {
+      return res.status(400).json({ message: 'Inicie o projeto antes de encerrá-lo' });
+    }
+
+    const pendingEntries = entries.filter((entry) => entry.status === 'pending');
+    if (pendingEntries.length > 0) {
+      const pendingHours = pendingEntries.reduce((sum, entry) => sum + (parseFloat(String(entry.hours)) || 0), 0);
+      return res.status(400).json({
+        message: `Existem ${pendingEntries.length} lançamento(s) de horas pendentes de aprovação (${pendingHours.toFixed(1)}h). Aprove ou rejeite antes de encerrar o projeto.`,
+      });
+    }
+
+    const updatedProject = await storage.updateProject(req.params.id, {
+      status: PROJECT_STATUS.COMPLETED,
+      completedAt: new Date(),
+      completedById: actorId,
+    } as any);
+
+    if (actorId) {
+      await safeCreateUserActivity(req, actorId, {
+        category: 'system',
+        action: 'PROJECT_CLOSED',
+        title: `Projeto encerrado — ${project.code}`,
+        metadata: { projectId: project.id },
+      });
+    }
+
+    if (project.coordinatorId && project.coordinatorId !== actorId) {
+      await storage.createNotification({
+        userId: project.coordinatorId,
+        type: 'project_closed',
+        title: 'Projeto encerrado',
+        message: `O projeto ${project.code} · ${project.name} foi encerrado e não aceita mais lançamentos de horas.`,
+        link: `/projects?projectId=${project.id}`,
+        sourceKey: `project_closed:${project.id}:${project.coordinatorId}`,
+        metadata: {
+          projectId: project.id,
+          projectCode: project.code,
+          projectName: project.name,
+        },
+      });
+    }
+
+    res.json(updatedProject);
+  });
+
   app.delete('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const deleted = await storage.deleteProject(req.params.id);
     if (!deleted) {
@@ -4077,6 +4188,27 @@ export async function registerRoutes(
     );
   });
 
+  app.get('/api/time-entries/me', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const collaboratorId = (req as any).user?.sub as string | undefined;
+    if (!collaboratorId) {
+      return res.status(401).json({ message: 'Usuário autenticado inválido' });
+    }
+
+    const startDate = String(req.query.startDate ?? '').trim();
+    const endDate = String(req.query.endDate ?? '').trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      return res.status(400).json({ message: 'Informe startDate e endDate no formato AAAA-MM-DD' });
+    }
+
+    if (startDate > endDate) {
+      return res.status(400).json({ message: 'A data inicial não pode ser posterior à data final' });
+    }
+
+    const entries = await storage.getTimeEntriesByCollaboratorAndRange(collaboratorId, startDate, endDate);
+    res.json(entries);
+  });
+
   app.post('/api/projects/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const { projectId, costCenterId, entryDate, hours, description, attachments } = req.body;
     const collaboratorId = (req as any).user?.sub as string | undefined;
@@ -4105,6 +4237,10 @@ export async function registerRoutes(
     const project = await storage.getProject(projectId);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    if (PROJECT_CLOSED_STATUSES.has(String(project.status))) {
+      return res.status(400).json({ message: 'Projeto encerrado. Não é possível lançar horas.' });
     }
 
     let allocatedCount = 0;
@@ -4181,6 +4317,10 @@ export async function registerRoutes(
     const project = await storage.getProject(entry.projectId);
     if (!project) {
       return res.status(404).json({ message: 'Projeto não encontrado para este lançamento' });
+    }
+
+    if (PROJECT_CLOSED_STATUSES.has(String(project.status))) {
+      return res.status(400).json({ message: 'Projeto encerrado. Não é possível editar lançamentos.' });
     }
 
     const { costCenterId, entryDate, hours, description, attachments } = req.body;
@@ -4803,7 +4943,12 @@ export async function registerRoutes(
   app.get('/api/cost-centers', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const role = (req as any)?.user?.role;
     const includeInactive = role === 'admin';
-    const costCenters = await storage.getAllCostCenters({ includeInactive });
+
+    const requestedScope = String(req.query.scope ?? '').trim().toLowerCase();
+    const scope: 'administrative' | 'project' | 'all' =
+      requestedScope === 'project' || requestedScope === 'all' ? requestedScope : 'administrative';
+
+    const costCenters = await storage.getAllCostCenters({ includeInactive, scope });
     res.json(costCenters);
   });
 
@@ -4829,6 +4974,18 @@ export async function registerRoutes(
 
   app.put('/api/cost-centers/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
     const { id } = req.params;
+
+    const existing = await storage.getCostCenter(id);
+    if (!existing) {
+      return res.status(404).json({ message: 'Centro de custo não encontrado' });
+    }
+
+    if (!existing.isAdministrative) {
+      return res.status(400).json({
+        message: 'Centros de custo de projeto são gerados a partir do próprio projeto e não podem ser editados aqui.',
+      });
+    }
+
     const updates: Record<string, unknown> = {};
 
     if (req.body?.code !== undefined) {
@@ -4867,6 +5024,18 @@ export async function registerRoutes(
 
   app.delete('/api/cost-centers/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
     const { id } = req.params;
+
+    const existing = await storage.getCostCenter(id);
+    if (!existing) {
+      return res.status(404).json({ message: 'Centro de custo não encontrado' });
+    }
+
+    if (!existing.isAdministrative) {
+      return res.status(400).json({
+        message: 'Centros de custo de projeto são gerados a partir do próprio projeto e não podem ser removidos aqui.',
+      });
+    }
+
     await storage.deleteCostCenter(id);
     res.status(204).send();
   });

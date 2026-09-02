@@ -272,7 +272,7 @@ export const usersApi = {
 };
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'time_entry_approved' | 'time_entry_rejected';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'project_closed' | 'time_entry_approved' | 'time_entry_rejected';
 
 export interface UserActivity {
   id: string;
@@ -656,6 +656,15 @@ export interface Project {
   tapGeneratedAt?: string | null;
   tapSentAt?: string | null;
   tapLastEmailError?: string | null;
+  completedAt?: string | null;
+  completedById?: string | null;
+  completedBy?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+  isAdministrative?: boolean;
+  costCenter?: CostCenter | null;
   consumedHours?: number;
   pendingHours?: number;
   timeSummary?: {
@@ -743,6 +752,8 @@ export interface CostCenter {
   code: string;
   name: string;
   isActive: boolean;
+  isAdministrative?: boolean;
+  projectId?: string | null;
   createdAt?: string;
 }
 
@@ -903,9 +914,12 @@ export const projectsApi = {
     api.put<ProjectMember[]>(`/projects/${id}/members`, { userIds }),
   completeSetup: (id: string) => api.post<Project>(`/projects/${id}/setup/complete`),
   activate: (id: string) => api.post<Project>(`/projects/${id}/activate`),
+  close: (id: string) => api.post<Project>(`/projects/${id}/close`),
   getStats: (id: string) => api.get<any>(`/projects/${id}/stats`),
   getActivities: (id: string) => api.get<EntityActivity[]>(`/projects/${id}/activities`),
   getTimeEntries: (id: string) => api.get<TimeEntry[]>(`/projects/${id}/time-entries`),
+  getMyTimeEntries: (startDate: string, endDate: string) =>
+    api.get<TimeEntry[]>(`/time-entries/me?startDate=${startDate}&endDate=${endDate}`),
   createTimeEntry: (data: Partial<TimeEntry>) => api.post<TimeEntry>('/projects/time-entries', data),
   updateTimeEntry: (id: string, data: Partial<TimeEntry>) => api.put<TimeEntry>(`/projects/time-entries/${id}`, data),
   deleteTimeEntry: (id: string) => api.delete(`/projects/time-entries/${id}`),
@@ -922,11 +936,6 @@ export const projectsApi = {
 export const reportsApi = {
   getDashboard: (period?: '7d' | '30d' | '90d' | '180d' | '365d') =>
     api.get<DashboardMetrics>(`/reports/dashboard${period ? `?period=${period}` : ''}`),
-  getHours: (startDate: string, endDate: string) =>
-    api.get<any>(`/reports/hours?startDate=${startDate}&endDate=${endDate}`),
-  getProposals: () => api.get<any>('/reports/proposals'),
-  getProjects: () => api.get<any>('/reports/projects'),
-  getClients: () => api.get<any>('/reports/clients'),
 };
 
 export const dashboardApi = {

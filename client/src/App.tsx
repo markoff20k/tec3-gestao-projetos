@@ -24,7 +24,6 @@ import Projects from "@/pages/Projects";
 import ProjectIndicators from "@/pages/ProjectIndicators";
 import TimeEntries from "@/pages/TimeEntries";
 import TimeApprovals from "@/pages/TimeApprovals";
-import Reports from "@/pages/Reports";
 import Users from "@/pages/Users";
 import Settings from "@/pages/Settings";
 import Categories from "@/pages/Categories";
@@ -73,9 +72,6 @@ function Router() {
       </Route>
       <Route path="/time-approvals">
         <ProtectedRoute component={TimeApprovals} />
-      </Route>
-      <Route path="/reports">
-        <ProtectedRoute component={Reports} />
       </Route>
       <Route path="/users">
         <ProtectedRoute component={Users} />

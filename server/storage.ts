@@ -5,7 +5,7 @@ import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, Prop
 import { Prisma } from "../generated/prisma/client.ts";
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'time_entry_approved' | 'time_entry_rejected';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'project_closed' | 'time_entry_approved' | 'time_entry_rejected';
 
 export interface CreateUserActivityInput {
   category: UserActivityCategory;
@@ -199,7 +199,8 @@ export interface IStorage {
   upsertProjectHealthRule(projectId: string, updates: HealthRuleInput, updatedById?: string | null): Promise<ProjectHealthRule>;
   deleteProjectHealthRule(projectId: string): Promise<boolean>;
 
-  getAllCostCenters(options?: { includeInactive?: boolean }): Promise<CostCenter[]>;
+  getAllCostCenters(options?: { includeInactive?: boolean; scope?: 'administrative' | 'project' | 'all' }): Promise<CostCenter[]>;
+  getCostCentersByProjectIds(projectIds: string[]): Promise<CostCenter[]>;
   getCostCenter(id: string): Promise<CostCenter | null>;
   createCostCenter(input: InsertCostCenter): Promise<CostCenter>;
   updateCostCenter(id: string, input: Partial<CostCenter>): Promise<CostCenter | null>;
@@ -208,6 +209,7 @@ export interface IStorage {
   getTimeEntriesByProject(projectId: string): Promise<TimeEntryWithCostCenter[]>;
   getTimeEntry(id: string): Promise<TimeEntry | null>;
   getTimeEntriesByCollaboratorAndDate(collaboratorId: string, date: string, projectId?: string): Promise<TimeEntry[]>;
+  getTimeEntriesByCollaboratorAndRange(collaboratorId: string, startDate: string, endDate: string): Promise<TimeEntryWithCostCenter[]>;
   getAllTimeEntries(): Promise<TimeEntry[]>;
   createTimeEntry(entry: InsertTimeEntry): Promise<TimeEntryWithCostCenter>;
   updateTimeEntry(id: string, entry: Partial<TimeEntry>): Promise<TimeEntry | null>;
@@ -1498,7 +1500,20 @@ export class PrismaStorage implements IStorage {
       await prisma.costCenter.upsert({
         where: { code: project.code },
         update: {},
-        create: { code: project.code, name: project.name, isActive: true },
+        create: {
+          code: project.code,
+          name: project.name,
+          isActive: true,
+          isAdministrative: false,
+          projectId: input.projectId,
+        },
+      });
+
+      // Vincula centros de custo criados antes da classificação existir, sem
+      // tocar nos administrativos nem em vínculos já definidos.
+      await prisma.costCenter.updateMany({
+        where: { code: project.code, isAdministrative: false, projectId: null },
+        data: { projectId: input.projectId },
       });
     }
 
@@ -1536,12 +1551,30 @@ export class PrismaStorage implements IStorage {
     });
   }
 
-  async getAllCostCenters(options?: { includeInactive?: boolean }): Promise<CostCenter[]> {
+  async getAllCostCenters(options?: {
+    includeInactive?: boolean;
+    scope?: 'administrative' | 'project' | 'all';
+  }): Promise<CostCenter[]> {
     const includeInactive = options?.includeInactive ?? false;
+    const scope = options?.scope ?? 'administrative';
+
+    const where: Prisma.CostCenterWhereInput = {};
+    if (!includeInactive) where.isActive = true;
+    if (scope === 'administrative') where.isAdministrative = true;
+    if (scope === 'project') where.isAdministrative = false;
 
     return prisma.costCenter.findMany({
-      ...(includeInactive ? {} : { where: { isActive: true } }),
+      where,
       orderBy: [{ code: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async getCostCentersByProjectIds(projectIds: string[]): Promise<CostCenter[]> {
+    if (projectIds.length === 0) return [];
+
+    return prisma.costCenter.findMany({
+      where: { projectId: { in: projectIds }, isActive: true },
+      orderBy: [{ code: 'asc' }],
     });
   }
 
@@ -1557,6 +1590,7 @@ export class PrismaStorage implements IStorage {
         code,
         name: input.name.trim(),
         isActive: input.isActive ?? true,
+        isAdministrative: true,
       },
     });
   }
@@ -1607,6 +1641,24 @@ export class PrismaStorage implements IStorage {
         entryDate: new Date(date),
         ...(projectId ? { projectId } : {}),
       }
+    });
+  }
+
+  async getTimeEntriesByCollaboratorAndRange(
+    collaboratorId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<TimeEntryWithCostCenter[]> {
+    return prisma.timeEntry.findMany({
+      where: {
+        collaboratorId,
+        entryDate: {
+          gte: new Date(startDate),
+          lte: new Date(endDate),
+        },
+      },
+      include: { costCenter: true },
+      orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }],
     });
   }
 

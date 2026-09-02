@@ -33,8 +33,11 @@ function normalizeUserRole(value: string | null | undefined) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+// entry_date é uma data pura e chega como "2026-08-21T00:00:00.000Z". Interpretar
+// o instante UTC no fuso local recuaria um dia no Brasil, mostrando ao coordenador
+// uma data diferente da que o colaborador lançou; por isso só a parte da data é lida.
 function getEntryDate(entry: TimeEntry) {
-  return parseISO(entry.entryDate);
+  return parseISO(String(entry.entryDate || '').slice(0, 10));
 }
 
 type PendingProjectRowProps = {
