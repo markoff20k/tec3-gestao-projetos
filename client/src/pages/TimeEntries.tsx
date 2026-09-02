@@ -107,6 +107,31 @@ const viewModeLabels: Record<ViewMode, string> = {
   month: 'Mês',
 };
 
+const VIEW_MODE_STORAGE_KEY = 'timeEntriesViewMode';
+const DEFAULT_VIEW_MODE: ViewMode = 'week';
+
+function isViewMode(value: unknown): value is ViewMode {
+  return value === 'day' || value === 'week' || value === 'month';
+}
+
+function readStoredViewMode(): ViewMode {
+  try {
+    const stored = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    return isViewMode(stored) ? stored : DEFAULT_VIEW_MODE;
+  } catch {
+    // Navegador com armazenamento bloqueado: cai no padrão sem quebrar a tela.
+    return DEFAULT_VIEW_MODE;
+  }
+}
+
+function persistViewMode(mode: ViewMode) {
+  try {
+    localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+  } catch {
+    // Preferência é conveniência: falhar ao gravar não pode impedir a troca de visão.
+  }
+}
+
 function dateKey(date: Date) {
   return format(date, 'yyyy-MM-dd');
 }
@@ -215,7 +240,7 @@ export default function TimeEntries() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const [viewMode, setViewMode] = useState<ViewMode>('week');
+  const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
   const [searchQuery, setSearchQuery] = useState('');
   const [extraRows, setExtraRows] = useState<Record<string, string[]>>({});
@@ -729,7 +754,10 @@ export default function TimeEntries() {
                   size="sm"
                   variant={viewMode === mode ? 'default' : 'ghost'}
                   className="h-8 px-3 text-xs"
-                  onClick={() => setViewMode(mode)}
+                  onClick={() => {
+                    setViewMode(mode);
+                    persistViewMode(mode);
+                  }}
                   data-testid={`button-view-mode-${mode}`}
                 >
                   {viewModeLabels[mode]}
