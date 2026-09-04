@@ -1910,6 +1910,33 @@ export async function registerRoutes(
     };
   };
 
+  // A proposta guarda o responsável como nome livre e nem sempre com o id do usuário
+  // (formulários antigos gravavam só o nome). Sem resolver isso, o TAP mostra o nome
+  // e o projeto nasce com "Coordenador não definido".
+  const resolveProposalCoordinatorId = async (proposal: any): Promise<string | null> => {
+    const directId = typeof proposal?.coordinatorId === 'string' ? proposal.coordinatorId.trim() : '';
+    if (directId) return directId;
+
+    const name = String(proposal?.coordinatorName ?? '').trim();
+    if (!name) return null;
+
+    const normalize = (value: string) =>
+      value
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/s+/g, ' ')
+        .trim()
+        .toLowerCase();
+
+    const target = normalize(name);
+    const users = await storage.getAllUsers();
+    const matches = users.filter((user) => user.isActive && normalize(String(user.name ?? '')) === target);
+
+    // Homônimos ativos: não há como escolher com segurança, então o setup do projeto
+    // pede o coordenador em vez de assumir o usuário errado.
+    return matches.length === 1 ? matches[0].id : null;
+  };
+
   const generateProposalTapFromProposal = async (params: {
     proposal: any;
     tapDraft?: ProposalTapDraft | null;
@@ -1935,11 +1962,13 @@ export async function registerRoutes(
 
     validateProposalTapDraft(tapDraft);
 
+    const coordinatorId = await resolveProposalCoordinatorId(proposal);
+
     const project = await storage.createProject({
       name: tapDraft.projectName || proposal.title,
       description: tapDraft.executiveSummary || proposal.description,
       clientId: proposal.clientId,
-      coordinatorId: proposal.coordinatorId,
+      coordinatorId,
       startDate: tapDraft.startDate || proposal.expectedStartDate,
       endDate: tapDraft.endDate || proposal.expectedEndDate,
       budgetHours: tapDraft.budgetHours,

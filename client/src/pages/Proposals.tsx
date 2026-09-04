@@ -1722,6 +1722,15 @@ export default function Proposals() {
     return Array.from(uniqueByNormalizedName.values());
   }, [users]);
 
+  // O Select de responsável mostra nomes, mas o projeto gerado na conversão precisa
+  // do id do usuário. Sem esse mapa a proposta guardava só o nome e o projeto nascia
+  // sem coordenador.
+  const responsibleIdByName = useMemo(() => {
+    const map = new Map<string, string>();
+    activeProjectCoordinators.forEach((u) => map.set(normalizeUserNameKey(u.name), u.id));
+    return map;
+  }, [activeProjectCoordinators]);
+
   const activeUserNames = useMemo(() => {
     return new Set(activeResponsibleNames.map((name) => name.toLocaleLowerCase('pt-BR')));
   }, [activeResponsibleNames]);
@@ -2965,7 +2974,13 @@ export default function Proposals() {
                     <Label>Responsável pela proposta *</Label>
                     <Select
                       value={formData.coordinatorName || undefined}
-                      onValueChange={(value) => setFormData({ ...formData, coordinatorName: value })}
+                      onValueChange={(value) =>
+                        setFormData({
+                          ...formData,
+                          coordinatorName: value,
+                          coordinatorId: responsibleIdByName.get(normalizeUserNameKey(value)) ?? '',
+                        })
+                      }
                     >
                       <SelectTrigger
                         data-testid="select-proposal-responsible"
@@ -6691,7 +6706,11 @@ export default function Proposals() {
                     value={editFormData.coordinatorName || undefined}
                     onValueChange={(value) => {
                       setEditTouched((prev) => ({ ...prev, coordinatorName: true }));
-                      setEditFormData({ ...editFormData, coordinatorName: value });
+                      setEditFormData({
+                        ...editFormData,
+                        coordinatorName: value,
+                        coordinatorId: responsibleIdByName.get(normalizeUserNameKey(value)) ?? '',
+                      });
                     }}
                   >
                     <SelectTrigger
