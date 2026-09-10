@@ -805,6 +805,11 @@ function normalizeProposalTapDraft(proposal: any, input?: unknown): ProposalTapD
     subcontractForecastDetails: String(existing.subcontractForecastDetails ?? '').trim(),
     projectAnalystId: existing.projectAnalystId ? String(existing.projectAnalystId).trim() : null,
     projectAnalystName: existing.projectAnalystName ? String(existing.projectAnalystName).trim() : null,
+    // O coordenador da proposta é só sugestão; quem vale é o escolhido no TAP.
+    projectCoordinatorId: existing.projectCoordinatorId
+      ? String(existing.projectCoordinatorId).trim()
+      : (proposal?.coordinatorId ? String(proposal.coordinatorId).trim() : null),
+    projectCoordinatorName: existing.projectCoordinatorName ? String(existing.projectCoordinatorName).trim() : null,
     notes: String(existing.notes ?? '').trim(),
     startDate: resolveTapStartDateFromProposal(proposal, existing),
     endDate: String(existing.endDate ?? proposal?.expectedEndDate ?? '').trim() || null,
@@ -821,6 +826,10 @@ function validateProposalTapDraft(draft: ProposalTapDraft) {
   if (!draft.projectAnalystId) {
     throw new Error('Selecione o analista de projeto no TAP');
   }
+
+  if (!draft.projectCoordinatorId || !String(draft.projectCoordinatorId).trim()) {
+    throw new Error('Selecione o coordenador do projeto no TAP');
+  }
 }
 
 function resolveProposalTapErrorStatus(error: unknown): number {
@@ -828,6 +837,7 @@ function resolveProposalTapErrorStatus(error: unknown): number {
   if (
     message === 'Informe o nome do projeto no TAP' ||
     message === 'Selecione o analista de projeto no TAP' ||
+    message === 'Selecione o coordenador do projeto no TAP' ||
     message === 'Proposta ja convertida em projeto' ||
     message === 'Apenas propostas com sucesso podem ser convertidas' ||
     message === 'Selecione o projeto que recebera o aditivo' ||
@@ -1913,7 +1923,12 @@ export async function registerRoutes(
   // A proposta guarda o responsável como nome livre e nem sempre com o id do usuário
   // (formulários antigos gravavam só o nome). Sem resolver isso, o TAP mostra o nome
   // e o projeto nasce com "Coordenador não definido".
-  const resolveProposalCoordinatorId = async (proposal: any): Promise<string | null> => {
+  const resolveProposalCoordinatorId = async (proposal: any, tapDraft?: ProposalTapDraft | null): Promise<string | null> => {
+    // Ordem de precedência: o que foi definido no TAP, depois a sugestão da
+    // proposta e, por último, o nome do responsável (propostas antigas).
+    const tapId = typeof tapDraft?.projectCoordinatorId === 'string' ? tapDraft.projectCoordinatorId.trim() : '';
+    if (tapId) return tapId;
+
     const directId = typeof proposal?.coordinatorId === 'string' ? proposal.coordinatorId.trim() : '';
     if (directId) return directId;
 
@@ -1962,7 +1977,7 @@ export async function registerRoutes(
 
     validateProposalTapDraft(tapDraft);
 
-    const coordinatorId = await resolveProposalCoordinatorId(proposal);
+    const coordinatorId = await resolveProposalCoordinatorId(proposal, tapDraft);
 
     const project = await storage.createProject({
       name: tapDraft.projectName || proposal.title,

@@ -551,7 +551,9 @@ function createTapDraftFromProposal(proposal: Proposal | null): ProposalTapDraft
     projectAnalystId: existing?.projectAnalystId || null,
     projectAnalystName: existing?.projectAnalystName || null,
     additiveProjectId: (existing as any)?.additiveProjectId || null,
-    projectCoordinatorId: (existing as any)?.projectCoordinatorId || null,
+    // O coordenador da proposta é apenas sugestão: pré-preenche o TAP, onde a
+    // definição de fato acontece antes do envio.
+    projectCoordinatorId: (existing as any)?.projectCoordinatorId || proposal.coordinatorId || null,
     projectCoordinatorName: (existing as any)?.projectCoordinatorName || null,
     notes: existing?.notes || proposal.description || '',
     startDate: existing?.startDate || extractDateOnly(proposal.updatedAt || proposal.expectedStartDate),
@@ -1722,15 +1724,6 @@ export default function Proposals() {
     return Array.from(uniqueByNormalizedName.values());
   }, [users]);
 
-  // O Select de responsável mostra nomes, mas o projeto gerado na conversão precisa
-  // do id do usuário. Sem esse mapa a proposta guardava só o nome e o projeto nascia
-  // sem coordenador.
-  const responsibleIdByName = useMemo(() => {
-    const map = new Map<string, string>();
-    activeProjectCoordinators.forEach((u) => map.set(normalizeUserNameKey(u.name), u.id));
-    return map;
-  }, [activeProjectCoordinators]);
-
   const activeUserNames = useMemo(() => {
     return new Set(activeResponsibleNames.map((name) => name.toLocaleLowerCase('pt-BR')));
   }, [activeResponsibleNames]);
@@ -2210,6 +2203,7 @@ export default function Proposals() {
       return null;
     }
     if (!tapForm.projectName.trim()) return 'Informe o nome do projeto.';
+    if (!tapForm.projectCoordinatorId) return 'Selecione o coordenador do projeto.';
     if (!tapForm.projectAnalystId) return 'Selecione o analista de projeto.';
     return null;
   }, [generateTapMutation.isPending, isUploadingTapAttachment, tapForm.projectName, tapForm.projectAnalystId, tapForm.additiveProjectId, tapForm.projectCoordinatorId, tapReadOnly, tapIsAdditive]);
@@ -2974,13 +2968,7 @@ export default function Proposals() {
                     <Label>Responsável pela proposta *</Label>
                     <Select
                       value={formData.coordinatorName || undefined}
-                      onValueChange={(value) =>
-                        setFormData({
-                          ...formData,
-                          coordinatorName: value,
-                          coordinatorId: responsibleIdByName.get(normalizeUserNameKey(value)) ?? '',
-                        })
-                      }
+                      onValueChange={(value) => setFormData({ ...formData, coordinatorName: value })}
                     >
                       <SelectTrigger
                         data-testid="select-proposal-responsible"
@@ -4608,6 +4596,36 @@ export default function Proposals() {
                               <div className="space-y-2">
                                 <Label>Cliente</Label>
                                 <Input value={tapProposal.client?.razaoSocial || tapProposal.client?.nomeFantasia || '-'} disabled />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Coordenador do projeto *</Label>
+                                <Select
+                                  value={tapForm.projectCoordinatorId || '__none__'}
+                                  onValueChange={(value) => handleTapCoordinatorChange(value === '__none__' ? '' : value)}
+                                  disabled={tapReadOnly}
+                                >
+                                  <SelectTrigger
+                                    data-testid="select-tap-project-coordinator"
+                                    className={!tapForm.projectCoordinatorId ? 'border-destructive' : ''}
+                                  >
+                                    <SelectValue placeholder="Selecione um coordenador" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Selecione um coordenador</SelectItem>
+                                    {activeProjectCoordinators.map((user) => (
+                                      <SelectItem key={user.id} value={user.id}>
+                                        {user.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                {!tapForm.projectCoordinatorId ? (
+                                  <p className="text-xs text-destructive">Campo obrigatório</p>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">
+                                    Será o coordenador do projeto. Depois de enviar o TAP não poderá ser alterado.
+                                  </p>
+                                )}
                               </div>
                               <div className="space-y-2">
                                 <Label>Analista de projeto *</Label>
@@ -6706,11 +6724,7 @@ export default function Proposals() {
                     value={editFormData.coordinatorName || undefined}
                     onValueChange={(value) => {
                       setEditTouched((prev) => ({ ...prev, coordinatorName: true }));
-                      setEditFormData({
-                        ...editFormData,
-                        coordinatorName: value,
-                        coordinatorId: responsibleIdByName.get(normalizeUserNameKey(value)) ?? '',
-                      });
+                      setEditFormData({ ...editFormData, coordinatorName: value });
                     }}
                   >
                     <SelectTrigger
