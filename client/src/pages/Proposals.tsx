@@ -4606,7 +4606,7 @@ export default function Proposals() {
                                 >
                                   <SelectTrigger
                                     data-testid="select-tap-project-coordinator"
-                                    className={!tapForm.projectCoordinatorId ? 'border-destructive' : ''}
+                                    className={!tapForm.projectCoordinatorId && !tapReadOnly ? 'border-destructive' : ''}
                                   >
                                     <SelectValue placeholder="Selecione um coordenador" />
                                   </SelectTrigger>
@@ -4619,7 +4619,7 @@ export default function Proposals() {
                                     ))}
                                   </SelectContent>
                                 </Select>
-                                {!tapForm.projectCoordinatorId ? (
+                                {tapReadOnly ? null : !tapForm.projectCoordinatorId ? (
                                   <p className="text-xs text-destructive">Campo obrigatório</p>
                                 ) : (
                                   <p className="text-xs text-muted-foreground">
