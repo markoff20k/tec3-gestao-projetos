@@ -1058,6 +1058,24 @@ function buildProjectTapRenderLinks(projectId: string) {
   };
 }
 
+// O HTML do TAP fica gravado no banco e, em parte dos registros, aponta o logo
+// para o endereco interno do servidor (ex.: https://192.168.x.x/branding/...).
+// Esse endereco nao resolve nem no navegador do usuario nem no renderizador de
+// PDF. Na leitura, qualquer logo que nao seja data URI vira o logo embutido,
+// que nao depende de rede alguma.
+function normalizeStoredTapLogo(htmlContent: string): string {
+  if (!htmlContent) return '';
+
+  return htmlContent
+    .replace(
+      /(<img\b[^>]*\bsrc=)(["'])((?!data:)[^"']*tec3[-_]?logo[^"']*)\2/gi,
+      `$1$2${PROJECT_TAP_EMBEDDED_LOGO_URL}$2`
+    )
+    // O rodape "Gerado em" carimbava a data em que o HTML foi montado, nao a da
+    // emissao do TAP, o que confundia quem lia o documento. Removido tambem dos
+    // TAPs ja gravados, senao a frase sobreviveria nos 29 documentos existentes.
+    .replace(/<div[^>]*>\s*Gerado em:[^<]*<\/div>/gi, '');
+}
 function buildProjectTapEmailLinks(projectId: string) {
   const baseUrl = getAppBaseUrl();
   return {
@@ -1106,7 +1124,6 @@ function renderProjectTapHtml(
   const reimbursableExpensesDetails = formatProjectTapEmailRichText(payload.tap?.reimbursableExpensesForecastDetails || '-');
   const subcontractDetails = formatProjectTapEmailRichText(payload.tap?.subcontractForecastDetails || '-');
   const notes = formatProjectTapEmailRichText(payload.tap?.notes || '-');
-  const generatedAt = escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.generatedAt));
   const projectUrl = options?.projectUrl || null;
   const logoUrl = options?.logoUrl || null;
   const logoCid = String(options?.logoCid || '').trim();
@@ -1181,7 +1198,6 @@ function renderProjectTapHtml(
                   </tr>
                 </table>
 
-                <div style="padding-top:14px;font-size:12px;line-height:1.7;color:#475569;text-align:right;">Gerado em: ${generatedAt}</div>
               </td>
             </tr>
           </table>
@@ -1205,7 +1221,6 @@ function renderProjectAdditiveHtml(payload: {
   const projectName = escapeProjectTapEmailHtml(payload.project.name || '-');
   const additiveHours = escapeProjectTapEmailHtml(String(payload.additiveHours || 0));
   const additiveValue = escapeProjectTapEmailHtml(formatProjectTapEmailCurrency(payload.additiveValue || 0));
-  const generatedAt = escapeProjectTapEmailHtml(formatProjectTapEmailDate(payload.generatedAt));
 
   const row = (label: string, value: string) => `
     <tr>
@@ -1236,7 +1251,6 @@ function renderProjectAdditiveHtml(payload: {
                   ${row('Horas incrementadas', additiveHours)}
                   ${row('Valor incrementado', additiveValue)}
                 </table>
-                <div style="padding-top:14px;font-size:12px;line-height:1.7;color:#475569;text-align:right;">Gerado em: ${generatedAt}</div>
               </td>
             </tr>
           </table>
@@ -1527,15 +1541,18 @@ async function resendProjectTapEmail(params: {
     const client = await storage.getClient(project.clientId || proposal.clientId);
     const tapDraft = normalizeProposalTapDraft(proposal, proposal.tapPayload ?? null);
     const payload = buildProjectTapPayload({ proposal, project, client, tapDraft });
-    const tapLinks = buildProjectTapEmailLinks(project.id);
+    // O HTML guardado no banco é lido pelo navegador do usuário, não pelo cliente
+    // de e-mail: usar o logo dos links de e-mail gravava o endereço interno do
+    // servidor, que só resolve dentro da rede e aparecia como imagem quebrada.
+    const storedTapLinks = buildProjectTapRenderLinks(project.id);
 
     latestTap = await storage.createProjectTap({
       projectId: project.id,
       title: `TAP ${project.code}`,
       payload: payload as any,
       htmlContent: renderProjectTapHtml(payload, {
-        projectUrl: tapLinks.projectUrl,
-        logoUrl: tapLinks.logoUrl,
+        projectUrl: storedTapLinks.projectUrl,
+        logoUrl: storedTapLinks.logoUrl,
       }),
       generatedById: params.actorUserId,
     });
@@ -2914,6 +2931,21 @@ export async function registerRoutes(
       return 'A data de validade não pode ser anterior à data de emissão';
     }
 
+    // A solicitação é um fato já ocorrido: não faz sentido registrar no futuro.
+    // A comparação é feita em dia civil (o campo chega como meia-noite UTC do dia
+    // escolhido), senão o fuso faria "hoje" virar inválido no fim da tarde.
+    if (Object.prototype.hasOwnProperty.call(body, 'createdAt') && body.createdAt) {
+      const requestedDay = String(new Date(body.createdAt).toISOString()).slice(0, 10);
+      const now = new Date();
+      const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+        .toISOString()
+        .slice(0, 10);
+
+      if (requestedDay > today) {
+        return 'A data de solicitação não pode ser posterior à data atual';
+      }
+    }
+
     return null;
   }
 
@@ -3040,6 +3072,21 @@ export async function registerRoutes(
 
       const updateData = { ...req.body };
       let autoLinkedProjectId: string | null = null;
+
+      // A emissão acontece quando a proposta sai da elaboração e vai para análise,
+      // e só nessa transição a data é carimbada. Reabrir uma proposta recusada para
+      // análise não reemite: a data original tem que ser preservada. Também não
+      // sobrepõe data informada na mesma edição, que representa emissão em outro dia.
+      const isEnteringReview =
+        existing.status === ProposalStatus.EM_ELABORACAO &&
+        updateData.status === ProposalStatus.EM_ANALISE;
+
+      if (isEnteringReview && !updateData.sentDate) {
+        const now = new Date();
+        // sent_date é data pura: grava a meia-noite UTC do dia civil local, senão
+        // o registro cai no dia anterior para quem está a oeste de Greenwich.
+        updateData.sentDate = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+      }
 
       if (updateData.status === 'com_sucesso' && existing.status !== 'com_sucesso' && !existing.projectId && (existing.revision ?? 0) > 0) {
         const previousProjectId = await findPreviousRevisionProjectId(existing);
@@ -3253,7 +3300,7 @@ export async function registerRoutes(
       const latestTap = await storage.getLatestProjectTap(project.id);
       const persistedHtml = String(latestTap?.htmlContent || '').trim();
       if (persistedHtml) {
-        return res.json({ htmlContent: persistedHtml });
+        return res.json({ htmlContent: normalizeStoredTapLogo(persistedHtml) });
       }
 
       const client = await storage.getClient(project.clientId || proposal.clientId);
@@ -3281,7 +3328,10 @@ export async function registerRoutes(
       }
 
       const tapDraft = normalizeProposalTapDraft(proposal, req.body ?? proposal.tapPayload ?? null);
-      validateProposalTapDraft(tapDraft);
+      // A previa nao valida campos obrigatorios de proposito: ela existe justamente
+      // para conferir o documento enquanto ele esta sendo preenchido, e o proprio
+      // modelo ja imprime "-" no que falta. A validacao pertence a geracao, que cria
+      // o projeto e dispara o e-mail.
 
       const project = proposal.projectId ? await storage.getProject(proposal.projectId) : null;
       const previewProject = buildProjectTapPreviewProject({ proposal, project, tapDraft });
@@ -3337,7 +3387,7 @@ export async function registerRoutes(
         });
       }
 
-      const pdfBuffer = await renderTapPdfBuffer(htmlContent);
+      const pdfBuffer = await renderTapPdfBuffer(normalizeStoredTapLogo(htmlContent));
       const safeCode = String(project.code || 'tap').replace(/[^a-zA-Z0-9_-]/g, '_');
 
       res.setHeader('Content-Type', 'application/pdf');

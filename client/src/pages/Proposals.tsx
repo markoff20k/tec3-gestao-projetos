@@ -71,6 +71,8 @@ import {
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, projectsApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse, ProposalTapDraft, ProposalTapAttachment, Project, EntityActivity } from '@/lib/api';
+import { MultiSelectFilter } from '@/components/MultiSelectFilter';
+import { normalizeTapLogo } from '@/lib/tapHtml';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -381,7 +383,6 @@ const COLUMNS_VERSION = 8;
 const defaultColumns: ColumnConfig[] = [
   { id: 'code', label: 'Código da proposta', visible: true, width: 'min-w-[90px]', category: 'basic' },
   { id: 'revision', label: 'Revisão', visible: true, width: 'min-w-[50px]', category: 'basic' },
-  { id: 'proposalOrigin', label: 'Cód. proposta antigo', visible: false, width: 'min-w-[70px]', category: 'basic' },
   { id: 'type', label: 'Tipo do contrato', visible: true, width: 'min-w-[90px]', category: 'classification' },
   { id: 'client', label: 'Cliente', visible: true, width: 'min-w-[120px]', category: 'basic' },
   { id: 'umbrellaRef', label: 'Proposta original (guarda-chuva)', visible: false, width: 'min-w-[100px]', category: 'classification' },
@@ -572,6 +573,40 @@ function canOpenProposalTap(proposal: Proposal | null): boolean {
   return true;
 }
 
+// Formato do <input type="date">: usa o dia civil local, não o UTC, senão à
+// noite o limite passaria a ser o dia seguinte para quem está a oeste.
+function todayForDateInput(): string {
+  const now = new Date();
+  const mes = String(now.getMonth() + 1).padStart(2, '0');
+  const dia = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${mes}-${dia}`;
+}
+// Descrição de despesa deixou de ser texto livre: com opções fixas o mesmo tipo
+// de gasto não aparece escrito de cinco formas diferentes e vira agrupável.
+const OTHER_EXPENSE_PREFIX = 'Outros — ';
+
+// "Outros" sozinho não identifica a despesa. O complemento é gravado na mesma
+// coluna, como "Outros — Táxi para a obra": o agrupamento por tipo continua
+// funcionando pelo prefixo e o detalhe não se perde, sem exigir coluna nova.
+function splitExpenseDescription(description: string): { option: string; detail: string } {
+  const value = String(description ?? '').trim();
+  if (value.startsWith(OTHER_EXPENSE_PREFIX)) {
+    return { option: 'Outros', detail: value.slice(OTHER_EXPENSE_PREFIX.length) };
+  }
+  return { option: value, detail: '' };
+}
+
+function joinExpenseDescription(option: string, detail: string): string {
+  return option === 'Outros' ? `${OTHER_EXPENSE_PREFIX}${detail.trim()}` : option;
+}
+const EXPENSE_DESCRIPTION_OPTIONS = [
+  'Alimentação',
+  'Hospedagem',
+  'Transporte',
+  'Mobilização',
+  'Subcontratação',
+  'Outros',
+] as const;
 function normalizeUserNameKey(name: string): string {
   return name
     .normalize('NFD')
@@ -579,6 +614,11 @@ function normalizeUserNameKey(name: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+}
+
+// A busca ignora acentos e caixa: "elaboracao" acha "Em Elaboração".
+function normalizeSearchValue(value: unknown): string {
+  return normalizeUserNameKey(String(value ?? ''));
 }
 
 function isProposalTapReadOnly(proposal: Proposal | null): boolean {
@@ -721,11 +761,28 @@ export default function Proposals() {
   const [expensesProposal, setExpensesProposal] = useState<Proposal | null>(null);
   const [additivesProposal, setAdditivesProposal] = useState<Proposal | null>(null);
   const tapFileInputRef = useRef<HTMLInputElement | null>(null);
-  const [expenseForm, setExpenseForm] = useState<{ description: string; value: string; reimbursable: boolean }>({
+  const [expenseForm, setExpenseForm] = useState<{
+    description: string;
+    descriptionDetail: string;
+    value: string;
+    reimbursable: boolean;
+  }>({
     description: '',
+    descriptionDetail: '',
     value: '',
     reimbursable: false,
   });
+  // A maior parte das despesas já cadastradas usa texto livre ("Despesas", "ART",
+  // "Veículo"...). Ao editar uma delas, o valor atual entra na lista para o campo
+  // não aparecer vazio — e para ninguém trocar a descrição sem querer ao mexer
+  // apenas no valor. Lançamentos novos só têm as opções fixas.
+  const expenseDescriptionOptions = useMemo(() => {
+    const current = expenseForm.description.trim();
+    if (!current || EXPENSE_DESCRIPTION_OPTIONS.some((option) => option === current)) {
+      return [...EXPENSE_DESCRIPTION_OPTIONS] as string[];
+    }
+    return [current, ...EXPENSE_DESCRIPTION_OPTIONS];
+  }, [expenseForm.description]);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [editingExpenseInitial, setEditingExpenseInitial] = useState<{
     description: string;
@@ -845,7 +902,7 @@ export default function Proposals() {
 
   useEffect(() => {
     if (!expensesDialogOpen) {
-      setExpenseForm({ description: '', value: '', reimbursable: false });
+      setExpenseForm({ description: '', descriptionDetail: '', value: '', reimbursable: false });
       setEditingExpenseId(null);
       setEditingExpenseInitial(null);
       setExpensesItemsPage(1);
@@ -853,7 +910,7 @@ export default function Proposals() {
     }
 
     // When opening for a different proposal, reset form state.
-    setExpenseForm({ description: '', value: '', reimbursable: false });
+    setExpenseForm({ description: '', descriptionDetail: '', value: '', reimbursable: false });
     setEditingExpenseId(null);
     setEditingExpenseInitial(null);
     setExpensesItemsPage(1);
@@ -870,7 +927,7 @@ export default function Proposals() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: expensesQueryKey });
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
-      setExpenseForm({ description: '', value: '', reimbursable: false });
+      setExpenseForm({ description: '', descriptionDetail: '', value: '', reimbursable: false });
       setEditingExpenseId(null);
       setEditingExpenseInitial(null);
       toast({ title: 'Despesa adicionada', variant: 'success' });
@@ -891,7 +948,7 @@ export default function Proposals() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: expensesQueryKey });
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
-      setExpenseForm({ description: '', value: '', reimbursable: false });
+      setExpenseForm({ description: '', descriptionDetail: '', value: '', reimbursable: false });
       setEditingExpenseId(null);
       setEditingExpenseInitial(null);
       toast({ title: 'Despesa atualizada', variant: 'success' });
@@ -1022,7 +1079,7 @@ export default function Proposals() {
   const isEditingExpenseDirty = useMemo(() => {
     if (!editingExpenseId || !editingExpenseInitial) return false;
 
-    const description = expenseForm.description.trim();
+    const description = joinExpenseDescription(expenseForm.description.trim(), expenseForm.descriptionDetail);
     const value = parseMoneyMaskToNumber(expenseForm.value.trim());
     const reimbursable = Boolean(expenseForm.reimbursable);
 
@@ -1031,7 +1088,7 @@ export default function Proposals() {
     if (reimbursable !== editingExpenseInitial.reimbursable) return true;
 
     return false;
-  }, [editingExpenseId, editingExpenseInitial, expenseForm.description, expenseForm.value, expenseForm.reimbursable, parseMoneyMaskToNumber]);
+  }, [editingExpenseId, editingExpenseInitial, expenseForm.description, expenseForm.descriptionDetail, expenseForm.value, expenseForm.reimbursable, parseMoneyMaskToNumber]);
 
   const expenseSubmitDisabledReason = useMemo(() => {
     if (createExpenseMutation.isPending || updateExpenseMutation.isPending) return 'Salvando...';
@@ -1040,6 +1097,9 @@ export default function Proposals() {
     const value = parseMoneyMaskToNumber(expenseForm.value.trim());
 
     if (!description) return 'Preencha a descrição.';
+    if (description === 'Outros' && !expenseForm.descriptionDetail.trim()) {
+      return 'Especifique a despesa.';
+    }
     if (value === null) return 'Preencha o valor.';
 
     if (editingExpenseId) {
@@ -1129,6 +1189,9 @@ export default function Proposals() {
     if (!formData.coordinatorName) errors.coordinatorName = 'Campo obrigatório';
     if (!formData.riskAssessment) errors.riskAssessment = 'Campo obrigatório';
     if (formData.type === 'service_order' && !formData.umbrellaRef) errors.umbrellaRef = 'Campo obrigatório';
+    if (formData.createdAt && formData.createdAt > todayForDateInput()) {
+      errors.createdAt = 'Não pode ser posterior à data atual';
+    }
     return errors;
   }, [formData]);
 
@@ -1185,11 +1248,13 @@ export default function Proposals() {
   const [dateBasisFilter, setDateBasisFilter] = useState<DateBasisFilter>('updatedAt');
   const [valueMin, setValueMin] = useState('');
   const [valueMax, setValueMax] = useState('');
-  const [coordinatorFilter, setCoordinatorFilter] = useState('');
-  const [clientFilter, setClientFilter] = useState('');
+  const [coordinatorFilters, setCoordinatorFilters] = useState<string[]>([]);
+  const [clientFilters, setClientFilters] = useState<string[]>([]);
   const [conversionFilter, setConversionFilter] = useState<'all' | 'converted' | 'not_converted'>('all');
-  const [expectationFilter, setExpectationFilter] = useState('');
-  const [mainTypeFilter, setMainTypeFilter] = useState('');
+  const [expectationFilters, setExpectationFilters] = useState<string[]>([]);
+  const [mainTypeFilters, setMainTypeFilters] = useState<string[]>([]);
+  const [tapStatusFilters, setTapStatusFilters] = useState<string[]>([]);
+  const [revisionFilters, setRevisionFilters] = useState<string[]>([]);
   const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
 
   const handleDateFromFilterChange = useCallback((value: string) => {
@@ -1219,7 +1284,7 @@ export default function Proposals() {
 
     const nextStatusFilters = Array.from(new Set([...statusFromList, ...statusSingle, ...funnelStatuses]));
     const nextTypeFilters = parseQueryList(params.get('types'));
-    const nextClientFilter = (params.get('clientId') ?? params.get('client') ?? '').trim();
+    const nextClientFilters = parseQueryList(params.get('clientId') ?? params.get('client'));
     const nextDateFrom = (params.get('dateFrom') ?? '').trim();
     let nextDateTo = (params.get('dateTo') ?? '').trim();
     const nextDateBasisFilter = dateBasisOptions.some((option) => option.value === params.get('dateBasis'))
@@ -1227,12 +1292,14 @@ export default function Proposals() {
       : 'updatedAt';
     const nextValueMin = formatMoneyFromValue(params.get('valueMin'));
     const nextValueMax = formatMoneyFromValue(params.get('valueMax'));
-    const nextCoordinatorFilter = (params.get('coordinator') ?? '').trim();
+    const nextCoordinatorFilters = parseQueryList(params.get('coordinator'));
     const nextConversionFilter = params.get('conversion') === 'converted' || params.get('conversion') === 'not_converted'
       ? params.get('conversion') as 'converted' | 'not_converted'
       : 'all';
-    const nextExpectationFilter = (params.get('expectation') ?? '').trim();
-    const nextMainTypeFilter = (params.get('mainType') ?? '').trim();
+    const nextExpectationFilters = parseQueryList(params.get('expectation'));
+    const nextMainTypeFilters = parseQueryList(params.get('mainType'));
+    const nextTapStatusFilters = parseQueryList(params.get('tapStatus'));
+    const nextRevisionFilters = parseQueryList(params.get('revision'));
     const nextFavoritesOnly = params.get('favorites') === '1';
 
     if (nextDateFrom && nextDateTo && nextDateTo < nextDateFrom) {
@@ -1247,11 +1314,13 @@ export default function Proposals() {
     setDateBasisFilter(nextDateBasisFilter);
     setValueMin(nextValueMin);
     setValueMax(nextValueMax);
-    setCoordinatorFilter(nextCoordinatorFilter);
-    setClientFilter(nextClientFilter);
+    setCoordinatorFilters(nextCoordinatorFilters);
+    setClientFilters(nextClientFilters);
     setConversionFilter(nextConversionFilter);
-    setExpectationFilter(nextExpectationFilter);
-    setMainTypeFilter(nextMainTypeFilter);
+    setExpectationFilters(nextExpectationFilters);
+    setMainTypeFilters(nextMainTypeFilters);
+    setTapStatusFilters(nextTapStatusFilters);
+    setRevisionFilters(nextRevisionFilters);
     setShowOnlyFavorites(nextFavoritesOnly);
 
     if (
@@ -1262,11 +1331,13 @@ export default function Proposals() {
       (nextDateBasisFilter !== 'updatedAt' && Boolean(nextDateFrom || nextDateTo)) ||
       nextValueMin ||
       nextValueMax ||
-      nextCoordinatorFilter ||
-      nextClientFilter ||
+      nextCoordinatorFilters.length > 0 ||
+      nextClientFilters.length > 0 ||
       nextConversionFilter !== 'all' ||
-      nextExpectationFilter ||
-      nextMainTypeFilter ||
+      nextExpectationFilters.length > 0 ||
+      nextMainTypeFilters.length > 0 ||
+      nextTapStatusFilters.length > 0 ||
+      nextRevisionFilters.length > 0 ||
       nextFavoritesOnly
     ) {
       setFiltersOpen(true);
@@ -1284,30 +1355,34 @@ export default function Proposals() {
     );
     const normalizedTypes = Array.from(new Set(typeFilters.map((type) => type.trim()).filter(Boolean)));
     const nextSearch = search.trim();
-    const nextClient = clientFilter.trim();
-    const nextCoordinator = coordinatorFilter.trim();
-    const nextExpectation = expectationFilter.trim();
-    const nextMainType = mainTypeFilter.trim();
+    const nextClients = Array.from(new Set(clientFilters.filter(Boolean)));
+    const nextCoordinators = Array.from(new Set(coordinatorFilters.filter(Boolean)));
+    const nextExpectations = Array.from(new Set(expectationFilters.filter(Boolean)));
+    const nextMainTypes = Array.from(new Set(mainTypeFilters.filter(Boolean)));
+    const nextTapStatuses = Array.from(new Set(tapStatusFilters.filter(Boolean)));
+    const nextRevisions = Array.from(new Set(revisionFilters.filter(Boolean)));
     const nextValueMin = parseMoneyMaskToNumber(valueMin) ?? 0;
     const nextValueMax = parseMoneyMaskToNumber(valueMax) ?? 0;
 
-    ['search', 'statuses', 'status', 'types', 'clientId', 'client', 'dateFrom', 'dateTo', 'dateBasis', 'valueMin', 'valueMax', 'coordinator', 'conversion', 'expectation', 'mainType', 'favorites', 'funnel'].forEach((key) => {
+    ['search', 'statuses', 'status', 'types', 'clientId', 'client', 'dateFrom', 'dateTo', 'dateBasis', 'valueMin', 'valueMax', 'coordinator', 'conversion', 'expectation', 'mainType', 'tapStatus', 'revision', 'favorites', 'funnel'].forEach((key) => {
       params.delete(key);
     });
 
     if (nextSearch) params.set('search', nextSearch);
     if (normalizedStatuses.length) params.set('statuses', normalizedStatuses.join(','));
     if (normalizedTypes.length) params.set('types', normalizedTypes.join(','));
-    if (nextClient) params.set('clientId', nextClient);
+    if (nextClients.length) params.set('clientId', nextClients.join(','));
     if (dateFrom) params.set('dateFrom', dateFrom);
     if (dateTo) params.set('dateTo', dateTo);
     if (dateBasisFilter !== 'updatedAt') params.set('dateBasis', dateBasisFilter);
     if (valueMin && nextValueMin > 0) params.set('valueMin', String(nextValueMin));
     if (valueMax && nextValueMax > 0) params.set('valueMax', String(nextValueMax));
-    if (nextCoordinator) params.set('coordinator', nextCoordinator);
+    if (nextCoordinators.length) params.set('coordinator', nextCoordinators.join(','));
     if (conversionFilter !== 'all') params.set('conversion', conversionFilter);
-    if (nextExpectation) params.set('expectation', nextExpectation);
-    if (nextMainType) params.set('mainType', nextMainType);
+    if (nextExpectations.length) params.set('expectation', nextExpectations.join(','));
+    if (nextMainTypes.length) params.set('mainType', nextMainTypes.join(','));
+    if (nextTapStatuses.length) params.set('tapStatus', nextTapStatuses.join(','));
+    if (nextRevisions.length) params.set('revision', nextRevisions.join(','));
     if (showOnlyFavorites) params.set('favorites', '1');
 
     const nextQuery = params.toString();
@@ -1317,7 +1392,7 @@ export default function Proposals() {
     if (nextUrl !== currentUrl) {
       window.history.replaceState(window.history.state, '', nextUrl);
     }
-  }, [search, statusFilters, typeFilters, dateFrom, dateTo, dateBasisFilter, valueMin, valueMax, coordinatorFilter, clientFilter, conversionFilter, expectationFilter, mainTypeFilter, showOnlyFavorites, parseMoneyMaskToNumber]);
+  }, [search, statusFilters, typeFilters, dateFrom, dateTo, dateBasisFilter, valueMin, valueMax, coordinatorFilters, clientFilters, conversionFilter, expectationFilters, mainTypeFilters, tapStatusFilters, revisionFilters, showOnlyFavorites, parseMoneyMaskToNumber]);
 
   // Sort states
   const [sortColumn, setSortColumn] = useState<string>('code');
@@ -1365,11 +1440,13 @@ export default function Proposals() {
     setDateBasisFilter('updatedAt');
     setValueMin('');
     setValueMax('');
-    setCoordinatorFilter('');
-    setClientFilter('');
+    setCoordinatorFilters([]);
+    setClientFilters([]);
     setConversionFilter('all');
-    setExpectationFilter('');
-    setMainTypeFilter('');
+    setExpectationFilters([]);
+    setMainTypeFilters([]);
+    setTapStatusFilters([]);
+    setRevisionFilters([]);
     setShowOnlyFavorites(false);
     setCurrentPage(1);
   };
@@ -1381,11 +1458,13 @@ export default function Proposals() {
     (dateTo ? 1 : 0) +
     (valueMin ? 1 : 0) +
     (valueMax ? 1 : 0) +
-    (coordinatorFilter ? 1 : 0) +
-    (clientFilter ? 1 : 0) +
+    coordinatorFilters.length +
+    clientFilters.length +
     (conversionFilter !== 'all' ? 1 : 0) +
-    (expectationFilter ? 1 : 0) +
-    (mainTypeFilter ? 1 : 0);
+    expectationFilters.length +
+    mainTypeFilters.length +
+    tapStatusFilters.length +
+    revisionFilters.length;
 
   // Load column preferences from server on mount
   useEffect(() => {
@@ -1618,8 +1697,13 @@ export default function Proposals() {
       .map((p) => ({
         code: p.code,
         label: p.title ? `${p.code} - ${p.title}` : p.code,
+        // O cliente vem junto para preencher o campo ao escolher a guarda-chuva:
+        // uma ordem de serviço é sempre do mesmo cliente da proposta original.
+        clientId: p.clientId,
       }))
-      .sort((a, b) => a.code.localeCompare(b.code, 'pt-BR', { sensitivity: 'base' }));
+      // Decrescente: as guarda-chuva mais recentes são as que geram ordem de
+      // serviço no dia a dia, e ficavam no fim de uma lista longa.
+      .sort((a, b) => b.code.localeCompare(a.code, 'pt-BR', { sensitivity: 'base' }));
   }, [proposals]);
 
   const [showProposalsLoader, setShowProposalsLoader] = useState<boolean>(isLoading);
@@ -1756,6 +1840,9 @@ export default function Proposals() {
     }
     if (!data.title?.trim()) errors.title = 'Campo obrigatório';
     if (!data.riskAssessment) errors.riskAssessment = 'Campo obrigatório';
+    if (data.createdAt && data.createdAt > todayForDateInput()) {
+      errors.createdAt = 'Não pode ser posterior à data atual';
+    }
 
     return errors;
   };
@@ -1953,11 +2040,16 @@ export default function Proposals() {
 
   const previewTapMutation = useMutation({
     mutationFn: async ({ proposal, previewWindow }: { proposal: Proposal; previewWindow: Window | null }) => {
-      const { htmlContent } = await proposalsApi.previewTapHtml(proposal.id, tapForm);
+      // Com o TAP já emitido o formulário é somente leitura: mostrar o documento
+      // armazenado, não uma prévia do rascunho. A prévia valida campos obrigatórios
+      // que ninguém pode mais preencher, e ainda poderia divergir do que foi enviado.
+      const { htmlContent } = isProposalTapReadOnly(proposal)
+        ? await proposalsApi.getTapHtml(proposal.id)
+        : await proposalsApi.previewTapHtml(proposal.id, tapForm);
       const targetWindow = previewWindow && !previewWindow.closed ? previewWindow : openTapPreviewWindow();
 
       targetWindow.document.open();
-      targetWindow.document.write(htmlContent);
+      targetWindow.document.write(normalizeTapLogo(htmlContent));
       targetWindow.document.close();
       targetWindow.focus();
     },
@@ -2443,24 +2535,97 @@ export default function Proposals() {
   };
 
   // Get unique coordinators for filter dropdown
+  // Precisa usar o mesmo nome exibido na coluna (resolvido pelo coordinatorId).
+  // Listar o coordinatorName cru deixava opções que não casavam com a tela — e
+  // escondia coordenadores que só existem pelo vínculo.
+  // Status do TAP: lista fixa, na ordem do ciclo de vida do documento.
+  const tapStatusFilterOptions = useMemo(
+    () => ['not_started', 'draft', 'generated', 'sent', 'failed'].map((value) => ({
+      value,
+      label: proposalTapStatusLabels[value] ?? value,
+    })),
+    []
+  );
+
+  // Revisão: só as que existem na base, para não oferecer filtro que não traz nada.
+  const revisionFilterOptions = useMemo(() => {
+    const revisions = new Set<number>();
+    proposals.forEach((proposal) => revisions.add(Number(proposal.revision || 0)));
+
+    return Array.from(revisions)
+      .sort((a, b) => a - b)
+      .map((revision) => ({
+        value: String(revision),
+        label: revision === 0 ? 'Original (R0)' : `R${revision}`,
+      }));
+  }, [proposals]);
   const uniqueCoordinators = useMemo(() => {
     const coords = new Set<string>();
     proposals.forEach((p) => {
-      if (p.coordinatorName) coords.add(p.coordinatorName);
+      const displayName = getCoordinatorDisplayName(p);
+      if (displayName && displayName !== '-') coords.add(displayName);
     });
-    return Array.from(coords).sort();
-  }, [proposals]);
+    return Array.from(coords).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  }, [proposals, getCoordinatorDisplayName]);
+
+  // QA pediu busca em qualquer campo. Em vez de listar campo a campo (que
+  // envelhece a cada coluna nova), varremos todo valor primitivo da proposta e
+  // acrescentamos o que a tela exibe mas não existe como campo: rótulos de
+  // status e tipo, datas formatadas, moeda e nome do coordenador resolvido.
+  // O índice é montado uma vez por carga, não a cada tecla digitada.
+  const proposalSearchIndex = useMemo(() => {
+    const index = new Map<string, string>();
+
+    for (const proposal of proposals) {
+      const parts: unknown[] = [];
+
+      for (const [key, value] of Object.entries(proposal)) {
+        if (key === 'tapPayload') continue;
+        if (value === null || value === undefined) continue;
+        if (typeof value === 'object') continue;
+        parts.push(value);
+      }
+
+      const displayCode = Number(proposal.revision || 0) > 0
+        ? `${proposal.code}-R${proposal.revision}`
+        : proposal.code;
+
+      parts.push(
+        displayCode,
+        statusLabels[proposal.status] ?? '',
+        typeLabels[proposal.type] ?? '',
+        getCoordinatorDisplayName(proposal),
+        proposal.client?.razaoSocial ?? '',
+        proposal.client?.nomeFantasia ?? '',
+        proposal.client?.cnpj ?? '',
+        // O valor exibido na coluna é o composto, não o totalValue cru (quase
+        // sempre zerado); indexar o cru deixaria a busca por valor sem efeito.
+        formatCurrency(getProposalTotalValue(proposal)),
+        formatCurrency((proposal as any).categoryValuesTotal ?? 0),
+        formatDate(proposal.expectedStartDate),
+        formatDate(proposal.expectedEndDate),
+        formatDate(proposal.sentDate),
+        formatDate(proposal.createdAt),
+        formatDate((proposal as any).deliveryDate),
+        formatDate((proposal as any).dueDate)
+      );
+
+      index.set(proposal.id, normalizeSearchValue(parts.filter(Boolean).join(' ')));
+    }
+
+    return index;
+  }, [proposals, getCoordinatorDisplayName, getProposalTotalValue]);
+
+  // Vários termos funcionam como E: "tec3 sucesso" exige os dois.
+  const searchTerms = useMemo(
+    () => normalizeSearchValue(search).split(' ').filter(Boolean),
+    [search]
+  );
 
   const filteredProposals = useMemo(() => {
     const filtered = proposals.filter((p) => {
-      const proposalDisplayCode = Number(p.revision || 0) > 0 ? `${p.code}-R${p.revision}` : p.code;
-      const searchMatch =
-        !search ||
-        p.title.toLowerCase().includes(search.toLowerCase()) ||
-        p.code.toLowerCase().includes(search.toLowerCase()) ||
-        proposalDisplayCode.toLowerCase().includes(search.toLowerCase()) ||
-        p.client?.razaoSocial?.toLowerCase().includes(search.toLowerCase()) ||
-        p.client?.cnpj?.toLowerCase().includes(search.toLowerCase());
+      const haystack = proposalSearchIndex.get(p.id) ?? '';
+      const searchMatch = searchTerms.length === 0 || searchTerms.every((term) => haystack.includes(term));
 
       const proposalStatus = normalizeFilterValue(p.status);
       const normalizedStatusFilters = statusFilters.map(normalizeFilterValue);
@@ -2508,10 +2673,12 @@ export default function Proposals() {
       })();
 
       // Coordinator filter
-      const coordMatch = !coordinatorFilter || p.coordinatorName === coordinatorFilter;
+      const coordMatch =
+        coordinatorFilters.length === 0 || coordinatorFilters.includes(getCoordinatorDisplayName(p));
 
       // Client filter
-      const clientMatch = !clientFilter || String(p.clientId ?? '') === String(clientFilter);
+      const clientMatch =
+        clientFilters.length === 0 || clientFilters.includes(String(p.clientId ?? ''));
 
       // Conversion filter
       const conversionMatch = (() => {
@@ -2521,15 +2688,25 @@ export default function Proposals() {
       })();
 
       // Expectation filter
-      const expectationMatch = !expectationFilter || (p as any).expectation === expectationFilter;
+      const expectationMatch =
+        expectationFilters.length === 0 || expectationFilters.includes(String((p as any).expectation ?? ''));
 
       // Main type filter
-      const mainTypeMatch = !mainTypeFilter || p.mainType === mainTypeFilter;
+      const mainTypeMatch =
+        mainTypeFilters.length === 0 || mainTypeFilters.includes(String(p.mainType ?? ''));
+
+      // TAP status filter
+      const tapStatusMatch =
+        tapStatusFilters.length === 0 || tapStatusFilters.includes(String(p.tapStatus || 'not_started'));
+
+      // Revision filter
+      const revisionMatch =
+        revisionFilters.length === 0 || revisionFilters.includes(String(Number(p.revision || 0)));
 
       // Favorites filter
       const favoriteMatch = !showOnlyFavorites || favoritesSet.has(p.id);
 
-      return searchMatch && statusMatch && typeMatch && dateMatch && valueMatch && coordMatch && clientMatch && conversionMatch && expectationMatch && mainTypeMatch && favoriteMatch;
+      return searchMatch && statusMatch && typeMatch && dateMatch && valueMatch && coordMatch && clientMatch && conversionMatch && expectationMatch && mainTypeMatch && tapStatusMatch && revisionMatch && favoriteMatch;
     });
 
     // Sort the filtered results
@@ -2611,7 +2788,7 @@ export default function Proposals() {
         return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
       }
     });
-  }, [proposals, search, statusFilters, typeFilters, dateFrom, dateTo, dateBasisFilter, valueMin, valueMax, coordinatorFilter, clientFilter, conversionFilter, expectationFilter, mainTypeFilter, showOnlyFavorites, favoritesSet, sortColumn, sortDirection]);
+  }, [proposals, search, searchTerms, proposalSearchIndex, getCoordinatorDisplayName, statusFilters, typeFilters, dateFrom, dateTo, dateBasisFilter, valueMin, valueMax, coordinatorFilters, clientFilters, conversionFilter, expectationFilters, mainTypeFilters, tapStatusFilters, revisionFilters, showOnlyFavorites, favoritesSet, sortColumn, sortDirection]);
 
   const totalPages = Math.ceil(filteredProposals.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -2770,8 +2947,6 @@ export default function Proposals() {
         return (proposal as any).hourJustification
           ? <span className={tableValueClassName}>{formatCurrency((proposal as any).hourJustification)}</span>
           : <span className={tableValueClassName}>-</span>;
-      case 'proposalOrigin':
-        return (proposal as any).proposalOrigin || '-';
       case 'quantity':
         return proposal.quantity || '-';
       case 'description':
@@ -2857,7 +3032,7 @@ export default function Proposals() {
               <DialogHeader>
                 <DialogTitle>Nova Proposta</DialogTitle>
               </DialogHeader>
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} className="min-w-0 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Código da proposta</Label>
@@ -2886,7 +3061,7 @@ export default function Proposals() {
                 </div>
 
                 {formData.type === 'service_order' && (
-                  <div className="space-y-2">
+                  <div className="min-w-0 space-y-2">
                     <Label>Proposta original (guarda-chuva) *</Label>
                     <Popover open={createUmbrellaComboOpen} onOpenChange={setCreateUmbrellaComboOpen}>
                       <PopoverTrigger asChild>
@@ -2901,7 +3076,7 @@ export default function Proposals() {
                             isCreateFieldInvalid('umbrellaRef') && 'border-destructive'
                           )}
                         >
-                          <span className="truncate text-left">
+                          <span className="min-w-0 truncate text-left">
                             {umbrellaProposalOptions.find((option) => option.code === formData.umbrellaRef)?.label || 'Selecione'}
                           </span>
                           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
@@ -2918,7 +3093,11 @@ export default function Proposals() {
                                   key={option.code}
                                   value={option.label}
                                   onSelect={() => {
-                                    setFormData({ ...formData, umbrellaRef: option.code });
+                                    setFormData({
+                                      ...formData,
+                                      umbrellaRef: option.code,
+                                      clientId: option.clientId || formData.clientId,
+                                    });
                                     setCreateUmbrellaComboOpen(false);
                                   }}
                                 >
@@ -3011,9 +3190,14 @@ export default function Proposals() {
                       id="requestDate"
                       type="date"
                       data-testid="input-proposal-request-date"
+                      max={todayForDateInput()}
                       value={formData.createdAt}
                       onChange={(e) => setFormData({ ...formData, createdAt: e.target.value })}
+                      className={cn(isCreateFieldInvalid('createdAt') && 'border-destructive')}
                     />
+                    {shouldShowCreateError('createdAt') && (
+                      <p className="text-xs text-destructive">{createValidationErrors.createdAt}</p>
+                    )}
                   </div>
                 </div>
 
@@ -3202,24 +3386,6 @@ export default function Proposals() {
                       />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Quem será o coordenador do projeto?</Label>
-                    <Select
-                      value={formData.coordinatorId || undefined}
-                      onValueChange={(value) => setFormData({ ...formData, coordinatorId: value })}
-                    >
-                      <SelectTrigger data-testid="select-proposal-project-coordinator">
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {activeProjectCoordinators.map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
                 </div>
 
                 <div className="space-y-4">
@@ -3230,15 +3396,6 @@ export default function Proposals() {
                       data-testid="input-proposal-description"
                       value={formData.description}
                       onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="proposalOrigin">Código da proposta antigo</Label>
-                    <Input
-                      id="proposalOrigin"
-                      data-testid="input-proposal-origin"
-                      value={formData.proposalOrigin}
-                      onChange={(e) => setFormData({ ...formData, proposalOrigin: e.target.value })}
                     />
                   </div>
                 </div>
@@ -3295,7 +3452,7 @@ export default function Proposals() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     data-testid="input-search-proposals"
-                    placeholder="Buscar por código, título ou cliente..."
+                    placeholder="Buscar em qualquer campo: código, cliente, status, valor, data..."
                     className="pl-10"
                     value={search}
                     onChange={(e) => {
@@ -3463,46 +3620,72 @@ export default function Proposals() {
                       <X className="h-3 w-3 ml-1" />
                     </Badge>
                   )}
-                  {coordinatorFilter && (
+                  {coordinatorFilters.map((value) => (
                     <Badge
+                      key={`chip-coord-${value}`}
                       variant="secondary"
                       className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => setCoordinatorFilter('')}
+                      onClick={() => setCoordinatorFilters((prev) => prev.filter((item) => item !== value))}
                     >
-                      Coord: {coordinatorFilter}
+                      Coord: {value}
                       <X className="h-3 w-3 ml-1" />
                     </Badge>
-                  )}
-                  {clientFilter && (
+                  ))}
+                  {clientFilters.map((value) => (
                     <Badge
+                      key={`chip-client-${value}`}
                       variant="secondary"
                       className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => setClientFilter('')}
+                      onClick={() => setClientFilters((prev) => prev.filter((item) => item !== value))}
                     >
-                      Cliente: {clients.find((c) => c.id === clientFilter)?.razaoSocial || clientFilter}
+                      Cliente: {clients.find((client) => client.id === value)?.razaoSocial || value}
                       <X className="h-3 w-3 ml-1" />
                     </Badge>
-                  )}
-                  {expectationFilter && (
+                  ))}
+                  {expectationFilters.map((value) => (
                     <Badge
+                      key={`chip-expectation-${value}`}
                       variant="secondary"
                       className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => setExpectationFilter('')}
+                      onClick={() => setExpectationFilters((prev) => prev.filter((item) => item !== value))}
                     >
-                      Expectativa: {expectationFilter}
+                      Expectativa: {value}
                       <X className="h-3 w-3 ml-1" />
                     </Badge>
-                  )}
-                  {mainTypeFilter && (
+                  ))}
+                  {mainTypeFilters.map((value) => (
                     <Badge
+                      key={`chip-maintype-${value}`}
                       variant="secondary"
                       className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
-                      onClick={() => setMainTypeFilter('')}
+                      onClick={() => setMainTypeFilters((prev) => prev.filter((item) => item !== value))}
                     >
-                      Tipo principal: {mainTypeFilter}
+                      Tipo principal: {value}
                       <X className="h-3 w-3 ml-1" />
                     </Badge>
-                  )}
+                  ))}
+                  {tapStatusFilters.map((value) => (
+                    <Badge
+                      key={`chip-tap-${value}`}
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => setTapStatusFilters((prev) => prev.filter((item) => item !== value))}
+                    >
+                      TAP: {proposalTapStatusLabels[value] || value}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  ))}
+                  {revisionFilters.map((value) => (
+                    <Badge
+                      key={`chip-revision-${value}`}
+                      variant="secondary"
+                      className="pl-2 pr-1 py-1 gap-1 cursor-pointer hover-elevate"
+                      onClick={() => setRevisionFilters((prev) => prev.filter((item) => item !== value))}
+                    >
+                      Revisão: {value === '0' ? 'Original (R0)' : `R${value}`}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  ))}
                 </div>
               )}
 
@@ -3594,49 +3777,33 @@ export default function Proposals() {
                     {/* Coordinator */}
                     <div className="min-w-0 space-y-2 xl:col-span-3">
                       <Label className="min-h-6 font-medium">Coordenador</Label>
-                      <Select
-                        value={coordinatorFilter}
-                        onValueChange={(v) => {
-                          setCoordinatorFilter(v === '_all' ? '' : v);
+                      <MultiSelectFilter
+                        testId="filter-coordinator"
+                        placeholder="Todos os coordenadores"
+                        searchPlaceholder="Buscar coordenador..."
+                        options={uniqueCoordinators.map((coord) => ({ value: coord, label: coord }))}
+                        selected={coordinatorFilters}
+                        onChange={(next) => {
+                          setCoordinatorFilters(next);
                           setCurrentPage(1);
                         }}
-                      >
-                        <SelectTrigger className="h-10 w-full" data-testid="filter-coordinator">
-                          <SelectValue placeholder="Todos os coordenadores" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_all">Todos os coordenadores</SelectItem>
-                          {uniqueCoordinators.map((coord) => (
-                            <SelectItem key={coord} value={coord}>
-                              {coord}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      />
                     </div>
 
                     {/* Client */}
                     <div className="min-w-0 space-y-2 xl:col-span-3">
                       <Label className="min-h-6 font-medium">Cliente</Label>
-                      <Select
-                        value={clientFilter}
-                        onValueChange={(v) => {
-                          setClientFilter(v === '_all' ? '' : v);
+                      <MultiSelectFilter
+                        testId="filter-client"
+                        placeholder="Todos os clientes"
+                        searchPlaceholder="Buscar cliente..."
+                        options={clients.map((client) => ({ value: client.id, label: client.razaoSocial }))}
+                        selected={clientFilters}
+                        onChange={(next) => {
+                          setClientFilters(next);
                           setCurrentPage(1);
                         }}
-                      >
-                        <SelectTrigger className="h-10 w-full" data-testid="filter-client">
-                          <SelectValue placeholder="Todos os clientes" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_all">Todos os clientes</SelectItem>
-                          {clients.slice(0, 100).map((client) => (
-                            <SelectItem key={client.id} value={client.id}>
-                              {client.razaoSocial}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      />
                     </div>
 
                     {/* Conversion */}
@@ -3663,45 +3830,69 @@ export default function Proposals() {
                     {/* Expectation */}
                     <div className="space-y-2 xl:col-span-3">
                       <Label className="font-medium">Expectativa</Label>
-                      <Select
-                        value={expectationFilter}
-                        onValueChange={(v) => {
-                          setExpectationFilter(v === '_all' ? '' : v);
+                      <MultiSelectFilter
+                        testId="filter-expectation"
+                        placeholder="Todas"
+                        searchPlaceholder="Buscar expectativa..."
+                        options={[
+                          { value: 'Alta', label: 'Alta' },
+                          { value: 'Média', label: 'Média' },
+                          { value: 'Baixa', label: 'Baixa' },
+                        ]}
+                        selected={expectationFilters}
+                        onChange={(next) => {
+                          setExpectationFilters(next);
                           setCurrentPage(1);
                         }}
-                      >
-                        <SelectTrigger data-testid="filter-expectation">
-                          <SelectValue placeholder="Todas" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_all">Todas</SelectItem>
-                          <SelectItem value="Alta">Alta</SelectItem>
-                          <SelectItem value="Média">Média</SelectItem>
-                          <SelectItem value="Baixa">Baixa</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      />
                     </div>
 
                     {/* Main Type */}
                     <div className="space-y-2 xl:col-span-6">
                       <Label className="font-medium">Tipo principal</Label>
-                      <Select
-                        value={mainTypeFilter}
-                        onValueChange={(v) => {
-                          setMainTypeFilter(v === '_all' ? '' : v);
+                      <MultiSelectFilter
+                        testId="filter-main-type"
+                        placeholder="Todos"
+                        searchPlaceholder="Buscar tipo principal..."
+                        options={mainTypeOptions.map((opt) => ({ value: opt, label: opt }))}
+                        selected={mainTypeFilters}
+                        onChange={(next) => {
+                          setMainTypeFilters(next);
                           setCurrentPage(1);
                         }}
-                      >
-                        <SelectTrigger data-testid="filter-main-type">
-                          <SelectValue placeholder="Todos" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_all">Todos</SelectItem>
-                          {mainTypeOptions.map((opt) => (
-                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      />
+                    </div>
+
+                    {/* Status do TAP */}
+                    <div className="space-y-2 xl:col-span-3">
+                      <Label className="font-medium">Status do TAP</Label>
+                      <MultiSelectFilter
+                        testId="filter-tap-status"
+                        placeholder="Todos"
+                        searchPlaceholder="Buscar status do TAP..."
+                        options={tapStatusFilterOptions}
+                        selected={tapStatusFilters}
+                        onChange={(next) => {
+                          setTapStatusFilters(next);
+                          setCurrentPage(1);
+                        }}
+                      />
+                    </div>
+
+                    {/* Revisão */}
+                    <div className="space-y-2 xl:col-span-3">
+                      <Label className="font-medium">Revisão</Label>
+                      <MultiSelectFilter
+                        testId="filter-revision"
+                        placeholder="Todas"
+                        searchPlaceholder="Buscar revisão..."
+                        options={revisionFilterOptions}
+                        selected={revisionFilters}
+                        onChange={(next) => {
+                          setRevisionFilters(next);
+                          setCurrentPage(1);
+                        }}
+                      />
                     </div>
                   </div>
 
@@ -4418,10 +4609,10 @@ export default function Proposals() {
                                       disabled={tapReadOnly}
                                       className={cn(
                                         'w-full justify-between font-normal',
-                                        !tapForm.additiveProjectId && 'border-destructive',
+                                        !tapForm.additiveProjectId && !tapReadOnly && 'border-destructive',
                                       )}
                                     >
-                                      <span className="truncate text-left">
+                                      <span className="min-w-0 truncate text-left">
                                         {tapSelectedAdditiveProject
                                           ? `${tapSelectedAdditiveProject.code} - ${tapSelectedAdditiveProject.name}`
                                           : 'Selecione o projeto'}
@@ -4453,7 +4644,7 @@ export default function Proposals() {
                                   </PopoverContent>
                                 </Popover>
                               )}
-                              {!tapProposalProject && !tapForm.additiveProjectId && (
+                              {!tapProposalProject && !tapForm.additiveProjectId && !tapReadOnly && (
                                 <p className="text-xs text-destructive">Campo obrigatório</p>
                               )}
                             </div>
@@ -4467,7 +4658,7 @@ export default function Proposals() {
                                 >
                                   <SelectTrigger
                                     data-testid="select-tap-additive-coordinator"
-                                    className={!tapForm.projectCoordinatorId ? 'border-destructive' : ''}
+                                    className={!tapForm.projectCoordinatorId && !tapReadOnly ? 'border-destructive' : ''}
                                   >
                                     <SelectValue placeholder="Selecione um coordenador" />
                                   </SelectTrigger>
@@ -4480,7 +4671,7 @@ export default function Proposals() {
                                     ))}
                                   </SelectContent>
                                 </Select>
-                                {!tapForm.projectCoordinatorId && (
+                                {!tapForm.projectCoordinatorId && !tapReadOnly && (
                                   <p className="text-xs text-destructive">Campo obrigatório</p>
                                 )}
                               </div>
@@ -4493,7 +4684,7 @@ export default function Proposals() {
                                 >
                                   <SelectTrigger
                                     data-testid="select-tap-additive-analyst"
-                                    className={!tapForm.projectAnalystId ? 'border-destructive' : ''}
+                                    className={!tapForm.projectAnalystId && !tapReadOnly ? 'border-destructive' : ''}
                                   >
                                     <SelectValue placeholder="Selecione um analista" />
                                   </SelectTrigger>
@@ -4506,7 +4697,7 @@ export default function Proposals() {
                                     ))}
                                   </SelectContent>
                                 </Select>
-                                {!tapForm.projectAnalystId && (
+                                {!tapForm.projectAnalystId && !tapReadOnly && (
                                   <p className="text-xs text-destructive">Campo obrigatório</p>
                                 )}
                               </div>
@@ -4566,7 +4757,10 @@ export default function Proposals() {
                                 </AlertDialog>
                               ) : null}
                               {tapGenerateDisabledReason ? (
-                                <p className="text-xs text-muted-foreground">{tapGenerateDisabledReason}</p>
+                                <p className="flex items-start gap-1.5 rounded-md border border-amber-300/60 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 dark:border-amber-300/30 dark:bg-[#3a3018] dark:text-amber-100">
+                                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                  <span>{tapGenerateDisabledReason}</span>
+                                </p>
                               ) : null}
                               {tapReadOnly && tapProposal.tapLastEmailError ? (
                                 <p className="text-xs text-destructive">{formatTapEmailErrorMessage(tapProposal.tapLastEmailError)}</p>
@@ -4636,7 +4830,7 @@ export default function Proposals() {
                                 >
                                   <SelectTrigger
                                     data-testid="select-tap-project-analyst"
-                                    className={!tapForm.projectAnalystId ? 'border-destructive' : ''}
+                                    className={!tapForm.projectAnalystId && !tapReadOnly ? 'border-destructive' : ''}
                                   >
                                     <SelectValue placeholder="Selecione um analista" />
                                   </SelectTrigger>
@@ -4649,7 +4843,7 @@ export default function Proposals() {
                                     ))}
                                   </SelectContent>
                                 </Select>
-                                {!tapForm.projectAnalystId && (
+                                {!tapForm.projectAnalystId && !tapReadOnly && (
                                   <p className="text-xs text-destructive">Campo obrigatório</p>
                                 )}
                               </div>
@@ -4659,10 +4853,10 @@ export default function Proposals() {
                                   value={tapForm.projectName}
                                   onChange={(event) => handleTapFieldChange('projectName', event.target.value)}
                                   disabled={tapReadOnly}
-                                  className={!tapForm.projectName.trim() ? 'border-destructive' : ''}
+                                  className={!tapForm.projectName.trim() && !tapReadOnly ? 'border-destructive' : ''}
                                   data-testid="input-tap-project-name"
                                 />
-                                {!tapForm.projectName.trim() && (
+                                {!tapForm.projectName.trim() && !tapReadOnly && (
                                   <p className="text-xs text-destructive">Campo obrigatório</p>
                                 )}
                               </div>
@@ -5101,7 +5295,10 @@ export default function Proposals() {
                                 </Button>
                               ) : null}
                               {tapGenerateDisabledReason ? (
-                                <p className="text-xs text-muted-foreground">{tapGenerateDisabledReason}</p>
+                                <p className="flex items-start gap-1.5 rounded-md border border-amber-300/60 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 dark:border-amber-300/30 dark:bg-[#3a3018] dark:text-amber-100">
+                                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                  <span>{tapGenerateDisabledReason}</span>
+                                </p>
                               ) : null}
                             </div>
                           </CardContent>
@@ -5255,10 +5452,6 @@ export default function Proposals() {
                     <AccordionTrigger className="text-sm font-medium">Classificação</AccordionTrigger>
                     <AccordionContent>
                       <div className="grid grid-cols-2 gap-4 pt-2">
-                        <div>
-                          <Label className="text-xs text-muted-foreground">Cód. proposta antigo</Label>
-                          <p>{(selectedProposal as any).proposalOrigin || '-'}</p>
-                        </div>
                         <div>
                           <Label className="text-xs text-muted-foreground">Proposta original (guarda-chuva)</Label>
                           <p>{selectedProposal.umbrellaRef || '-'}</p>
@@ -5497,10 +5690,6 @@ export default function Proposals() {
                       <CardContent className="pt-4">
                         <h3 className="font-semibold mb-4">Classificação</h3>
                         <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <Label className="text-xs text-muted-foreground">Cód. proposta antigo</Label>
-                            <p>{(selectedProposal as any).proposalOrigin || '-'}</p>
-                          </div>
                           <div>
                             <Label className="text-xs text-muted-foreground">Proposta original (guarda-chuva)</Label>
                             <p>{selectedProposal.umbrellaRef || '-'}</p>
@@ -5910,8 +6099,18 @@ export default function Proposals() {
                 e.preventDefault();
                 if (!expensesProposalId) return;
 
-                const description = expenseForm.description.trim();
+                const option = expenseForm.description.trim();
+                const description = joinExpenseDescription(option, expenseForm.descriptionDetail);
                 const value = parseMoneyMaskToNumber(expenseForm.value.trim());
+
+                if (option === 'Outros' && !expenseForm.descriptionDetail.trim()) {
+                  toast({
+                    title: 'Especifique a despesa',
+                    description: 'Ao escolher "Outros", descreva de que despesa se trata.',
+                    variant: 'destructive',
+                  });
+                  return;
+                }
 
                 if (!description) {
                   toast({
@@ -5954,12 +6153,27 @@ export default function Proposals() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="sm:col-span-2 space-y-2">
                   <Label>Descrição *</Label>
-                  <Input
-                    value={expenseForm.description}
-                    onChange={(e) => setExpenseForm((prev) => ({ ...prev, description: e.target.value }))}
-                    placeholder="Ex.: Deslocamento, alimentação, hospedagem..."
-                    data-testid="input-expense-description"
-                  />
+                  <Select
+                    value={expenseForm.description || undefined}
+                    onValueChange={(value) =>
+                      setExpenseForm((prev) => ({
+                        ...prev,
+                        description: value,
+                        descriptionDetail: value === 'Outros' ? prev.descriptionDetail : '',
+                      }))
+                    }
+                  >
+                    <SelectTrigger data-testid="select-expense-description">
+                      <SelectValue placeholder="Selecione o tipo de despesa" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {expenseDescriptionOptions.map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label>Valor *</Label>
@@ -5985,6 +6199,25 @@ export default function Proposals() {
                 </div>
               </div>
 
+              {expenseForm.description === 'Outros' ? (
+                <div className="space-y-2">
+                  <Label htmlFor="expense-description-detail">Especifique *</Label>
+                  <Input
+                    id="expense-description-detail"
+                    value={expenseForm.descriptionDetail}
+                    onChange={(e) =>
+                      setExpenseForm((prev) => ({ ...prev, descriptionDetail: e.target.value }))
+                    }
+                    placeholder="Ex.: ART, taxa de cartório, seguro de equipamento..."
+                    maxLength={120}
+                    data-testid="input-expense-description-detail"
+                    className={cn(!expenseForm.descriptionDetail.trim() && 'border-destructive')}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Será gravado como "Outros — sua descrição".
+                  </p>
+                </div>
+              ) : null}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
@@ -6005,7 +6238,7 @@ export default function Proposals() {
                       variant="outline"
                       className={destructiveCancelButtonClassName}
                       onClick={() => {
-                        setExpenseForm({ description: '', value: '', reimbursable: false });
+                        setExpenseForm({ description: '', descriptionDetail: '', value: '', reimbursable: false });
                         setEditingExpenseId(null);
                         setEditingExpenseInitial(null);
                       }}
@@ -6094,8 +6327,10 @@ export default function Proposals() {
                                     value: typeof item.value === 'number' ? item.value : Number(item.value),
                                     reimbursable: Boolean(item.reimbursable),
                                   });
+                                  const parsed = splitExpenseDescription(item.description);
                                   setExpenseForm({
-                                    description: item.description,
+                                    description: parsed.option,
+                                    descriptionDetail: parsed.detail,
                                     value: formatMoneyFromValue(item.value),
                                     reimbursable: Boolean(item.reimbursable),
                                   });
@@ -6220,20 +6455,10 @@ export default function Proposals() {
               <DialogDescription>{additivesProposal?.title}</DialogDescription>
             </DialogHeader>
 
-            {additivesProposal?.proposalOrigin || additivesProposal?.umbrellaRef ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                {additivesProposal?.proposalOrigin ? (
-                  <div className="text-muted-foreground">
-                    Cód. proposta antigo:{' '}
-                    <span className="text-foreground font-medium">{additivesProposal.proposalOrigin}</span>
-                  </div>
-                ) : null}
-                {additivesProposal?.umbrellaRef ? (
-                  <div className="text-muted-foreground">
-                    Proposta original (guarda-chuva):{' '}
-                    <span className="text-foreground font-medium">{additivesProposal.umbrellaRef}</span>
-                  </div>
-                ) : null}
+            {additivesProposal?.umbrellaRef ? (
+              <div className="text-sm text-muted-foreground">
+                Proposta original (guarda-chuva):{' '}
+                <span className="text-foreground font-medium">{additivesProposal.umbrellaRef}</span>
               </div>
             ) : null}
 
@@ -6597,7 +6822,7 @@ export default function Proposals() {
             <DialogHeader>
               <DialogTitle>Editar Proposta - {selectedProposal?.code}</DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleEditSubmit} className="space-y-4">
+            <form onSubmit={handleEditSubmit} className="min-w-0 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Código da proposta</Label>
@@ -6636,7 +6861,7 @@ export default function Proposals() {
               </div>
 
               {editFormData.type === 'service_order' && (
-                <div className="space-y-2">
+                <div className="min-w-0 space-y-2">
                   <Label>Proposta original (guarda-chuva) *</Label>
                   <Popover open={editUmbrellaComboOpen} onOpenChange={setEditUmbrellaComboOpen}>
                     <PopoverTrigger asChild>
@@ -6651,7 +6876,7 @@ export default function Proposals() {
                           shouldShowEditError('umbrellaRef') && 'border-destructive'
                         )}
                       >
-                        <span className="truncate text-left">
+                        <span className="min-w-0 truncate text-left">
                           {umbrellaProposalOptions.find((option) => option.code === editFormData.umbrellaRef)?.label || 'Selecione'}
                         </span>
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
@@ -6669,7 +6894,11 @@ export default function Proposals() {
                                 value={option.label}
                                 onSelect={() => {
                                   setEditTouched((prev) => ({ ...prev, umbrellaRef: true }));
-                                  setEditFormData({ ...editFormData, umbrellaRef: option.code });
+                                  setEditFormData({
+                                    ...editFormData,
+                                    umbrellaRef: option.code,
+                                    clientId: option.clientId || editFormData.clientId,
+                                  });
                                   setEditUmbrellaComboOpen(false);
                                 }}
                               >
@@ -6770,9 +6999,14 @@ export default function Proposals() {
                   <Input 
                     type="date"
                     data-testid="input-edit-proposal-request-date"
+                    max={todayForDateInput()}
                     value={editFormData.createdAt}
                     onChange={(e) => setEditFormData({ ...editFormData, createdAt: e.target.value })}
+                    className={cn(shouldShowEditError('createdAt') && 'border-destructive')}
                   />
+                  {shouldShowEditError('createdAt') && (
+                    <p className="text-xs text-destructive">{editValidationErrors.createdAt}</p>
+                  )}
                 </div>
               </div>
 
@@ -6965,24 +7199,6 @@ export default function Proposals() {
                     />
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Quem será o coordenador do projeto?</Label>
-                  <Select
-                    value={editFormData.coordinatorId || undefined}
-                    onValueChange={(value) => setEditFormData({ ...editFormData, coordinatorId: value })}
-                  >
-                    <SelectTrigger data-testid="select-edit-proposal-project-coordinator">
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {activeProjectCoordinators.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
               </div>
 
               <div className="space-y-4">
@@ -7000,16 +7216,6 @@ export default function Proposals() {
                     onMouseUp={(e) => persistObservationTextareaSize(e.currentTarget)}
                     onPointerUp={(e) => persistObservationTextareaSize(e.currentTarget)}
                     onBlur={(e) => persistObservationTextareaSize(e.currentTarget)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-proposalOrigin">Código da proposta antigo</Label>
-                  <Input
-                    id="edit-proposalOrigin"
-                    data-testid="input-edit-proposal-origin"
-                    value={editFormData.proposalOrigin}
-                    onChange={(e) => setEditFormData({ ...editFormData, proposalOrigin: e.target.value })}
-                    placeholder=""
                   />
                 </div>
               </div>

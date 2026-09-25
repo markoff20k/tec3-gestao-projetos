@@ -65,6 +65,7 @@ import {
 } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { normalizeTapLogo } from '@/lib/tapHtml';
 import { cn } from '@/lib/utils';
 import { projectsApi, clientsApi, usersApi, projectFavoritesApi, Project, Client, ProjectTap, ProjectMember, UserOption, EntityActivity, ProjectHealthRuleInput, ProjectHealthRuleResponse } from '@/lib/api';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
@@ -105,16 +106,14 @@ const tapStatusLabels: Record<string, string> = {
   failed: 'Falha no envio',
 };
 
-const PROJECT_TAP_PUBLIC_LOGO_URL = 'https://www.tec3engenharia.com.br/wp-content/uploads/2025/09/tec3-LogoTagline-Cor.svg';
 
 function normalizeProjectTapHtml(htmlContent: string | null | undefined) {
   if (!htmlContent) return '';
 
-  return htmlContent
-    .replace(
-      /src=(["'])(?:https?:\/\/[^"']*\/assets\/tec3-logo\.svg|\/assets\/tec3-logo\.svg)\1/gi,
-      `src=$1${PROJECT_TAP_PUBLIC_LOGO_URL}$1`
-    )
+  // O ajuste do logo é compartilhado com a tela de propostas: o regex antigo
+  // só pegava /assets/tec3-logo.svg e deixava passar o endereço interno do
+  // servidor, que quebra a imagem no navegador do usuário.
+  return normalizeTapLogo(htmlContent)
     .replace(
       /<a\b[^>]*>[\s\S]*?abrir\s+projeto\s+no\s+sistema[\s\S]*?<\/a>/gi,
       ''

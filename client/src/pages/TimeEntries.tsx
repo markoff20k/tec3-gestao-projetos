@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -10,6 +11,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Star,
   Trash2,
   Upload,
   X,
@@ -54,22 +56,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { useUpload } from '@/hooks/use-upload';
-import { costCentersApi, CostCenter, projectsApi, Project, TimeEntry, TimeEntryAttachment } from '@/lib/api';
+import { costCentersApi, CostCenter, projectFavoritesApi, projectsApi, Project, TimeEntry, TimeEntryAttachment } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const statusLabels: Record<string, string> = {
@@ -129,6 +122,31 @@ function persistViewMode(mode: ViewMode) {
     localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
   } catch {
     // Preferência é conveniência: falhar ao gravar não pode impedir a troca de visão.
+  }
+}
+
+const COLLAPSED_PROJECTS_STORAGE_KEY = 'timeEntriesCollapsedProjects';
+
+// Guardamos os projetos RECOLHIDOS, não os expandidos: o padrão é vir expandido,
+// e assim um projeto novo aparece aberto sem precisar existir na preferência.
+function readStoredCollapsedProjects(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_PROJECTS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return {};
+    return Object.fromEntries(parsed.filter((id) => typeof id === 'string').map((id) => [id, true]));
+  } catch {
+    return {};
+  }
+}
+
+function persistCollapsedProjects(collapsed: Record<string, boolean>) {
+  try {
+    const ids = Object.entries(collapsed).filter(([, isCollapsed]) => isCollapsed).map(([id]) => id);
+    localStorage.setItem(COLLAPSED_PROJECTS_STORAGE_KEY, JSON.stringify(ids));
+  } catch {
+    // Preferência é conveniência: falhar ao gravar não pode travar a tela.
   }
 }
 
@@ -243,7 +261,8 @@ export default function TimeEntries() {
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
   const [searchQuery, setSearchQuery] = useState('');
-  const [extraRows, setExtraRows] = useState<Record<string, string[]>>({});
+  const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
+  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(readStoredCollapsedProjects);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [savingCells, setSavingCells] = useState<Record<string, boolean>>({});
   const [savedCells, setSavedCells] = useState<Record<string, boolean>>({});
@@ -301,6 +320,23 @@ export default function TimeEntries() {
     queryFn: () => projectsApi.getMyTimeEntries(startKey, endKey),
   });
 
+  const { data: favoriteProjectIds = [] } = useQuery<string[]>({
+    queryKey: ['/api/project-favorites'],
+    queryFn: () => projectFavoritesApi.getAll(),
+  });
+
+  const favoriteProjectsSet = useMemo(() => new Set(favoriteProjectIds), [favoriteProjectIds]);
+
+  const toggleFavoriteMutation = useMutation({
+    mutationFn: async ({ projectId, isFavorite }: { projectId: string; isFavorite: boolean }) =>
+      isFavorite ? projectFavoritesApi.remove(projectId) : projectFavoritesApi.add(projectId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/project-favorites'] });
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao atualizar favoritos', description: error.message, variant: 'destructive' });
+    },
+  });
   const launchableProjects = useMemo(
     () =>
       projects.filter(
@@ -333,11 +369,22 @@ export default function TimeEntries() {
 
   const filteredProjects = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return launchableProjects;
-    return launchableProjects.filter((project) =>
-      `${project.code} ${project.name}`.toLowerCase().includes(query)
-    );
-  }, [launchableProjects, searchQuery]);
+
+    const matching = launchableProjects.filter((project) => {
+      if (showOnlyFavorites && !favoriteProjectsSet.has(project.id)) return false;
+      if (!query) return true;
+      return `${project.code} ${project.name}`.toLowerCase().includes(query);
+    });
+
+    // Favoritos primeiro: quem aponta horas todo dia repete os mesmos projetos,
+    // e rolar a grade atrás deles é o atrito que o favorito existe para remover.
+    return [...matching].sort((a, b) => {
+      const favA = favoriteProjectsSet.has(a.id) ? 0 : 1;
+      const favB = favoriteProjectsSet.has(b.id) ? 0 : 1;
+      if (favA !== favB) return favA - favB;
+      return (a.code || '').localeCompare(b.code || '', 'pt-BR', { sensitivity: 'base' });
+    });
+  }, [launchableProjects, searchQuery, showOnlyFavorites, favoriteProjectsSet]);
 
   const entriesByCell = useMemo(() => {
     const map = new Map<string, TimeEntry[]>();
@@ -369,11 +416,16 @@ export default function TimeEntries() {
       // o apontamento normalmente cai, e evita cair na linha "Sem centro de custo".
       if (project.costCenter) rows.push(project.costCenter.id);
 
-      for (const costCenterId of costCentersWithEntries.get(project.id) ?? []) {
-        if (!rows.includes(costCenterId)) rows.push(costCenterId);
+      // Os administrativos (férias, feriado, licença, treinamento...) ficam sempre
+      // disponíveis dentro de cada projeto: são horas que o colaborador precisa
+      // apontar no dia a dia, não algo que ele deva acrescentar à grade antes.
+      for (const costCenter of administrativeCostCenters) {
+        if (!rows.includes(costCenter.id)) rows.push(costCenter.id);
       }
 
-      for (const costCenterId of extraRows[project.id] ?? []) {
+      // Lançamentos antigos podem apontar para centros de custo fora das listas
+      // acima (inativados, ou a linha "sem centro de custo" do legado).
+      for (const costCenterId of costCentersWithEntries.get(project.id) ?? []) {
         if (!rows.includes(costCenterId)) rows.push(costCenterId);
       }
 
@@ -385,7 +437,7 @@ export default function TimeEntries() {
     }
 
     return map;
-  }, [periodEntries, filteredProjects, extraRows]);
+  }, [periodEntries, filteredProjects, administrativeCostCenters]);
 
   const getCellEntries = (projectId: string, costCenterId: string, dayKey: string) =>
     entriesByCell.get(cellKeyOf(projectId, costCenterId, dayKey)) ?? [];
@@ -558,13 +610,18 @@ export default function TimeEntries() {
     }
   };
 
-  const addCostCenterRow = (projectId: string, costCenterId: string) => {
-    setExtraRows((current) => {
-      const rows = current[projectId] ?? [];
-      if (rows.includes(costCenterId)) return current;
-      return { ...current, [projectId]: [...rows, costCenterId] };
+  const isProjectExpanded = (projectId: string) => !collapsedProjects[projectId];
+
+  const toggleProjectExpanded = (projectId: string) => {
+    setCollapsedProjects((current) => {
+      const next = { ...current };
+      if (next[projectId]) delete next[projectId];
+      else next[projectId] = true;
+      persistCollapsedProjects(next);
+      return next;
     });
   };
+
 
   const detailProject = useMemo(
     () => launchableProjects.find((project) => project.id === detailContext?.projectId) ?? null,
@@ -736,15 +793,15 @@ export default function TimeEntries() {
 
   return (
     <Layout>
-      <div className="space-y-5">
-        <div>
+      <div className="flex h-[calc(100vh-6rem)] flex-col gap-5 lg:h-[calc(100vh-7rem)]">
+        <div className="shrink-0">
           <h1 className="text-2xl font-semibold">Lançamento de Horas</h1>
           <p className="text-muted-foreground">
             Aponte as horas direto na grade: escolha o período, digite em cada dia e use Tab para avançar.
           </p>
         </div>
 
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-lg border border-border bg-muted/30 p-0.5">
               {(Object.keys(viewModeLabels) as ViewMode[]).map((mode) => (
@@ -804,7 +861,26 @@ export default function TimeEntries() {
             </div>
           </div>
 
-          <div className="relative w-full max-w-xs">
+          <div className="flex w-full max-w-md items-center gap-2">
+            <Button
+              type="button"
+              variant={showOnlyFavorites ? 'default' : 'outline'}
+              size="sm"
+              className="h-9 shrink-0"
+              onClick={() => setShowOnlyFavorites((current) => !current)}
+              aria-pressed={showOnlyFavorites}
+              data-testid="button-filter-favorites"
+            >
+              <Star
+                className={cn(
+                  'mr-1 h-4 w-4',
+                  showOnlyFavorites ? 'fill-current' : 'text-muted-foreground'
+                )}
+              />
+              Favoritos
+            </Button>
+
+            <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={searchQuery}
@@ -813,6 +889,7 @@ export default function TimeEntries() {
               className="h-9 pl-9"
               data-testid="input-search-project"
             />
+            </div>
           </div>
         </div>
 
@@ -828,16 +905,18 @@ export default function TimeEntries() {
             <CardContent className="p-6 text-center text-muted-foreground">
               {launchableProjects.length === 0
                 ? 'Você não está alocado em nenhum projeto ativo. Procure o coordenador do projeto para ser incluído na equipe.'
-                : 'Nenhum projeto encontrado para este filtro.'}
+                : showOnlyFavorites && favoriteProjectsSet.size === 0
+                  ? 'Você ainda não marcou nenhum projeto como favorito. Use a estrela no cabeçalho do projeto.'
+                  : 'Nenhum projeto encontrado para este filtro.'}
             </CardContent>
           </Card>
         ) : (
-          <Card className="overflow-hidden">
-            <div className="overflow-x-auto">
+          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-auto">
               <table className="w-full border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-border bg-muted/40">
-                    <th className="sticky left-0 z-20 min-w-[320px] bg-muted/40 px-3 py-2 text-left align-bottom text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-b border-border">
+                    <th className="sticky left-0 top-0 z-40 min-w-[320px] bg-muted px-3 py-2 text-left align-bottom text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       Projeto / Centro de custo
                     </th>
                     {days.map((day) => {
@@ -847,8 +926,8 @@ export default function TimeEntries() {
                           key={dateKey(day)}
                           className={cn(
                             dayColumnWidth,
-                            'border-l border-border px-1 py-1.5 text-center align-middle',
-                            isWeekend(day) && 'bg-muted/60',
+                            'sticky top-0 z-30 border-l border-border bg-muted px-1 py-1.5 text-center align-middle',
+                            isWeekend(day) && 'bg-muted',
                             isCurrentDay && 'bg-primary/10'
                           )}
                         >
@@ -861,7 +940,7 @@ export default function TimeEntries() {
                         </th>
                       );
                     })}
-                    <th className="w-20 border-l border-border bg-muted/40 px-2 py-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    <th className="sticky top-0 z-30 w-20 border-l border-border bg-muted px-2 py-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       Total
                     </th>
                   </tr>
@@ -870,14 +949,50 @@ export default function TimeEntries() {
                 <tbody>
                   {filteredProjects.map((project) => {
                     const rows = costCenterRowsByProject.get(project.id) ?? [NO_COST_CENTER];
-                    const usedCostCenters = new Set(rows);
+                    const isExpanded = isProjectExpanded(project.id);
 
                     return (
                       <Fragment key={project.id}>
                         <tr className="border-b border-border bg-primary/10">
                           <td className="sticky left-0 z-10 bg-card px-3 py-2 text-left">
                             <div className="flex items-center justify-between gap-2 rounded-md bg-primary/10 px-2 py-1">
-                              <div className="min-w-0">
+                              <button
+                                type="button"
+                                className="shrink-0 rounded p-0.5 hover:bg-primary/10"
+                                onClick={() =>
+                                  toggleFavoriteMutation.mutate({
+                                    projectId: project.id,
+                                    isFavorite: favoriteProjectsSet.has(project.id),
+                                  })
+                                }
+                                title={
+                                  favoriteProjectsSet.has(project.id)
+                                    ? 'Remover dos favoritos'
+                                    : 'Adicionar aos favoritos'
+                                }
+                                aria-label={
+                                  favoriteProjectsSet.has(project.id)
+                                    ? `Remover ${project.code} dos favoritos`
+                                    : `Adicionar ${project.code} aos favoritos`
+                                }
+                                aria-pressed={favoriteProjectsSet.has(project.id)}
+                                data-testid={`button-toggle-favorite-${project.id}`}
+                              >
+                                <Star
+                                  className={cn(
+                                    'h-4 w-4 transition-colors',
+                                    favoriteProjectsSet.has(project.id)
+                                      ? 'fill-yellow-400 text-yellow-400'
+                                      : 'text-muted-foreground hover:text-yellow-400'
+                                  )}
+                                />
+                              </button>
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 text-left"
+                                onClick={() => toggleProjectExpanded(project.id)}
+                                aria-expanded={isExpanded}
+                              >
                                 <p className="truncate text-sm font-semibold text-foreground">
                                   {project.code} · {project.name}
                                 </p>
@@ -886,47 +1001,30 @@ export default function TimeEntries() {
                                     Limite diário: {project.dailyLimitHours}h
                                   </p>
                                 ) : null}
-                              </div>
+                              </button>
 
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 shrink-0"
-                                    data-testid={`button-add-cost-center-row-${project.id}`}
-                                  >
-                                    <Plus className="h-3.5 w-3.5" />
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent align="end" className="w-72 p-0">
-                                  <Command>
-                                    <CommandInput placeholder="Buscar centro de custo..." />
-                                    <CommandList>
-                                      <CommandEmpty>Nenhum centro de custo disponível.</CommandEmpty>
-                                      <CommandGroup>
-                                        {getSelectableCostCenters(project)
-                                          .filter((costCenter) => !usedCostCenters.has(costCenter.id))
-                                          .map((costCenter) => (
-                                            <CommandItem
-                                              key={costCenter.id}
-                                              value={`${costCenter.code} ${costCenter.name}`}
-                                              onSelect={() => addCostCenterRow(project.id, costCenter.id)}
-                                            >
-                                              {costCenter.code} · {costCenter.name}
-                                              {costCenter.projectId ? (
-                                                <span className="ml-auto text-[10px] text-muted-foreground">
-                                                  do projeto
-                                                </span>
-                                              ) : null}
-                                            </CommandItem>
-                                          ))}
-                                      </CommandGroup>
-                                    </CommandList>
-                                  </Command>
-                                </PopoverContent>
-                              </Popover>
+                              {/* Único controle do cabeçalho, à direita e com moldura:
+                                  é a ação que governa a linha inteira. */}
+                              <button
+                                type="button"
+                                className="ml-auto inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-background/70 text-foreground transition-colors hover:bg-background"
+                                onClick={() => toggleProjectExpanded(project.id)}
+                                aria-expanded={isExpanded}
+                                title={isExpanded ? 'Recolher projeto' : 'Expandir projeto'}
+                                aria-label={
+                                  isExpanded
+                                    ? `Recolher ${project.code}`
+                                    : `Expandir ${project.code}`
+                                }
+                                data-testid={`button-toggle-project-${project.id}`}
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown className="h-4 w-4" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4" />
+                                )}
+                              </button>
+
                             </div>
                           </td>
 
@@ -946,13 +1044,14 @@ export default function TimeEntries() {
                                   exceedsLimit ? 'text-destructive' : 'text-muted-foreground'
                                 )}
                               >
-                                {projectDayHours > 0 ? formatHours(projectDayHours) : ''}
+                                {!isExpanded && projectDayHours > 0 ? formatHours(projectDayHours) : ''}
                               </td>
                             );
                           })}
 
                           <td className="border-l border-border px-2 py-1 text-center text-xs font-semibold">
                             {(() => {
+                              if (isExpanded) return '';
                               const total = days.reduce(
                                 (sum, day) => sum + getProjectDayHours(project.id, dateKey(day)),
                                 0
@@ -962,7 +1061,7 @@ export default function TimeEntries() {
                           </td>
                         </tr>
 
-                        {rows.map((costCenterId) => {
+                        {isExpanded && rows.map((costCenterId) => {
                           const costCenter = costCenterId === NO_COST_CENTER ? null : costCenterById.get(costCenterId);
                           const rowTotal = days.reduce(
                             (sum, day) => sum + getCellHours(project.id, costCenterId, dateKey(day)),
@@ -977,7 +1076,15 @@ export default function TimeEntries() {
                               <td className="sticky left-0 z-10 bg-[hsl(var(--card))] px-3 py-1.5">
                                 <div className="truncate pl-4 text-xs text-foreground">
                                   {costCenter ? (
-                                    `${costCenter.code} · ${costCenter.name}`
+                                    // O centro de custo próprio do projeto é criado com o mesmo
+                                    // código e nome do projeto, então repetir o rótulo aqui
+                                    // duplicaria o cabeçalho logo acima. Essa linha é o destino
+                                    // padrão das horas, e é isso que o nome precisa dizer.
+                                    costCenter.id === project.costCenter?.id ? (
+                                      <span>Horas do projeto</span>
+                                    ) : (
+                                      `${costCenter.code} · ${costCenter.name}`
+                                    )
                                   ) : (
                                     <span className="text-muted-foreground">
                                       Sem centro de custo{' '}
@@ -1099,14 +1206,58 @@ export default function TimeEntries() {
                             </tr>
                           );
                         })}
+
+                        {/* Subtotal fecha o grupo: some as linhas do projeto por dia,
+                            marcando em vermelho o dia que estourou o limite diário. */}
+                        {isExpanded ? (
+                          <tr className="border-b-2 border-border bg-muted/30">
+                            <td className="sticky left-0 z-10 bg-card px-3 py-1.5">
+                              <div className="pl-4 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                Subtotal do projeto
+                              </div>
+                            </td>
+
+                            {days.map((day) => {
+                              const dayKey = dateKey(day);
+                              const projectDayHours = getProjectDayHours(project.id, dayKey);
+                              const exceedsLimit = Boolean(
+                                project.dailyLimitHours && projectDayHours > project.dailyLimitHours
+                              );
+
+                              return (
+                                <td
+                                  key={`subtotal-${project.id}-${dayKey}`}
+                                  className={cn(
+                                    'border-l border-border px-1 py-1.5 text-center text-xs font-semibold',
+                                    isWeekend(day) && 'bg-muted/30',
+                                    exceedsLimit ? 'text-destructive' : 'text-foreground'
+                                  )}
+                                  title={exceedsLimit ? `Acima do limite diário de ${project.dailyLimitHours}h` : undefined}
+                                >
+                                  {projectDayHours > 0 ? formatHours(projectDayHours) : ''}
+                                </td>
+                              );
+                            })}
+
+                            <td className="border-l border-border px-2 py-1.5 text-center text-xs font-bold">
+                              {(() => {
+                                const total = days.reduce(
+                                  (sum, day) => sum + getProjectDayHours(project.id, dateKey(day)),
+                                  0
+                                );
+                                return total > 0 ? formatHours(total) : '';
+                              })()}
+                            </td>
+                          </tr>
+                        ) : null}
                       </Fragment>
                     );
                   })}
                 </tbody>
 
                 <tfoot>
-                  <tr className="border-t-2 border-border bg-muted/40">
-                    <td className="sticky left-0 z-10 bg-muted/40 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-t-2 border-border">
+                    <td className="sticky bottom-0 left-0 z-40 bg-muted px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       Total (horas)
                     </td>
                     {days.map((day) => {
@@ -1116,15 +1267,14 @@ export default function TimeEntries() {
                         <td
                           key={`total-${dayKey}`}
                           className={cn(
-                            'border-l border-border px-1 py-2 text-center text-xs font-semibold',
-                            isWeekend(day) && 'bg-muted/60'
+                            'sticky bottom-0 z-30 border-l border-border bg-muted px-1 py-2 text-center text-xs font-semibold'
                           )}
                         >
                           {total > 0 ? formatHours(total) : ''}
                         </td>
                       );
                     })}
-                    <td className="border-l border-border px-2 py-2 text-center text-sm font-bold">
+                    <td className="sticky bottom-0 z-30 border-l border-border bg-muted px-2 py-2 text-center text-sm font-bold">
                       {periodTotal > 0 ? formatHours(periodTotal) : '0'}
                     </td>
                   </tr>
@@ -1132,7 +1282,7 @@ export default function TimeEntries() {
               </table>
             </div>
 
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
                 Aguardando aprovação do coordenador
