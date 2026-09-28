@@ -70,6 +70,7 @@ import {
 } from '@/components/ui/tooltip';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/use-permissions';
 import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, projectsApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse, ProposalTapDraft, ProposalTapAttachment, Project, EntityActivity } from '@/lib/api';
 import { MultiSelectFilter } from '@/components/MultiSelectFilter';
 import { normalizeTapLogo } from '@/lib/tapHtml';
@@ -656,6 +657,9 @@ export default function Proposals() {
   const [location, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { can } = usePermissions();
+  // Emitir o TAP cria o projeto e fixa o coordenador: escritório de projetos e admin.
+  const canGenerateTap = can('proposals.tap');
 
   const getUserStorageKey = useCallback((baseKey: string) => {
     try {
@@ -2286,6 +2290,9 @@ export default function Proposals() {
   });
   const tapGenerateDisabledReason = useMemo(() => {
     if (tapReadOnly) return null;
+    // Antes das validações de preenchimento: não faz sentido cobrar campos de
+    // quem não poderia emitir o documento de qualquer forma.
+    if (!canGenerateTap) return 'Somente o escritório de projetos ou um administrador pode gerar o TAP.';
     if (generateTapMutation.isPending) return 'Gerando TAP...';
     if (isUploadingTapAttachment) return 'Aguarde o término do upload dos anexos.';
     if (tapIsAdditive) {

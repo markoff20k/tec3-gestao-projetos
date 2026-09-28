@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, UserPlus, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info, Star, ArrowUpDown, ArrowUp, ArrowDown, Flag, AlertTriangle, Lock } from 'lucide-react';
+import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, UserPlus, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info, Star, ArrowUpDown, ArrowUp, ArrowDown, Flag, AlertTriangle, Lock, Pencil } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -65,6 +65,7 @@ import {
 } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissions } from '@/hooks/use-permissions';
 import { normalizeTapLogo } from '@/lib/tapHtml';
 import { cn } from '@/lib/utils';
 import { projectsApi, clientsApi, usersApi, activitiesApi, projectFavoritesApi, Activity, Project, Client, ProjectTap, ProjectMember, ProjectActivity, UserOption, EntityActivity, ProjectHealthRuleInput, ProjectHealthRuleResponse } from '@/lib/api';
@@ -196,6 +197,7 @@ export default function Projects() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { can } = usePermissions();
   const [location, setLocation] = useLocation();
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
@@ -225,6 +227,8 @@ export default function Projects() {
   // Destino da troca de status; diferente de null abre o dialogo de confirmacao.
   const [statusChangeTarget, setStatusChangeTarget] = useState<string | null>(null);
   const [closeConfirmProjectInput, setCloseConfirmProjectInput] = useState('');
+  // null = não está editando; string = rascunho em edição.
+  const [descriptionDraft, setDescriptionDraft] = useState<string | null>(null);
   const [tapPreviewOpen, setTapPreviewOpen] = useState(false);
   const [tapDetailsOpen, setTapDetailsOpen] = useState(false);
   const [detailsInitialSection, setDetailsInitialSection] = useState<'overview' | 'config' | 'team'>('overview');
@@ -666,6 +670,20 @@ export default function Projects() {
     },
   });
 
+  const updateDescriptionMutation = useMutation({
+    mutationFn: (description: string) =>
+      projectsApi.updateDescription(selectedProjectId as string, description),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId] });
+      setDescriptionDraft(null);
+      toast({ title: 'Descrição atualizada', variant: 'success' });
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao salvar a descrição', description: error.message, variant: 'destructive' });
+    },
+  });
+
   const changeStatusMutation = useMutation({
     mutationFn: (status: string) => projectsApi.changeStatus(selectedProjectId as string, status),
     onSuccess: (_project, status) => {
@@ -887,6 +905,12 @@ export default function Projects() {
 
   // Reabrir um projeto encerrado e exclusivo do admin; o resto segue a mesma
   // regra do setup, da equipe e das atividades.
+  // Regra combinada com o cliente: engenharia de projetos (pela permissão de
+  // grupo), o coordenador do próprio projeto e o administrador.
+  const canEditDescription = Boolean(
+    selectedProject && (isAdmin || isCoordinatorOfSelectedProject || can('projects.description'))
+  );
+
   const canChangeStatus = Boolean(
     selectedProject && (isProjectClosed ? isAdmin : canManageTeamAllocation)
   );
@@ -976,7 +1000,13 @@ export default function Projects() {
     )
   );
 
-  const canEditSetupCoordinator = canEditSetup && !isTapReadyEffective;
+  // Antes do TAP, quem edita o setup define o coordenador. Depois do TAP o campo
+  // trava, porque o documento emitido nomeia essa pessoa — só o escritório de
+  // projetos e o administrador seguem podendo trocar.
+  const canChangeCoordinatorAfterTap = isAdmin || can('projects.coordinator');
+  const canEditSetupCoordinator = canEditSetup && (!isTapReadyEffective || canChangeCoordinatorAfterTap);
+  const isChangingCoordinatorAfterTap =
+    isTapReadyEffective && normalizedFormCoordinatorId !== normalizedCurrentCoordinatorId;
 
   const isLegacyOnboardingInferred = Boolean(
     selectedProject && selectedProject.setupStatus !== 'completed' && isProjectExecutionStarted
@@ -2380,11 +2410,23 @@ export default function Projects() {
                                 ))}
                               </SelectContent>
                             </Select>
-                            {isTapReadyEffective && (
+                            {isTapReadyEffective && !canEditSetupCoordinator ? (
                               <p className="text-xs text-muted-foreground">
-                                Definido na geração do TAP e não pode ser alterado.
+                                Definido na geração do TAP. Somente o escritório de projetos ou um
+                                administrador pode alterá-lo.
                               </p>
-                            )}
+                            ) : null}
+
+                            {isChangingCoordinatorAfterTap ? (
+                              // A troca é permitida, mas o TAP emitido continua nomeando quem saiu:
+                              // melhor dizer isso na hora da edição do que descobrir depois no PDF.
+                              <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-200">
+                                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                O TAP já emitido continua nomeando{' '}
+                                <strong>{selectedProject.coordinator?.name || 'o coordenador anterior'}</strong>. A
+                                troca fica registrada no log de atividades.
+                              </p>
+                            ) : null}
                           </div>
 
                           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -3085,9 +3127,69 @@ export default function Projects() {
                   </div>
                 )}
 
-                <div className="space-y-1">
-                  <p className="text-muted-foreground text-sm">Descrição</p>
-                  <p className="font-medium whitespace-pre-wrap">{selectedProject.description || '-'}</p>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-muted-foreground text-sm">Descrição</p>
+                    {canEditDescription && descriptionDraft === null ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setDescriptionDraft(selectedProject.description ?? '')}
+                        data-testid="button-edit-project-description"
+                      >
+                        <Pencil className="mr-1 h-3.5 w-3.5" />
+                        Editar
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  {descriptionDraft === null ? (
+                    <p className="font-medium whitespace-pre-wrap">
+                      {selectedProject.description || 'Sem descrição.'}
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      <Textarea
+                        value={descriptionDraft}
+                        onChange={(event) => setDescriptionDraft(event.target.value)}
+                        rows={6}
+                        maxLength={5000}
+                        placeholder="Descreva o escopo, o contexto e o que for relevante para a equipe."
+                        disabled={updateDescriptionMutation.isPending}
+                        data-testid="input-project-description"
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[11px] text-muted-foreground">
+                          {descriptionDraft.length}/5000 caracteres
+                        </span>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setDescriptionDraft(null)}
+                            disabled={updateDescriptionMutation.isPending}
+                          >
+                            Cancelar
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => updateDescriptionMutation.mutate(descriptionDraft)}
+                            disabled={
+                              updateDescriptionMutation.isPending ||
+                              descriptionDraft.trim() === (selectedProject.description ?? '').trim()
+                            }
+                            data-testid="button-save-project-description"
+                          >
+                            {updateDescriptionMutation.isPending ? 'Salvando...' : 'Salvar descrição'}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">

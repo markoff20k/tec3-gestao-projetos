@@ -24,6 +24,8 @@ model User {
   professionalCategory   ProposalCategory? @relation(fields: [professionalCategoryId], references: [id])
   emailGroup        String?  @map("email_group")
   receivesEmails    Boolean  @default(true) @map("receives_emails")
+  /** DNs dos grupos do diretório, gravados a cada login via LDAP. */
+  directoryGroups   String[] @default([]) @map("directory_groups")
   photoUrl         String?  @map("photo_url")
   photoData        Bytes?   @map("photo_data")
   photoMimeType    String?  @map("photo_mime_type")
@@ -456,4 +458,25 @@ model ProposalFavorite {
 
   @@unique([userId, proposalId])
   @@map("proposal_favorites")
+}
+
+/// Grupo do diretório (AD) com o conjunto de permissões que ele concede.
+/// A permissão de um usuário é a união das permissões de todos os grupos em que
+/// ele está — por isso um grupo a mais nunca tira acesso, só acrescenta.
+model AccessGroup {
+  id          String   @id @default(uuid())
+  /// Identificador estável, normalmente o CN do grupo (GG-APP-GESTAO-COORD).
+  key         String   @unique
+  name        String
+  description String?
+  /// DN completo no diretório. É por ele que o login casa o memberOf.
+  directoryDn String?  @unique @map("directory_dn")
+  isActive    Boolean  @default(true) @map("is_active")
+  /// Chaves do catálogo de permissões concedidas por este grupo.
+  permissions String[] @default([])
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime? @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@map("access_groups")
 }

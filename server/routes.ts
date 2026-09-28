@@ -11,6 +11,7 @@ import fs from "fs";
 import puppeteer from "puppeteer-core";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 import { authenticateViaLdap, listAdDirectoryUsers } from "./ldap";
+import { PERMISSION_CATALOG, resolvePermissionsForGroups, sanitizePermissions } from "./permissions.ts";
 
 const PROJECT_SETUP_STATUS = {
   PENDING: 'pending',
@@ -623,6 +624,27 @@ function calculateDeltaPercent(current: number, previous: number): number {
 
 function isRole(value: unknown): value is Role {
   return typeof value === 'string' && (ROLES as readonly string[]).includes(value);
+}
+
+/**
+ * Exige uma permissão concedida por algum grupo do diretório.
+ *
+ * Convive com requireRoles em vez de substituí-lo de uma vez: enquanto os grupos
+ * do AD não estiverem povoados, derrubar o controle por perfil trancaria todo
+ * mundo para fora. Admin continua passando, como em requireRoles.
+ */
+function requirePermission(permission: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if ((req as any).user?.role === 'admin') return next();
+
+    const permissions: Set<string> | undefined = (req as any).permissions;
+    if (permissions?.has(permission)) return next();
+
+    return res.status(403).json({
+      message: 'Seu grupo de acesso não permite esta ação',
+      ...(process.env.NODE_ENV !== 'production' ? { required: permission } : {}),
+    });
+  };
 }
 
 function requireRoles(allowed: Role[]) {
@@ -1743,11 +1765,20 @@ async function authenticateToken(req: Request, res: Response, next: NextFunction
       return res.status(403).json({ message: 'Perfil inválido' });
     }
 
+    // Permissões vêm dos grupos gravados no último login, resolvidas a cada
+    // requisição — assim um ajuste na matriz vale imediatamente, sem exigir
+    // que a pessoa saia e entre de novo.
+    const { permissions, matchedGroups } = await resolvePermissionsForGroups(
+      (dbUser as any).directoryGroups ?? []
+    );
+
     (req as any).user = {
       sub: dbUser.id,
       email: dbUser.email,
       role: effectiveRole,
     } satisfies JwtPayload;
+    (req as any).permissions = permissions;
+    (req as any).accessGroups = matchedGroups;
 
     next();
   } catch {
@@ -2288,11 +2319,23 @@ export async function registerRoutes(
         const {
           email: ldapEmail,
           name: ldapName,
+          login: ldapLogin,
           role: ldapRole,
           memberSince: ldapMemberSince,
         } = ldapAttempt.profile;
 
         let user = await storage.getUserByEmail(ldapEmail);
+
+        // O diretório identifica a pessoa pelo e-mail corporativo, mas a base
+        // veio do legado com endereços fabricados (rsantos@legacy.tec3.local),
+        // cuja parte local é justamente o login do AD. Sem esta busca, o
+        // primeiro login de 70 das 77 contas do diretório criaria um usuário
+        // novo e deixaria todo o histórico de horas órfão na conta antiga.
+        if (!user && ldapLogin) {
+          const porLogin = await storage.getUserByDirectoryLogin(ldapLogin);
+          if (porLogin) user = porLogin;
+        }
+
         if (!user) {
           user = await storage.createUser({
             email: ldapEmail,
@@ -2309,6 +2352,15 @@ export async function registerRoutes(
               isActive: true,
             } as any)) || user;
         }
+
+        // Os grupos do diretório ficam gravados no usuário: é deles que as
+        // permissões são derivadas a cada requisição, sem precisar consultar o
+        // AD de novo. Mudou o grupo da pessoa no AD? vale no próximo login.
+        // Mudou a permissão do grupo na tela? vale na hora.
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { directoryGroups: Array.isArray(ldapAttempt.profile.groups) ? ldapAttempt.profile.groups : [] },
+        });
 
         await storage.createUserActivity(user.id, {
           category: 'security',
@@ -3488,7 +3540,11 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/proposals/:id/tap/generate', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  // Emitir o TAP é o ato que cria o projeto e fixa o coordenador: fica com o
+  // escritório de projetos e a administração.
+  // Sem requireRoles: quem decide aqui é a permissão do grupo, e a trava por
+  // perfil só barrava o escritório de projetos antes de ela ser consultada.
+  app.post('/api/proposals/:id/tap/generate', authenticateToken, requirePermission('proposals.tap'), async (req, res) => {
     try {
       const proposal = await storage.getProposal(req.params.id);
       if (!proposal) {
@@ -3514,7 +3570,8 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/proposals/:id/tap/resend-email', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  // Reenviar é reemitir o mesmo documento: mesma permissão de gerar.
+  app.post('/api/proposals/:id/tap/resend-email', authenticateToken, requirePermission('proposals.tap'), async (req, res) => {
     const requester = (req as any).user as TokenPayload | undefined;
     if (!requester?.sub) {
       return res.status(401).json({ message: 'Usuário não autenticado' });
@@ -3853,6 +3910,81 @@ export async function registerRoutes(
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Grupos de acesso: a matriz de permissões por grupo do diretório.
+  // ---------------------------------------------------------------------------
+  // O catálogo descreve toda a superfície de permissões do sistema. Não é segredo,
+  // mas também não há motivo para qualquer pessoa autenticada lê-lo: quem precisa
+  // dele é quem edita a matriz.
+  app.get('/api/access-groups/catalog', authenticateToken, requirePermission('admin.accessGroups'), async (_req, res) => {
+    res.json(PERMISSION_CATALOG);
+  });
+
+  app.get('/api/access-groups', authenticateToken, requirePermission('admin.accessGroups'), async (_req, res) => {
+    const groups = await prisma.accessGroup.findMany({ orderBy: { name: 'asc' } });
+    res.json(groups);
+  });
+
+  app.put('/api/access-groups/:id', authenticateToken, requirePermission('admin.accessGroups'), async (req, res) => {
+    const existing = await prisma.accessGroup.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      return res.status(404).json({ message: 'Grupo de acesso nao encontrado' });
+    }
+
+    const updates: Record<string, unknown> = {};
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'permissions')) {
+      // Chave fora do catálogo é descartada em vez de gravada: permissão que
+      // ninguém verifica é pior que permissão ausente, porque parece concedida.
+      updates.permissions = sanitizePermissions(req.body.permissions);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'name')) {
+      const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+      if (!name) return res.status(400).json({ message: 'Informe o nome do grupo' });
+      updates.name = name;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'description')) {
+      const description = typeof req.body.description === 'string' ? req.body.description.trim() : '';
+      updates.description = description || null;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'isActive')) {
+      updates.isActive = Boolean(req.body.isActive);
+    }
+
+    const group = await prisma.accessGroup.update({ where: { id: existing.id }, data: updates as any });
+
+    const actorId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    if (actorId) {
+      await safeCreateUserActivity(req, actorId, {
+        category: 'system',
+        action: 'ACCESS_GROUP_UPDATED',
+        title: `Grupo de acesso atualizado — ${group.name}`,
+        metadata: {
+          accessGroupId: group.id,
+          key: group.key,
+          permissionsBefore: existing.permissions,
+          permissionsAfter: group.permissions,
+        },
+      });
+    }
+
+    res.json(group);
+  });
+
+  // Quem sou eu, o que posso e por quais grupos — usado pela interface para
+  // esconder o que a pessoa não pode fazer.
+  app.get('/api/auth/permissions', authenticateToken, async (req, res) => {
+    const permissions: Set<string> = (req as any).permissions ?? new Set();
+    res.json({
+      permissions: Array.from(permissions).sort(),
+      groups: (req as any).accessGroups ?? [],
+      role: (req as any).user?.role ?? null,
+    });
+  });
+
   app.get('/api/projects/health-rules/global', authenticateToken, requireRoles(['admin']), async (req, res) => {
     const rule = await storage.getGlobalHealthRule();
     res.json(rule);
@@ -3997,8 +4129,21 @@ export async function registerRoutes(
     const requesterRole = (req as any).user?.role as Role | undefined;
     const isAdmin = requesterRole === 'admin';
     const isCoordinator = Boolean(existingProject.coordinatorId) && existingProject.coordinatorId === requesterId;
+    const setupPermissions: Set<string> = (req as any).permissions ?? new Set();
 
-    if (!isAdmin && !isCoordinator) {
+    const tapGerado = Boolean(
+      existingProject.tapStatus && existingProject.tapStatus !== PROJECT_TAP_STATUS.NOT_GENERATED
+    );
+
+    // Duas autorizações diferentes convivem aqui. Limite diário e aprovação são do
+    // dono do projeto; trocar o coordenador depois do TAP é do escritório de
+    // projetos. Separar as duas evita que quem só precisa trocar o coordenador
+    // ganhe de brinde o controle do resto do setup.
+    const canManageSetupFields = isAdmin || isCoordinator || setupPermissions.has('projects.setup');
+    const canChangeCoordinator =
+      isAdmin || setupPermissions.has('projects.coordinator') || (!tapGerado && canManageSetupFields);
+
+    if (!canManageSetupFields && !canChangeCoordinator) {
       return res.status(403).json({ message: 'Somente administrador ou coordenador do projeto pode alterar o setup' });
     }
 
@@ -4014,8 +4159,17 @@ export async function registerRoutes(
       // requisição inteira impedia salvar limite diário e aprovação em qualquer
       // projeto com TAP gerado.
       if (isChangingCoordinator) {
-        if (existingProject.tapStatus && existingProject.tapStatus !== PROJECT_TAP_STATUS.NOT_GENERATED) {
-          return res.status(403).json({ message: 'O coordenador já foi definido na geração do TAP e não pode ser alterado' });
+        // Depois do TAP emitido a troca deixa de ser livre, mas não é impossível:
+        // coordenador sai da empresa, projeto muda de mão. Quem pode fazer isso é
+        // o escritório de projetos (pela permissão) ou um administrador — e o TAP
+        // já emitido continua nomeando o coordenador anterior, por isso a troca
+        // fica registrada no log.
+        if (!canChangeCoordinator) {
+          return res.status(403).json({
+            message: tapGerado
+              ? 'O coordenador foi definido na geração do TAP. Somente o escritório de projetos ou um administrador pode alterá-lo.'
+              : 'Você não tem permissão para definir o coordenador deste projeto',
+          });
         }
 
         if (nextCoordinatorId) {
@@ -4030,16 +4184,30 @@ export async function registerRoutes(
       }
     }
 
+    // Limite diário e aprovação continuam sendo do dono do projeto. O formulário
+    // manda os três campos juntos, então só recusa quem tentar MUDAR um deles sem
+    // poder — reenviar o valor atual não vira erro.
     if (Object.prototype.hasOwnProperty.call(req.body, 'dailyLimitHours')) {
       const dailyLimitHours = Number.parseInt(String(req.body.dailyLimitHours), 10);
       if (!Number.isFinite(dailyLimitHours) || dailyLimitHours <= 0) {
         return res.status(400).json({ message: 'Limite diário inválido' });
       }
-      updates.dailyLimitHours = dailyLimitHours;
+      if (dailyLimitHours !== existingProject.dailyLimitHours) {
+        if (!canManageSetupFields) {
+          return res.status(403).json({ message: 'Você não tem permissão para alterar o limite diário deste projeto' });
+        }
+        updates.dailyLimitHours = dailyLimitHours;
+      }
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'requiresApproval')) {
-      updates.requiresApproval = Boolean(req.body.requiresApproval);
+      const requiresApproval = Boolean(req.body.requiresApproval);
+      if (requiresApproval !== existingProject.requiresApproval) {
+        if (!canManageSetupFields) {
+          return res.status(403).json({ message: 'Você não tem permissão para alterar a exigência de aprovação deste projeto' });
+        }
+        updates.requiresApproval = requiresApproval;
+      }
     }
 
     if (existingProject.setupStatus === PROJECT_SETUP_STATUS.PENDING) {
@@ -4085,6 +4253,16 @@ export async function registerRoutes(
           coordinatorId: project.coordinatorId ?? null,
           dailyLimitHours: project.dailyLimitHours,
           requiresApproval: project.requiresApproval,
+          // Guardar só o coordenador novo não permitiria reconstruir uma troca
+          // feita depois do TAP, que é justamente a que precisa ser auditável.
+          ...(existingProject.coordinatorId !== project.coordinatorId
+            ? {
+                previousCoordinatorId: existingProject.coordinatorId ?? null,
+                coordinatorChangedAfterTap: Boolean(
+                  existingProject.tapStatus && existingProject.tapStatus !== PROJECT_TAP_STATUS.NOT_GENERATED
+                ),
+              }
+            : {}),
         },
       });
     }
@@ -4543,6 +4721,61 @@ export async function registerRoutes(
 
     return { ok: true, project: updatedProject };
   };
+
+  // Descrição do projeto. Endpoint próprio em vez de abrir o PUT geral: a regra
+  // de quem pode mexer aqui é mais larga que a de editar o projeto inteiro, e
+  // misturar as duas acabaria concedendo mais do que o pedido.
+  app.patch('/api/projects/:id/description', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const actorId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    const isAdmin = (req as any).user?.role === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+    const permissions: Set<string> = (req as any).permissions ?? new Set();
+
+    // Coordenador do projeto passa sempre, mesmo sem a permissão de grupo: é o
+    // dono do projeto. Os demais precisam de projects.description, que hoje vai
+    // para a engenharia de projetos e a coordenação.
+    const canEdit = isAdmin || isCoordinator || permissions.has('projects.description');
+    if (!canEdit) {
+      return res.status(403).json({
+        message: 'Somente o coordenador do projeto, a engenharia de projetos ou um administrador pode editar a descrição',
+      });
+    }
+
+    if (typeof req.body?.description !== 'string') {
+      return res.status(400).json({ message: 'Informe a descrição do projeto' });
+    }
+
+    const description = req.body.description.trim();
+    if (description.length > 5000) {
+      return res.status(400).json({ message: 'A descrição pode ter no máximo 5000 caracteres' });
+    }
+
+    const updated = await storage.updateProject(project.id, { description: description || null } as any);
+    if (!updated) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    if (actorId) {
+      await safeCreateUserActivity(req, actorId, {
+        category: 'system',
+        action: 'PROJECT_DESCRIPTION_UPDATED',
+        title: `Descrição atualizada — ${project.code}`,
+        metadata: {
+          projectId: project.id,
+          projectCode: project.code,
+          previousLength: String(project.description ?? '').length,
+          newLength: description.length,
+        },
+      });
+    }
+
+    res.json(updated);
+  });
 
   app.patch('/api/projects/:id/status', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const project = await storage.getProject(req.params.id);

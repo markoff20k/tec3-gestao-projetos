@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { ShieldAlert } from "lucide-react";
+import { Layout } from "@/components/Layout";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -22,6 +24,7 @@ import Clients from "@/pages/Clients";
 import Proposals from "@/pages/Proposals";
 import Projects from "@/pages/Projects";
 import ProjectIndicators from "@/pages/ProjectIndicators";
+import AccessGroups from '@/pages/AccessGroups';
 import TimeEntries from "@/pages/TimeEntries";
 import TimeApprovals from "@/pages/TimeApprovals";
 import Users from "@/pages/Users";
@@ -31,8 +34,15 @@ import Activities from "@/pages/Activities";
 import CostCenters from "@/pages/CostCenters";
 import ProjectHealthRules from "@/pages/ProjectHealthRules";
 
-function ProtectedRoute({ component: Component }: { component: () => JSX.Element }) {
-  const { isAuthenticated, isLoading } = useAuth();
+function ProtectedRoute({
+  component: Component,
+  roles,
+}: {
+  component: () => JSX.Element;
+  /** Perfis autorizados. Sem isto, basta estar logado. */
+  roles?: string[];
+}) {
+  const { isAuthenticated, isLoading, hasRole } = useAuth();
 
   if (isLoading) {
     return (
@@ -44,6 +54,27 @@ function ProtectedRoute({ component: Component }: { component: () => JSX.Element
 
   if (!isAuthenticated) {
     return <Redirect to="/login" />;
+  }
+
+  // Esconder o item no menu não é proteger a página: sem esta checagem, qualquer
+  // pessoa autenticada abria as telas de administração digitando a URL. A API
+  // recusaria os dados, mas a tela apareceria vazia, como se não houvesse nada
+  // cadastrado — o que é pior do que dizer que o acesso é restrito.
+  if (roles && !hasRole(roles)) {
+    return (
+      <Layout>
+        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
+          <ShieldAlert className="h-10 w-10 text-muted-foreground" />
+          <div>
+            <h1 className="text-xl font-semibold">Acesso restrito</h1>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">
+              Esta tela é exclusiva da administração. Se você precisa dela, peça ao administrador
+              para incluir seu usuário no grupo de acesso correspondente.
+            </p>
+          </div>
+        </div>
+      </Layout>
+    );
   }
 
   return <Component />;
@@ -71,23 +102,26 @@ function Router() {
       <Route path="/time-entries">
         <ProtectedRoute component={TimeEntries} />
       </Route>
+      <Route path="/access-groups">
+        <ProtectedRoute component={AccessGroups} roles={['admin']} />
+      </Route>
       <Route path="/time-approvals">
         <ProtectedRoute component={TimeApprovals} />
       </Route>
       <Route path="/users">
-        <ProtectedRoute component={Users} />
+        <ProtectedRoute component={Users} roles={['admin']} />
       </Route>
       <Route path="/categories">
-        <ProtectedRoute component={Categories} />
+        <ProtectedRoute component={Categories} roles={['admin']} />
       </Route>
       <Route path="/cost-centers">
-        <ProtectedRoute component={CostCenters} />
+        <ProtectedRoute component={CostCenters} roles={['admin']} />
       </Route>
       <Route path="/activities">
-        <ProtectedRoute component={Activities} />
+        <ProtectedRoute component={Activities} roles={['admin']} />
       </Route>
       <Route path="/project-health-rules">
-        <ProtectedRoute component={ProjectHealthRules} />
+        <ProtectedRoute component={ProjectHealthRules} roles={['admin']} />
       </Route>
       <Route path="/settings">
         <ProtectedRoute component={Settings} />

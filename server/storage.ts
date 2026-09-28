@@ -115,6 +115,7 @@ export interface QueueEmailOutboxInput {
 export interface IStorage {
   getUser(id: string): Promise<User | null>;
   getUserByEmail(email: string): Promise<User | null>;
+  getUserByDirectoryLogin(login: string): Promise<User | null>;
   getUserProfileSummary(userId: string): Promise<{ hoursThisMonth: number; approvedHoursThisMonth: number; memberSince: Date | null; lastLoginAt: Date | null }>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User | null>;
@@ -413,6 +414,27 @@ export class PrismaStorage implements IStorage {
 
   async getUserByEmail(email: string): Promise<User | null> {
     return prisma.user.findUnique({ where: { email } });
+  }
+
+  /**
+   * Encontra o usuário pelo login do diretório, comparando com a parte local do
+   * e-mail. A base veio do legado com endereços fabricados cuja parte local é o
+   * próprio login do AD (rsantos@legacy.tec3.local ↔ rsantos), então é assim que
+   * uma conta do diretório reencontra o histórico que já existe aqui.
+   *
+   * Só resolve quando há exatamente um candidato ativo: com mais de um, o vínculo
+   * seria um palpite, e é melhor tratar como conta nova do que juntar a pessoa
+   * errada.
+   */
+  async getUserByDirectoryLogin(login: string): Promise<User | null> {
+    const normalized = login.trim().toLowerCase();
+    if (!normalized) return null;
+
+    const candidates = await prisma.user.findMany({
+      where: { isActive: true, email: { startsWith: `${normalized}@`, mode: 'insensitive' } },
+    });
+
+    return candidates.length === 1 ? candidates[0] : null;
   }
 
   async getUserProfileSummary(userId: string): Promise<{ hoursThisMonth: number; approvedHoursThisMonth: number; memberSince: Date | null; lastLoginAt: Date | null }> {

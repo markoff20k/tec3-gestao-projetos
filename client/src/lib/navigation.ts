@@ -11,6 +11,7 @@ import {
   Settings,
   Users,
   HeartPulse,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -70,6 +71,7 @@ export const adminMenuItems: NavigationItem[] = [
   { path: '/activities', label: 'Atividades', icon: ListChecks, roles: ['admin'], description: 'Gerenciar atividades' },
   { path: '/users', label: 'Profissionais da Tec3', icon: Users, roles: ['admin'], description: 'Gerenciar profissionais da Tec3' },
   { path: '/project-health-rules', label: 'Regra Padrão de Saúde', icon: HeartPulse, roles: ['admin'], description: 'Configurar regra padrão do semáforo de saúde' },
+  { path: '/access-groups', label: 'Grupos de Acesso', icon: ShieldCheck, roles: ['admin'], description: 'Definir o que cada grupo do Active Directory pode fazer' },
 ];
 
 export const settingsNavigationItem: NavigationItem = {

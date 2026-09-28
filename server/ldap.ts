@@ -11,6 +11,8 @@ type LdapAttemptResult =
       profile: {
         email: string;
         name: string;
+        /** sAMAccountName / uid no diretório. */
+        login: string | null;
         groups: string[];
         role: Role;
         memberSince: string | null;
@@ -445,6 +447,7 @@ async function tryAuthenticateProvider(params: {
       profile: {
         email: email.trim().toLowerCase(),
         name: name.trim(),
+        login: (getUserAttr(entry, 'sAMAccountName') ?? getUserAttr(entry, 'uid') ?? '').trim().toLowerCase() || null,
         groups,
         role,
         memberSince,

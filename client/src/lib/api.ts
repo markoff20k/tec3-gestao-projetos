@@ -938,6 +938,8 @@ export const projectsApi = {
     api.put<ProjectMember[]>(`/projects/${id}/members`, { userIds }),
   completeSetup: (id: string) => api.post<Project>(`/projects/${id}/setup/complete`),
   activate: (id: string) => api.post<Project>(`/projects/${id}/activate`),
+  updateDescription: (id: string, description: string) =>
+    api.patch<Project>(`/projects/${id}/description`, { description }),
   changeStatus: (id: string, status: string) =>
     api.patch<Project>(`/projects/${id}/status`, { status }),
   getStats: (id: string) => api.get<any>(`/projects/${id}/stats`),
@@ -1006,4 +1008,38 @@ export const costCentersApi = {
   update: (id: string, data: Partial<CostCenter>) =>
     api.put<CostCenter>(`/cost-centers/${id}`, data),
   delete: (id: string) => api.delete(`/cost-centers/${id}`),
+};
+
+export interface PermissionDefinition {
+  key: string;
+  label: string;
+  description: string;
+}
+
+export interface PermissionArea {
+  area: string;
+  items: PermissionDefinition[];
+}
+
+export interface AccessGroup {
+  id: string;
+  key: string;
+  name: string;
+  description?: string | null;
+  directoryDn?: string | null;
+  isActive: boolean;
+  permissions: string[];
+}
+
+export const accessGroupsApi = {
+  getCatalog: () => api.get<PermissionArea[]>('/access-groups/catalog'),
+  getAll: () => api.get<AccessGroup[]>('/access-groups'),
+  update: (
+    id: string,
+    data: { permissions?: string[]; name?: string; description?: string | null; isActive?: boolean }
+  ) => api.put<AccessGroup>(`/access-groups/${id}`, data),
+  getMyPermissions: () =>
+    api.get<{ permissions: string[]; groups: Array<{ key: string; name: string }>; role: string | null }>(
+      '/auth/permissions'
+    ),
 };
