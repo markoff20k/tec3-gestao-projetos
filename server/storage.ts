@@ -1,11 +1,11 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
-import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification, ProjectTap, EmailOutbox, CostCenter, ProjectHealthRule } from "../generated/prisma/client.ts";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification, ProjectTap, EmailOutbox, CostCenter, Activity, ProjectHealthRule } from "../generated/prisma/client.ts";
 import { Prisma } from "../generated/prisma/client.ts";
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'project_closed' | 'time_entry_approved' | 'time_entry_rejected';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'project_closed' | 'project_status_changed' | 'time_entry_approved' | 'time_entry_rejected';
 
 export interface CreateUserActivityInput {
   category: UserActivityCategory;
@@ -70,11 +70,18 @@ export type InsertUser = Omit<Prisma.UserCreateInput, 'id'>;
 export type InsertClient = Omit<Prisma.ClientCreateInput, 'id' | 'proposals' | 'projects'>;
 export type InsertProposal = Omit<Prisma.ProposalCreateInput, 'id' | 'code' | 'client'> & { clientId: string };
 export type InsertProject = Omit<Prisma.ProjectCreateInput, 'id' | 'code' | 'createdAt' | 'client' | 'timeEntries'> & { clientId: string };
-export type InsertTimeEntry = Omit<Prisma.TimeEntryCreateInput, 'id' | 'createdAt' | 'project' | 'costCenter'> & {
+export type InsertTimeEntry = Omit<
+  Prisma.TimeEntryCreateInput,
+  'id' | 'createdAt' | 'project' | 'costCenter' | 'activity'
+> & {
   projectId: string;
   costCenterId?: string | null;
+  activityId?: string | null;
 };
-export type TimeEntryWithCostCenter = TimeEntry & { costCenter: CostCenter | null };
+export type TimeEntryWithCostCenter = TimeEntry & {
+  costCenter: CostCenter | null;
+  activity: Activity | null;
+};
 export type InsertCostCenter = { code: string; name: string; isActive?: boolean };
 export type InsertProposalCategory = { code?: string; name: string; isActive?: boolean };
 export type InsertProposalCategoryValue = { proposalId: string; categoryId?: string; customName?: string; value: number; hours: number };
@@ -199,6 +206,14 @@ export interface IStorage {
   upsertProjectHealthRule(projectId: string, updates: HealthRuleInput, updatedById?: string | null): Promise<ProjectHealthRule>;
   deleteProjectHealthRule(projectId: string): Promise<boolean>;
 
+  getActivitiesByProjectIds(projectIds: string[]): Promise<Array<{ projectId: string; activity: Activity }>>;
+  getProjectActivities(projectId: string): Promise<Array<Activity & { entriesCount: number }>>;
+  setProjectActivities(projectId: string, activityIds: string[]): Promise<Activity[]>;
+  getAllActivities(options?: { includeInactive?: boolean }): Promise<Activity[]>;
+  getActivity(id: string): Promise<Activity | null>;
+  createActivity(input: { code?: string; name: string; isActive?: boolean }): Promise<Activity>;
+  updateActivity(id: string, input: Partial<Activity>): Promise<Activity | null>;
+  deleteActivity(id: string): Promise<boolean>;
   getAllCostCenters(options?: { includeInactive?: boolean; scope?: 'administrative' | 'project' | 'all' }): Promise<CostCenter[]>;
   getCostCentersByProjectIds(projectIds: string[]): Promise<CostCenter[]>;
   getCostCenter(id: string): Promise<CostCenter | null>;
@@ -1551,6 +1566,122 @@ export class PrismaStorage implements IStorage {
     });
   }
 
+  // Quais atividades cada projeto habilita. Só as ativas: uma atividade
+  // desativada não pode receber lançamento novo, mas o histórico permanece.
+  async getActivitiesByProjectIds(
+    projectIds: string[]
+  ): Promise<Array<{ projectId: string; activity: Activity }>> {
+    if (projectIds.length === 0) return [];
+
+    const rows = await prisma.projectActivity.findMany({
+      where: { projectId: { in: projectIds }, activity: { isActive: true } },
+      include: { activity: true },
+      orderBy: { activity: { name: 'asc' } },
+    });
+
+    return rows.map((row) => ({ projectId: row.projectId, activity: row.activity }));
+  }
+
+  // Traz também quantos lançamentos cada atividade já tem NESTE projeto: a tela
+  // usa isso para impedir que se remova uma atividade com horas apontadas.
+  async getProjectActivities(projectId: string): Promise<Array<Activity & { entriesCount: number }>> {
+    const rows = await prisma.projectActivity.findMany({
+      where: { projectId },
+      include: { activity: true },
+      orderBy: { activity: { name: 'asc' } },
+    });
+
+    const counts = await prisma.timeEntry.groupBy({
+      by: ['activityId'],
+      where: { projectId, activityId: { not: null } },
+      _count: { _all: true },
+    });
+    const countByActivity = new Map(counts.map((row) => [row.activityId as string, row._count._all]));
+
+    return rows.map((row) => ({
+      ...row.activity,
+      entriesCount: countByActivity.get(row.activityId) ?? 0,
+    }));
+  }
+  async setProjectActivities(projectId: string, activityIds: string[]): Promise<Activity[]> {
+    const unique = Array.from(new Set(activityIds.filter(Boolean)));
+
+    await prisma.$transaction(async (tx) => {
+      await tx.projectActivity.deleteMany({
+        where: { projectId, activityId: { notIn: unique.length ? unique : [''] } },
+      });
+
+      for (const activityId of unique) {
+        await tx.projectActivity.upsert({
+          where: { projectId_activityId: { projectId, activityId } },
+          create: { projectId, activityId },
+          update: {},
+        });
+      }
+    });
+
+    const rows = await prisma.projectActivity.findMany({
+      where: { projectId },
+      include: { activity: true },
+      orderBy: { activity: { name: 'asc' } },
+    });
+    return rows.map((row) => row.activity);
+  }
+  async getAllActivities(options?: { includeInactive?: boolean }): Promise<Activity[]> {
+    const includeInactive = options?.includeInactive ?? false;
+
+    return prisma.activity.findMany({
+      ...(includeInactive ? {} : { where: { isActive: true } }),
+      orderBy: [{ code: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async getActivity(id: string): Promise<Activity | null> {
+    return prisma.activity.findUnique({ where: { id } });
+  }
+
+  async createActivity(input: { code?: string; name: string; isActive?: boolean }): Promise<Activity> {
+    const code = this.normalizeReferenceCode(input.code ?? '', 'ATV');
+
+    return prisma.activity.create({
+      data: {
+        code,
+        name: input.name.trim(),
+        isActive: input.isActive ?? true,
+      },
+    });
+  }
+
+  async updateActivity(id: string, input: Partial<Activity>): Promise<Activity | null> {
+    const data: Prisma.ActivityUpdateInput = {};
+
+    if (input.code !== undefined) {
+      data.code = this.normalizeReferenceCode(String(input.code), 'ATV');
+    }
+    if (input.name !== undefined) {
+      data.name = String(input.name).trim();
+    }
+    if (input.isActive !== undefined) {
+      data.isActive = Boolean(input.isActive);
+    }
+
+    try {
+      return await prisma.activity.update({ where: { id }, data });
+    } catch {
+      return null;
+    }
+  }
+
+  // Desativação lógica, como nos centros de custo: atividade já usada em
+  // registro antigo não pode sumir do histórico.
+  async deleteActivity(id: string): Promise<boolean> {
+    try {
+      await prisma.activity.update({ where: { id }, data: { isActive: false } });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   async getAllCostCenters(options?: {
     includeInactive?: boolean;
     scope?: 'administrative' | 'project' | 'all';
@@ -1625,7 +1756,7 @@ export class PrismaStorage implements IStorage {
   async getTimeEntriesByProject(projectId: string): Promise<TimeEntryWithCostCenter[]> {
     return prisma.timeEntry.findMany({
       where: { projectId },
-      include: { costCenter: true },
+      include: { costCenter: true, activity: true },
       orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
     });
   }
@@ -1657,7 +1788,7 @@ export class PrismaStorage implements IStorage {
           lte: new Date(endDate),
         },
       },
-      include: { costCenter: true },
+      include: { costCenter: true, activity: true },
       orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }],
     });
   }
@@ -1672,6 +1803,7 @@ export class PrismaStorage implements IStorage {
         projectId: insertEntry.projectId,
         collaboratorId: insertEntry.collaboratorId,
         costCenterId: insertEntry.costCenterId ?? null,
+        activityId: insertEntry.activityId ?? null,
         entryDate: new Date(insertEntry.entryDate as any),
         hours: insertEntry.hours,
         description: insertEntry.description,
@@ -1683,7 +1815,7 @@ export class PrismaStorage implements IStorage {
         approvedAt: insertEntry.approvedAt ?? null,
         rejectionReason: insertEntry.rejectionReason ?? null,
       },
-      include: { costCenter: true },
+      include: { costCenter: true, activity: true },
     });
   }
 

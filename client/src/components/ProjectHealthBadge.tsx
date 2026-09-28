@@ -5,12 +5,14 @@ export const healthLevelColors: Record<string, string> = {
   green: 'bg-emerald-500',
   yellow: 'bg-amber-500',
   red: 'bg-red-500',
+  unknown: 'bg-slate-400',
 };
 
 export const healthLevelLabels: Record<string, string> = {
   green: 'Saudável',
   yellow: 'Atenção',
   red: 'Crítico',
+  unknown: 'Sem orçamento para avaliar',
 };
 
 function TrafficLightIcon({ level }: { level: ProjectHealthLevel }) {

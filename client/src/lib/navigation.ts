@@ -7,6 +7,7 @@ import {
   BarChart3,
   Tags,
   Landmark,
+  ListChecks,
   Settings,
   Users,
   HeartPulse,
@@ -49,13 +50,16 @@ export const mainMenuItems: NavigationItem[] = [
         roles: ['projects', 'admin'],
         description: 'Analisar e aprovar lançamentos pendentes',
       },
-      {
-        path: '/projects/indicators',
-        label: 'Indicadores',
-        icon: BarChart3,
-        roles: ['projects', 'admin'],
-        description: 'Explorar KPIs, correlacoes e widgets de projetos',
-      },
+      // Indicadores está escondido do menu por ora, a pedido do cliente: a tela
+      // não vai ser usada neste momento. A rota, a página e a descrição
+      // continuam de pé — para trazer de volta, basta reativar esta entrada.
+      // {
+      //   path: '/projects/indicators',
+      //   label: 'Indicadores',
+      //   icon: BarChart3,
+      //   roles: ['projects', 'admin'],
+      //   description: 'Explorar KPIs, correlacoes e widgets de projetos',
+      // },
     ],
   },
 ];
@@ -63,6 +67,7 @@ export const mainMenuItems: NavigationItem[] = [
 export const adminMenuItems: NavigationItem[] = [
   { path: '/categories', label: 'Categorias', icon: Tags, roles: ['admin'], description: 'Gerenciar categorias de proposta' },
   { path: '/cost-centers', label: 'Centros de Custo', icon: Landmark, roles: ['admin'], description: 'Gerenciar centros de custo' },
+  { path: '/activities', label: 'Atividades', icon: ListChecks, roles: ['admin'], description: 'Gerenciar atividades' },
   { path: '/users', label: 'Profissionais da Tec3', icon: Users, roles: ['admin'], description: 'Gerenciar profissionais da Tec3' },
   { path: '/project-health-rules', label: 'Regra Padrão de Saúde', icon: HeartPulse, roles: ['admin'], description: 'Configurar regra padrão do semáforo de saúde' },
 ];
@@ -85,6 +90,7 @@ export const pageDescriptions: Record<string, string> = {
   '/projects/indicators': 'Explorar KPIs, correlacoes e widgets de projetos',
   '/categories': 'Gerenciar categorias de proposta',
   '/cost-centers': 'Gerenciar centros de custo',
+  '/activities': 'Gerenciar atividades',
   '/users': 'Gerenciar profissionais da Tec3',
   '/project-health-rules': 'Configurar regra padrão do semáforo de saúde',
   '/settings': 'Gerenciar preferências da conta',

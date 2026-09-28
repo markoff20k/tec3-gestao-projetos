@@ -59,6 +59,42 @@ const PROJECT_CLOSED_STATUSES = new Set<string>([
   PROJECT_STATUS.CANCELLED,
 ]);
 
+// Status tecnico do projeto, no vocabulario que o cliente usa.
+const PROJECT_STATUS_LABELS: Record<string, string> = {
+  [PROJECT_STATUS.PLANNING]: 'Não iniciado',
+  [PROJECT_STATUS.ACTIVE]: 'Em andamento',
+  [PROJECT_STATUS.IN_PROGRESS]: 'Em andamento',
+  [PROJECT_STATUS.ON_HOLD]: 'Paralisado',
+  [PROJECT_STATUS.COMPLETED]: 'Concluído',
+  [PROJECT_STATUS.CANCELLED]: 'Cancelado',
+};
+
+// Para onde cada situacao pode ir. O que nao esta aqui nao acontece — e o que
+// impede, por exemplo, concluir um projeto que nunca foi iniciado. De encerrado
+// so existe uma saida: reabrir para "em andamento" (e so admin).
+const PROJECT_STATUS_TRANSITIONS: Record<string, string[]> = {
+  [PROJECT_STATUS.PLANNING]: [PROJECT_STATUS.ACTIVE, PROJECT_STATUS.CANCELLED],
+  [PROJECT_STATUS.ACTIVE]: [PROJECT_STATUS.ON_HOLD, PROJECT_STATUS.COMPLETED, PROJECT_STATUS.CANCELLED, PROJECT_STATUS.PLANNING],
+  [PROJECT_STATUS.IN_PROGRESS]: [PROJECT_STATUS.ON_HOLD, PROJECT_STATUS.COMPLETED, PROJECT_STATUS.CANCELLED, PROJECT_STATUS.PLANNING],
+  [PROJECT_STATUS.ON_HOLD]: [PROJECT_STATUS.ACTIVE, PROJECT_STATUS.COMPLETED, PROJECT_STATUS.CANCELLED, PROJECT_STATUS.PLANNING],
+  [PROJECT_STATUS.COMPLETED]: [PROJECT_STATUS.ACTIVE],
+  [PROJECT_STATUS.CANCELLED]: [PROJECT_STATUS.ACTIVE],
+};
+
+// Paralisado congela o apontamento igual a encerrado, mas e reversivel: a
+// mensagem tem de dizer qual dos dois e, senao o usuario nao sabe o que fazer.
+function timeEntryBlockReason(status: unknown, kind: 'create' | 'edit'): string | null {
+  const value = String(status ?? '');
+  const acao = kind === 'create' ? 'lançar horas' : 'editar lançamentos';
+  if (value === PROJECT_STATUS.ON_HOLD) {
+    return `Projeto paralisado. Não é possível ${acao} até que ele seja retomado.`;
+  }
+  if (PROJECT_CLOSED_STATUSES.has(value)) {
+    return `Projeto encerrado. Não é possível ${acao}.`;
+  }
+  return null;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 },
@@ -232,7 +268,7 @@ function normalizeStatus(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
 }
 
-type ProjectHealthLevel = 'green' | 'yellow' | 'red';
+type ProjectHealthLevel = 'green' | 'yellow' | 'red' | 'unknown';
 
 interface ProjectHealthRuleFields {
   hoursEnabled: boolean;
@@ -263,6 +299,19 @@ interface ProjectHealthResult {
   metrics: ProjectHealthMetricResult[];
 }
 
+// O import do legado trouxe data vazia como 30/11/1899 (a data-zero do sistema
+// antigo), e nao como nulo. Sem este piso, esses projetos apareciam com ~46 mil
+// dias de atraso e pintavam o farol de vermelho.
+const MIN_PLAUSIBLE_PROJECT_DATE = new Date('1990-01-01').getTime();
+
+function hasPlausibleEndDate(endDate: Date | null): endDate is Date {
+  return Boolean(endDate) && (endDate as Date).getTime() > MIN_PLAUSIBLE_PROJECT_DATE;
+}
+
+function formatHealthHours(value: number): string {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(value || 0);
+}
+
 function classifyHealthMetric(value: number, yellowThreshold: number, redThreshold: number): ProjectHealthLevel {
   if (value >= redThreshold) return 'red';
   if (value >= yellowThreshold) return 'yellow';
@@ -277,27 +326,44 @@ function computeProjectHealth(
   const metrics: ProjectHealthMetricResult[] = [];
 
   if (rule.hoursEnabled) {
-    const consumptionPct = project.budgetHours > 0 ? (project.consumedHours / project.budgetHours) * 100 : 0;
+    // Sem orcamento de horas nao existe percentual a comparar. Antes isso virava
+    // 0% e o projeto ficava verde mesmo com milhares de horas aprovadas — era o
+    // que fazia as horas lancadas parecerem ausentes da saude.
+    const semOrcamentoHoras = !(project.budgetHours > 0);
+    const consumptionPct = semOrcamentoHoras ? 0 : (project.consumedHours / project.budgetHours) * 100;
+
     metrics.push({
       key: 'hours',
       label: 'Consumo de horas',
-      level: classifyHealthMetric(consumptionPct, rule.hoursYellow, rule.hoursRed),
-      value: Number(consumptionPct.toFixed(1)),
-      displayValue: `${consumptionPct.toFixed(1)}%`,
+      level: semOrcamentoHoras
+        ? 'unknown'
+        : classifyHealthMetric(consumptionPct, rule.hoursYellow, rule.hoursRed),
+      value: semOrcamentoHoras
+        ? Number(project.consumedHours.toFixed(1))
+        : Number(consumptionPct.toFixed(1)),
+      displayValue: semOrcamentoHoras
+        ? `${formatHealthHours(project.consumedHours)}h lançadas · sem orçamento definido`
+        : `${formatHealthHours(project.consumedHours)}h de ${formatHealthHours(project.budgetHours)}h (${consumptionPct.toFixed(1)}%)`,
     });
   }
 
   if (rule.financialEnabled) {
     const budgetValue = project.budgetValue;
-    const hourRate = project.budgetHours > 0 && budgetValue > 0 ? budgetValue / project.budgetHours : 0;
+    // O EAC depende do valor/hora orcado. Sem um dos dois o desvio daria sempre
+    // 0% — verde por falta de dado, nao por estar no orcamento.
+    const semBaseFinanceira = !(budgetValue > 0) || !(project.budgetHours > 0);
+    const hourRate = semBaseFinanceira ? 0 : budgetValue / project.budgetHours;
     const eac = Math.max(budgetValue, (project.consumedHours + project.pendingHours) * hourRate);
-    const variancePct = budgetValue > 0 ? ((eac - budgetValue) / budgetValue) * 100 : 0;
+    const variancePct = semBaseFinanceira ? 0 : ((eac - budgetValue) / budgetValue) * 100;
+
     metrics.push({
       key: 'financial',
       label: 'Desvio financeiro (EAC)',
-      level: classifyHealthMetric(variancePct, rule.financialYellow, rule.financialRed),
-      value: Number(variancePct.toFixed(1)),
-      displayValue: `${variancePct.toFixed(1)}%`,
+      level: semBaseFinanceira
+        ? 'unknown'
+        : classifyHealthMetric(variancePct, rule.financialYellow, rule.financialRed),
+      value: semBaseFinanceira ? 0 : Number(variancePct.toFixed(1)),
+      displayValue: semBaseFinanceira ? 'Sem orçamento definido' : `${variancePct.toFixed(1)}%`,
     });
   }
 
@@ -312,24 +378,40 @@ function computeProjectHealth(
   }
 
   if (rule.scheduleEnabled) {
+    const semPrazo = !hasPlausibleEndDate(project.endDate);
+    const encerrado = project.status === 'completed' || project.status === 'cancelled';
+
     let delayDays = 0;
-    if (project.endDate && project.status !== 'completed' && project.status !== 'cancelled') {
-      delayDays = Math.max(0, Math.floor((Date.now() - project.endDate.getTime()) / (1000 * 60 * 60 * 24)));
+    if (!semPrazo && !encerrado) {
+      delayDays = Math.max(0, Math.floor((Date.now() - (project.endDate as Date).getTime()) / (1000 * 60 * 60 * 24)));
     }
+
     metrics.push({
       key: 'schedule',
       label: 'Atraso de prazo',
-      level: classifyHealthMetric(delayDays, rule.scheduleYellowDays, rule.scheduleRedDays),
+      level: semPrazo
+        ? 'unknown'
+        : classifyHealthMetric(delayDays, rule.scheduleYellowDays, rule.scheduleRedDays),
       value: delayDays,
-      displayValue: delayDays > 0 ? `${delayDays} dia(s)` : 'No prazo',
+      displayValue: semPrazo
+        ? 'Sem data de término definida'
+        : delayDays > 0
+          ? `${delayDays} dia(s)`
+          : 'No prazo',
     });
   }
 
-  const level: ProjectHealthLevel = metrics.some((metric) => metric.level === 'red')
-    ? 'red'
-    : metrics.some((metric) => metric.level === 'yellow')
-      ? 'yellow'
-      : 'green';
+  // Metrica sem dado nao pode pintar o farol de verde: ela sai da conta, e se
+  // nao sobrar nenhuma conclusiva o projeto fica explicitamente indeterminado.
+  const conclusivas = metrics.filter((metric) => metric.level !== 'unknown');
+  const level: ProjectHealthLevel =
+    conclusivas.length === 0
+      ? 'unknown'
+      : conclusivas.some((metric) => metric.level === 'red')
+        ? 'red'
+        : conclusivas.some((metric) => metric.level === 'yellow')
+          ? 'yellow'
+          : 'green';
 
   return { level, ruleSource, metrics };
 }
@@ -813,8 +895,12 @@ function normalizeProposalTapDraft(proposal: any, input?: unknown): ProposalTapD
     notes: String(existing.notes ?? '').trim(),
     startDate: resolveTapStartDateFromProposal(proposal, existing),
     endDate: String(existing.endDate ?? proposal?.expectedEndDate ?? '').trim() || null,
-    budgetHours: Number.isFinite(Number(existing.budgetHours)) ? Number(existing.budgetHours) : Number(proposal?.estimatedHours || 0),
-    budgetValue: Number.isFinite(Number(existing.budgetValue)) ? Number(existing.budgetValue) : Number(proposal?.totalValue || 0),
+    // O rascunho do TAP só prevalece quando traz um número positivo: zero aqui
+    // é campo não preenchido, não um orçamento de zero. Com a checagem anterior
+    // (isFinite), um rascunho salvo zerado travava o orçamento do projeto em
+    // zero mesmo com a proposta preenchida — e é da proposta que ele deve vir.
+    budgetHours: Number(existing.budgetHours) > 0 ? Number(existing.budgetHours) : Number(proposal?.estimatedHours || 0),
+    budgetValue: Number(existing.budgetValue) > 0 ? Number(existing.budgetValue) : Number(proposal?.totalValue || 0),
     attachments: normalizeProposalTapAttachmentList(existing.attachments),
   };
 }
@@ -2734,6 +2820,8 @@ export async function registerRoutes(
     res.json(users.map(u => ({
       id: u.id,
       name: u.name,
+      // O e-mail e o que distingue homonimos nos seletores de colaborador.
+      email: u.email,
       role: u.role,
       isActive: u.isActive,
     })));
@@ -3492,8 +3580,30 @@ export async function registerRoutes(
       : [];
     const allocatedProjectIds = new Set(memberRows.map((row) => row.projectId));
 
+    // Quando o usuário lançou hora em cada projeto pela última vez. A grade usa
+    // isso para trazer ao topo os projetos que ele está tocando agora — e precisa
+    // olhar todo o histórico, não só o período exibido na tela.
+    const lastEntryByProject = new Map<string, string>();
+    if (requesterId) {
+      for (const entry of timeEntries) {
+        if (entry.collaboratorId !== requesterId) continue;
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (!entryDate) continue;
+
+        const iso = entryDate.toISOString();
+        const current = lastEntryByProject.get(entry.projectId);
+        if (!current || iso > current) lastEntryByProject.set(entry.projectId, iso);
+      }
+    }
     const approvedHoursByProject = new Map<string, number>();
     const pendingHoursByProject = new Map<string, number>();
+
+    // A fila de aprovação precisa triar, não só somar: quantas linhas estão
+    // paradas, há quanto tempo a mais antiga espera e quantas pessoas dependem
+    // disso. Sem esses números o card só sabia dizer "–" até ser expandido.
+    const pendingCountByProject = new Map<string, number>();
+    const oldestPendingByProject = new Map<string, string>();
+    const pendingPeopleByProject = new Map<string, Set<string>>();
 
     for (const entry of timeEntries) {
       const hours = parseFloat(String(entry.hours || 0));
@@ -3509,8 +3619,34 @@ export async function registerRoutes(
           entry.projectId,
           (pendingHoursByProject.get(entry.projectId) || 0) + hours
         );
+        pendingCountByProject.set(entry.projectId, (pendingCountByProject.get(entry.projectId) || 0) + 1);
+
+        const entryDate = toValidDate((entry as any).entryDate);
+        if (entryDate) {
+          const iso = entryDate.toISOString();
+          const atual = oldestPendingByProject.get(entry.projectId);
+          if (!atual || iso < atual) oldestPendingByProject.set(entry.projectId, iso);
+        }
+
+        if (entry.collaboratorId) {
+          const pessoas = pendingPeopleByProject.get(entry.projectId) ?? new Set<string>();
+          pessoas.add(entry.collaboratorId);
+          pendingPeopleByProject.set(entry.projectId, pessoas);
+        }
       }
     }
+
+    // Quem responde pela aprovação de cada projeto.
+    const coordinatorIds = Array.from(
+      new Set(projects.map((p) => p.coordinatorId).filter((id): id is string => Boolean(id)))
+    );
+    const coordinators = coordinatorIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: coordinatorIds } },
+          select: { id: true, name: true, email: true },
+        })
+      : [];
+    const coordinatorById = new Map(coordinators.map((u) => [u.id, u]));
 
     const globalHealthRule = await storage.getGlobalHealthRule();
     const projectHealthRules = await prisma.projectHealthRule.findMany({
@@ -3522,6 +3658,16 @@ export async function registerRoutes(
     const costCenterByProject = new Map(
       projectCostCenters.map((costCenter) => [costCenter.projectId as string, costCenter])
     );
+
+    // Como no sistema legado, o apontamento é por projeto + atividade, e cada
+    // projeto só aceita as atividades que foram habilitadas para ele.
+    const projectActivityRows = await storage.getActivitiesByProjectIds(projects.map((p) => p.id));
+    const activitiesByProject = new Map<string, any[]>();
+    for (const row of projectActivityRows) {
+      const list = activitiesByProject.get(row.projectId) ?? [];
+      list.push(row.activity);
+      activitiesByProject.set(row.projectId, list);
+    }
 
     const enriched = projects.map(p => {
       const consumedHours = approvedHoursByProject.get(p.id) || 0;
@@ -3544,10 +3690,24 @@ export async function registerRoutes(
         ...p,
         client: clientMap.get(p.clientId),
         costCenter: costCenterByProject.get(p.id) ?? null,
+        lastEntryAt: lastEntryByProject.get(p.id) ?? null,
+        coordinator: p.coordinatorId ? coordinatorById.get(p.coordinatorId) ?? null : null,
+        pendingEntriesCount: pendingCountByProject.get(p.id) ?? 0,
+        oldestPendingEntryAt: oldestPendingByProject.get(p.id) ?? null,
+        pendingCollaboratorsCount: pendingPeopleByProject.get(p.id)?.size ?? 0,
+        activities: activitiesByProject.get(p.id) ?? [],
         consumedHours,
         pendingHours,
         health,
-        isCurrentUserAllocated: requesterId ? allocatedProjectIds.has(p.id) : false,
+        // Projeto administrativo (Férias, Feriado, Licença...) é da empresa toda.
+        // No legado isso é obtido alocando todo mundo manualmente; aqui a própria
+        // natureza do projeto já libera, para quem entra na empresa não ficar
+        // impedido de lançar férias até alguém lembrar de alocá-lo em 9 projetos.
+        isCurrentUserAllocated: p.isAdministrative
+          ? Boolean(requesterId)
+          : requesterId
+            ? allocatedProjectIds.has(p.id)
+            : false,
       };
     });
     res.json(enriched);
@@ -3828,27 +3988,45 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
 
-    const requesterRole = (req as any).user?.role;
-    if (existingProject.setupStatus === PROJECT_SETUP_STATUS.COMPLETED && requesterRole !== 'admin') {
-      return res.status(403).json({ message: 'Apenas administradores podem alterar setup concluído' });
+    // Quem manda no setup é admin ou o coordenador do próprio projeto — igual à
+    // alocação de equipe, às atividades e à regra de saúde. Antes a trava olhava
+    // só o papel: barrava o coordenador nos projetos já concluídos e, nos
+    // pendentes, deixava qualquer usuário do perfil projects mexer em projeto
+    // alheio.
+    const requesterId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    const requesterRole = (req as any).user?.role as Role | undefined;
+    const isAdmin = requesterRole === 'admin';
+    const isCoordinator = Boolean(existingProject.coordinatorId) && existingProject.coordinatorId === requesterId;
+
+    if (!isAdmin && !isCoordinator) {
+      return res.status(403).json({ message: 'Somente administrador ou coordenador do projeto pode alterar o setup' });
     }
 
     const updates: Record<string, unknown> = {};
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'coordinatorId')) {
-      if (existingProject.tapStatus && existingProject.tapStatus !== PROJECT_TAP_STATUS.NOT_GENERATED) {
-        return res.status(403).json({ message: 'O coordenador já foi definido na geração do TAP e não pode ser alterado' });
-      }
-
       const coordinatorId = typeof req.body.coordinatorId === 'string' ? req.body.coordinatorId.trim() : '';
-      if (coordinatorId) {
-        const coordinator = await storage.getUser(coordinatorId);
-        if (!coordinator || !coordinator.isActive) {
-          return res.status(400).json({ message: 'Coordenador inválido' });
+      const nextCoordinatorId = coordinatorId || null;
+      const isChangingCoordinator = nextCoordinatorId !== (existingProject.coordinatorId ?? null);
+
+      // O bloqueio vale para ALTERAR o coordenador, não para o campo estar presente:
+      // o formulário de setup envia todos os campos juntos, então recusar a
+      // requisição inteira impedia salvar limite diário e aprovação em qualquer
+      // projeto com TAP gerado.
+      if (isChangingCoordinator) {
+        if (existingProject.tapStatus && existingProject.tapStatus !== PROJECT_TAP_STATUS.NOT_GENERATED) {
+          return res.status(403).json({ message: 'O coordenador já foi definido na geração do TAP e não pode ser alterado' });
         }
-        updates.coordinatorId = coordinator.id;
-      } else {
-        updates.coordinatorId = null;
+
+        if (nextCoordinatorId) {
+          const coordinator = await storage.getUser(nextCoordinatorId);
+          if (!coordinator || !coordinator.isActive) {
+            return res.status(400).json({ message: 'Coordenador inválido' });
+          }
+          updates.coordinatorId = coordinator.id;
+        } else {
+          updates.coordinatorId = null;
+        }
       }
     }
 
@@ -3914,6 +4092,76 @@ export async function registerRoutes(
     res.json(project);
   });
 
+  // Caminho próprio: /activities já é o histórico de alterações do projeto.
+  app.get('/api/projects/:id/allowed-activities', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const activities = await storage.getProjectActivities(project.id);
+    res.json(activities);
+  });
+
+  app.put('/api/projects/:id/allowed-activities', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const requesterId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    const requesterRole = (req as any).user?.role as Role | undefined;
+    const isAdmin = requesterRole === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === requesterId;
+
+    if (!isAdmin && !isCoordinator) {
+      return res.status(403).json({ message: 'Somente administrador ou coordenador do projeto pode definir as atividades' });
+    }
+
+    const input: unknown[] = Array.isArray(req.body?.activityIds) ? req.body.activityIds : [];
+    const activityIds = Array.from(new Set(
+      input.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean)
+    ));
+
+    const known = await prisma.activity.findMany({
+      where: { id: { in: activityIds.length ? activityIds : [''] } },
+      select: { id: true, isActive: true },
+    });
+    const knownIds = new Set(known.filter((a) => a.isActive).map((a) => a.id));
+    const invalid = activityIds.filter((id) => !knownIds.has(id));
+
+    if (invalid.length > 0) {
+      return res.status(400).json({ message: 'Há atividade inexistente ou desativada na seleção' });
+    }
+
+    // Remover uma atividade que já tem horas apontadas deixaria esses lançamentos
+    // órfãos: a tela bloqueia, e o servidor confirma.
+    const current = await storage.getProjectActivities(project.id);
+    const removidasComHoras = current.filter(
+      (activity) => activity.entriesCount > 0 && !activityIds.includes(activity.id)
+    );
+
+    if (removidasComHoras.length > 0) {
+      return res.status(400).json({
+        message: `Não é possível remover atividade com horas lançadas: ${removidasComHoras.map((a) => a.name).join(', ')}`,
+      });
+    }
+
+    await storage.setProjectActivities(project.id, activityIds);
+
+    const userId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    if (userId) {
+      await safeCreateUserActivity(req, userId, {
+        category: 'system',
+        action: 'PROJECT_ACTIVITIES_UPDATED',
+        title: `Atividades do projeto atualizadas — ${project.code}`,
+        metadata: { projectId: project.id, total: activityIds.length },
+      });
+    }
+
+    const updated = await storage.getProjectActivities(project.id);
+    res.json(updated);
+  });
   app.get('/api/projects/:id/members', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
@@ -4084,6 +4332,15 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
 
+    // Concluir o setup é o mesmo botão que salva o setup: mesma regra de acesso.
+    const requesterId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    const isAdmin = (req as any).user?.role === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === requesterId;
+
+    if (!isAdmin && !isCoordinator) {
+      return res.status(403).json({ message: 'Somente administrador ou coordenador do projeto pode concluir o setup' });
+    }
+
     if (!project.coordinatorId) {
       return res.status(400).json({ message: 'Defina o coordenador antes de concluir o setup' });
     }
@@ -4132,35 +4389,188 @@ export async function registerRoutes(
     res.json(updatedProject);
   });
 
+  // -------------------------------------------------------------------------
+  // Status tecnico: uma funcao aplica toda transicao, e as rotas abaixo apenas
+  // a chamam. Antes cada acao tinha sua propria copia das regras, e foi assim
+  // que "iniciar" e "encerrar" divergiram (permissao e validacao diferentes)
+  // para o mesmo campo.
+  // -------------------------------------------------------------------------
+  type StatusChangeOutcome =
+    | { ok: true; project: any }
+    | { ok: false; httpStatus: number; message: string };
+
+  const applyProjectStatusChange = async (
+    req: Request,
+    project: any,
+    rawNextStatus: unknown
+  ): Promise<StatusChangeOutcome> => {
+    const actorId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    const isAdmin = (req as any).user?.role === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+
+    if (!isAdmin && !isCoordinator) {
+      return { ok: false, httpStatus: 403, message: 'Somente administrador ou coordenador do projeto pode alterar o status' };
+    }
+
+    const current = String(project.status ?? '');
+    const next = String(rawNextStatus ?? '').trim().toLowerCase();
+    const label = (value: string) => PROJECT_STATUS_LABELS[value] ?? value;
+
+    if (!Object.prototype.hasOwnProperty.call(PROJECT_STATUS_LABELS, next)) {
+      return { ok: false, httpStatus: 400, message: 'Status inválido' };
+    }
+
+    if (next === current) {
+      return { ok: false, httpStatus: 400, message: `O projeto já está com o status "${label(current)}"` };
+    }
+
+    // Mensagem dedicada para o erro mais comum: querer encerrar antes de iniciar.
+    if (current === PROJECT_STATUS.PLANNING && next === PROJECT_STATUS.COMPLETED) {
+      return { ok: false, httpStatus: 400, message: 'Inicie o projeto antes de concluí-lo' };
+    }
+
+    const allowed = PROJECT_STATUS_TRANSITIONS[current] ?? [];
+    if (!allowed.includes(next)) {
+      return {
+        ok: false,
+        httpStatus: 400,
+        message: `Não é possível passar de "${label(current)}" para "${label(next)}"`,
+      };
+    }
+
+    const reopening = PROJECT_CLOSED_STATUSES.has(current);
+    if (reopening && !isAdmin) {
+      return { ok: false, httpStatus: 403, message: 'Somente um administrador pode reabrir um projeto encerrado' };
+    }
+
+    const entries = await storage.getTimeEntriesByProject(project.id);
+
+    // Encerrar com horas pendentes deixaria a fila de aprovacao orfa.
+    if (PROJECT_CLOSED_STATUSES.has(next)) {
+      const pendingEntries = entries.filter((entry) => entry.status === 'pending');
+      if (pendingEntries.length > 0) {
+        const pendingHours = pendingEntries.reduce((sum, entry) => sum + (parseFloat(String(entry.hours)) || 0), 0);
+        return {
+          ok: false,
+          httpStatus: 400,
+          message: `Existem ${pendingEntries.length} lançamento(s) de horas pendentes de aprovação (${pendingHours.toFixed(1)}h). Aprove ou rejeite antes de mudar o status para "${label(next)}".`,
+        };
+      }
+    }
+
+    // Voltar para "nao iniciado" so faz sentido se nada foi lancado.
+    if (next === PROJECT_STATUS.PLANNING && entries.length > 0) {
+      return {
+        ok: false,
+        httpStatus: 400,
+        message: `Este projeto já tem ${entries.length} lançamento(s) de horas e não pode voltar para "Não iniciado".`,
+      };
+    }
+
+    // Iniciar exige o mesmo que sempre exigiu: setup concluido e TAP gerado.
+    // Reabrir um projeto encerrado nao passa por aqui, porque ja passou uma vez.
+    if (current === PROJECT_STATUS.PLANNING && next === PROJECT_STATUS.ACTIVE) {
+      if (String(project.setupStatus) !== PROJECT_SETUP_STATUS.COMPLETED) {
+        return { ok: false, httpStatus: 400, message: 'Conclua o setup antes de iniciar o projeto' };
+      }
+      if (!PROJECT_READY_TAP_STATUSES.has(String(project.tapStatus || ''))) {
+        return { ok: false, httpStatus: 400, message: 'Projeto sem TAP gerado' };
+      }
+    }
+
+    const updates: Record<string, unknown> = { status: next };
+    if (PROJECT_CLOSED_STATUSES.has(next)) {
+      updates.completedAt = new Date();
+      updates.completedById = actorId;
+    } else if (reopening) {
+      updates.completedAt = null;
+      updates.completedById = null;
+    }
+
+    const updatedProject = await storage.updateProject(project.id, updates as any);
+    if (!updatedProject) {
+      return { ok: false, httpStatus: 404, message: 'Projeto nao encontrado' };
+    }
+
+    if (actorId) {
+      await safeCreateUserActivity(req, actorId, {
+        category: 'system',
+        action: 'PROJECT_STATUS_CHANGED',
+        title: `${label(current)} → ${label(next)} — ${project.code}`,
+        metadata: {
+          projectId: project.id,
+          projectCode: project.code,
+          fromStatus: current,
+          toStatus: next,
+          reopened: reopening,
+        },
+      });
+    }
+
+    // O coordenador precisa saber que o projeto dele mudou de mao.
+    if (project.coordinatorId && project.coordinatorId !== actorId) {
+      const titles: Record<string, string> = {
+        [PROJECT_STATUS.ON_HOLD]: 'Projeto paralisado',
+        [PROJECT_STATUS.COMPLETED]: 'Projeto encerrado',
+        [PROJECT_STATUS.CANCELLED]: 'Projeto cancelado',
+        [PROJECT_STATUS.ACTIVE]: reopening ? 'Projeto reaberto' : 'Projeto retomado',
+        [PROJECT_STATUS.PLANNING]: 'Projeto voltou para não iniciado',
+      };
+      const messages: Record<string, string> = {
+        [PROJECT_STATUS.ON_HOLD]: `O projeto ${project.code} · ${project.name} foi paralisado e não aceita novos lançamentos de horas.`,
+        [PROJECT_STATUS.COMPLETED]: `O projeto ${project.code} · ${project.name} foi concluído e não aceita mais lançamentos de horas.`,
+        [PROJECT_STATUS.CANCELLED]: `O projeto ${project.code} · ${project.name} foi cancelado e não aceita mais lançamentos de horas.`,
+        [PROJECT_STATUS.ACTIVE]: `O projeto ${project.code} · ${project.name} voltou a aceitar lançamentos de horas.`,
+        [PROJECT_STATUS.PLANNING]: `O projeto ${project.code} · ${project.name} voltou para "Não iniciado".`,
+      };
+
+      await storage.createNotification({
+        userId: project.coordinatorId,
+        type: PROJECT_CLOSED_STATUSES.has(next) ? 'project_closed' : 'project_status_changed',
+        title: titles[next] ?? `Status alterado para ${label(next)}`,
+        message: messages[next] ?? `O projeto ${project.code} · ${project.name} passou para "${label(next)}".`,
+        link: `/projects?projectId=${project.id}`,
+        sourceKey: `project_status:${project.id}:${next}:${project.coordinatorId}`,
+        metadata: {
+          projectId: project.id,
+          projectCode: project.code,
+          projectName: project.name,
+          fromStatus: current,
+          toStatus: next,
+        },
+      });
+    }
+
+    return { ok: true, project: updatedProject };
+  };
+
+  app.patch('/api/projects/:id/status', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const outcome = await applyProjectStatusChange(req, project, (req.body ?? {}).status);
+    if (!outcome.ok) {
+      return res.status(outcome.httpStatus).json({ message: outcome.message });
+    }
+
+    res.json(outcome.project);
+  });
+
+  // Atalhos do caminho feliz: mesma regra, um clique so.
   app.post('/api/projects/:id/activate', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
 
-    if (String(project.setupStatus) !== PROJECT_SETUP_STATUS.COMPLETED) {
-      return res.status(400).json({ message: 'Conclua o setup antes de iniciar o projeto' });
+    const outcome = await applyProjectStatusChange(req, project, PROJECT_STATUS.ACTIVE);
+    if (!outcome.ok) {
+      return res.status(outcome.httpStatus).json({ message: outcome.message });
     }
 
-    if (!PROJECT_READY_TAP_STATUSES.has(String(project.tapStatus || ''))) {
-      return res.status(400).json({ message: 'Projeto sem TAP gerado' });
-    }
-
-    const updatedProject = await storage.updateProject(req.params.id, {
-      status: 'active',
-    } as any);
-
-    const userId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
-    if (userId) {
-      await safeCreateUserActivity(req, userId, {
-        category: 'system',
-        action: 'PROJECT_ACTIVATED',
-        title: `Projeto iniciado — ${project.code}`,
-        metadata: { projectId: project.id },
-      });
-    }
-
-    res.json(updatedProject);
+    res.json(outcome.project);
   });
 
   app.post('/api/projects/:id/close', authenticateToken, requireRoles(['projects']), async (req, res) => {
@@ -4169,65 +4579,16 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
 
-    const actorId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
-    const actorRole = (req as any).user?.role as Role | undefined;
-    const isAdmin = actorRole === 'admin';
-    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
-
-    if (!isAdmin && !isCoordinator) {
-      return res.status(403).json({ message: 'Apenas o coordenador do projeto ou um administrador pode encerrar o projeto' });
-    }
-
     if (PROJECT_CLOSED_STATUSES.has(String(project.status))) {
       return res.status(400).json({ message: 'Este projeto já está encerrado' });
     }
 
-    const entries = await storage.getTimeEntriesByProject(project.id);
-
-    if (String(project.status) === PROJECT_STATUS.PLANNING && entries.length === 0) {
-      return res.status(400).json({ message: 'Inicie o projeto antes de encerrá-lo' });
+    const outcome = await applyProjectStatusChange(req, project, PROJECT_STATUS.COMPLETED);
+    if (!outcome.ok) {
+      return res.status(outcome.httpStatus).json({ message: outcome.message });
     }
 
-    const pendingEntries = entries.filter((entry) => entry.status === 'pending');
-    if (pendingEntries.length > 0) {
-      const pendingHours = pendingEntries.reduce((sum, entry) => sum + (parseFloat(String(entry.hours)) || 0), 0);
-      return res.status(400).json({
-        message: `Existem ${pendingEntries.length} lançamento(s) de horas pendentes de aprovação (${pendingHours.toFixed(1)}h). Aprove ou rejeite antes de encerrar o projeto.`,
-      });
-    }
-
-    const updatedProject = await storage.updateProject(req.params.id, {
-      status: PROJECT_STATUS.COMPLETED,
-      completedAt: new Date(),
-      completedById: actorId,
-    } as any);
-
-    if (actorId) {
-      await safeCreateUserActivity(req, actorId, {
-        category: 'system',
-        action: 'PROJECT_CLOSED',
-        title: `Projeto encerrado — ${project.code}`,
-        metadata: { projectId: project.id },
-      });
-    }
-
-    if (project.coordinatorId && project.coordinatorId !== actorId) {
-      await storage.createNotification({
-        userId: project.coordinatorId,
-        type: 'project_closed',
-        title: 'Projeto encerrado',
-        message: `O projeto ${project.code} · ${project.name} foi encerrado e não aceita mais lançamentos de horas.`,
-        link: `/projects?projectId=${project.id}`,
-        sourceKey: `project_closed:${project.id}:${project.coordinatorId}`,
-        metadata: {
-          projectId: project.id,
-          projectCode: project.code,
-          projectName: project.name,
-        },
-      });
-    }
-
-    res.json(updatedProject);
+    res.json(outcome.project);
   });
 
   app.delete('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
@@ -4304,7 +4665,7 @@ export async function registerRoutes(
   });
 
   app.post('/api/projects/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
-    const { projectId, costCenterId, entryDate, hours, description, attachments } = req.body;
+    const { projectId, costCenterId, activityId, entryDate, hours, description, attachments } = req.body;
     const collaboratorId = (req as any).user?.sub as string | undefined;
 
     if (!collaboratorId) {
@@ -4333,8 +4694,9 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Projeto nao encontrado' });
     }
 
-    if (PROJECT_CLOSED_STATUSES.has(String(project.status))) {
-      return res.status(400).json({ message: 'Projeto encerrado. Não é possível lançar horas.' });
+    const blockReason = timeEntryBlockReason(project.status, 'create');
+    if (blockReason) {
+      return res.status(400).json({ message: blockReason });
     }
 
     let allocatedCount = 0;
@@ -4355,7 +4717,8 @@ export async function registerRoutes(
       allocatedCount = 1;
     }
 
-    if (allocatedCount <= 0) {
+    // Mesma regra da listagem: administrativo não exige alocação.
+    if (allocatedCount <= 0 && !project.isAdministrative) {
       return res.status(403).json({ message: 'Você não está alocado neste projeto' });
     }
 
@@ -4364,6 +4727,19 @@ export async function registerRoutes(
       const costCenter = await storage.getCostCenter(normalizedCostCenterId);
       if (!costCenter || !costCenter.isActive) {
         return res.status(400).json({ message: 'Centro de custo inválido' });
+      }
+    }
+
+    // A atividade precisa estar habilitada no projeto: é assim que o sistema
+    // legado se comporta, e em 47 mil lançamentos não há uma única exceção.
+    const normalizedActivityId = typeof activityId === 'string' && activityId.trim() ? activityId.trim() : null;
+    if (normalizedActivityId) {
+      const allowed = await prisma.projectActivity.findUnique({
+        where: { projectId_activityId: { projectId: project.id, activityId: normalizedActivityId } },
+        include: { activity: true },
+      });
+      if (!allowed || !allowed.activity.isActive) {
+        return res.status(400).json({ message: 'Atividade não habilitada para este projeto' });
       }
     }
 
@@ -4380,6 +4756,7 @@ export async function registerRoutes(
       projectId,
       collaboratorId,
       costCenterId: normalizedCostCenterId,
+      activityId: normalizedActivityId,
       entryDate,
       hours: String(parsedHours),
       description,
@@ -4413,11 +4790,12 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Projeto não encontrado para este lançamento' });
     }
 
-    if (PROJECT_CLOSED_STATUSES.has(String(project.status))) {
-      return res.status(400).json({ message: 'Projeto encerrado. Não é possível editar lançamentos.' });
+    const blockReason = timeEntryBlockReason(project.status, 'edit');
+    if (blockReason) {
+      return res.status(400).json({ message: blockReason });
     }
 
-    const { costCenterId, entryDate, hours, description, attachments } = req.body;
+    const { costCenterId, activityId, entryDate, hours, description, attachments } = req.body;
 
     const parsedHours = Number(hours);
     if (!Number.isFinite(parsedHours) || parsedHours <= 0 || parsedHours > 24) {
@@ -4457,8 +4835,21 @@ export async function registerRoutes(
       });
     }
 
+    // Mesma regra da criação: a atividade precisa estar habilitada no projeto.
+    const normalizedActivityId = typeof activityId === 'string' && activityId.trim() ? activityId.trim() : null;
+    if (normalizedActivityId) {
+      const allowed = await prisma.projectActivity.findUnique({
+        where: { projectId_activityId: { projectId: project.id, activityId: normalizedActivityId } },
+        include: { activity: true },
+      });
+      if (!allowed || !allowed.activity.isActive) {
+        return res.status(400).json({ message: 'Atividade não habilitada para este projeto' });
+      }
+    }
+
     const updatedEntry = await storage.updateTimeEntry(entry.id, {
       costCenterId: normalizedCostCenterId,
+      activityId: normalizedActivityId,
       entryDate: new Date(normalizedEntryDate as any),
       hours: String(parsedHours),
       description,
@@ -5046,6 +5437,81 @@ export async function registerRoutes(
     res.json(costCenters);
   });
 
+  app.get('/api/activities', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+    const role = (req as any)?.user?.role;
+    const includeInactive = role === 'admin';
+    const activities = await storage.getAllActivities({ includeInactive });
+    res.json(activities);
+  });
+
+  app.post('/api/activities', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+
+    if (!name) {
+      return res.status(400).json({ message: 'Nome é obrigatório' });
+    }
+
+    try {
+      const activity = await storage.createActivity({ code, name, isActive: req.body?.isActive });
+      res.status(201).json(activity);
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return res.status(409).json({ message: 'Sigla já existe' });
+      }
+      res.status(500).json({ message: 'Erro ao criar atividade' });
+    }
+  });
+
+  app.put('/api/activities/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const { id } = req.params;
+    const updates: Record<string, unknown> = {};
+
+    if (req.body?.code !== undefined) {
+      const code = typeof req.body.code === 'string' ? req.body.code.trim() : '';
+      if (!code) {
+        return res.status(400).json({ message: 'Sigla é obrigatória' });
+      }
+      updates.code = code;
+    }
+
+    if (req.body?.name !== undefined) {
+      const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+      if (!name) {
+        return res.status(400).json({ message: 'Nome é obrigatório' });
+      }
+      updates.name = name;
+    }
+
+    if (req.body?.isActive !== undefined) {
+      updates.isActive = Boolean(req.body.isActive);
+    }
+
+    try {
+      const result = await storage.updateActivity(id, updates);
+      if (!result) {
+        return res.status(404).json({ message: 'Atividade não encontrada' });
+      }
+      res.json(result);
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return res.status(409).json({ message: 'Sigla já existe' });
+      }
+      res.status(500).json({ message: 'Erro ao atualizar atividade' });
+    }
+  });
+
+  app.delete('/api/activities/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+    const { id } = req.params;
+
+    const existing = await storage.getActivity(id);
+    if (!existing) {
+      return res.status(404).json({ message: 'Atividade não encontrada' });
+    }
+
+    await storage.deleteActivity(id);
+    res.status(204).send();
+  });
   app.post('/api/cost-centers', authenticateToken, requireRoles(['admin']), async (req, res) => {
     const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';

@@ -62,8 +62,22 @@ function parseInteger(value: string | null): number {
 function parseDecimal(value: string | null): number {
   const text = normalizeText(value);
   if (!text) return 0;
-  const cleaned = text.replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '');
-  const parsed = Number.parseFloat(cleaned);
+
+  // O legado chega em dois formatos: numerico do MySQL ("379.707", ponto decimal)
+  // e texto brasileiro ("1.234,56", ponto de milhar). Apagar todo ponto, como se
+  // fazia aqui antes, multiplicava por mil qualquer valor do primeiro tipo — foi
+  // assim que valorHora 379.707 virou 379707 no banco novo.
+  //
+  // A virgula e o que distingue os dois: se ela existe, o texto e brasileiro e os
+  // pontos sao separadores de milhar; se nao existe, o ponto e decimal. Colunas
+  // numericas do MySQL nunca trazem separador de milhar, entao nao ha ambiguidade.
+  const cleaned = text.replace(/[^0-9.,-]/g, '');
+  const brasileiro = cleaned.includes(',');
+  const normalized = brasileiro
+    ? cleaned.replace(/\./g, '').replace(',', '.')
+    : cleaned;
+
+  const parsed = Number.parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 

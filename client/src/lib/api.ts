@@ -262,6 +262,7 @@ export interface UserSummary {
 export interface UserOption {
   id: string;
   name: string;
+  email?: string;
   role: User['role'];
   isActive: boolean;
 }
@@ -272,7 +273,7 @@ export const usersApi = {
 };
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
-export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'project_closed' | 'time_entry_approved' | 'time_entry_rejected';
+export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'project_closed' | 'project_status_changed' | 'time_entry_approved' | 'time_entry_rejected';
 
 export interface UserActivity {
   id: string;
@@ -577,7 +578,7 @@ export const proposalAdditivesApi = {
     api.delete<{ total: number }>(`/proposals/${proposalId}/additives/${additiveId}`),
 };
 
-export type ProjectHealthLevel = 'green' | 'yellow' | 'red';
+export type ProjectHealthLevel = 'green' | 'yellow' | 'red' | 'unknown';
 
 export interface ProjectHealthMetric {
   key: 'hours' | 'financial' | 'pendingHours' | 'schedule';
@@ -665,6 +666,13 @@ export interface Project {
   } | null;
   isAdministrative?: boolean;
   costCenter?: CostCenter | null;
+  activities?: Activity[];
+  /** Último apontamento do usuário autenticado neste projeto. */
+  lastEntryAt?: string | null;
+  /** Triagem da fila de aprovação, vindas da listagem de projetos. */
+  pendingEntriesCount?: number;
+  oldestPendingEntryAt?: string | null;
+  pendingCollaboratorsCount?: number;
   consumedHours?: number;
   pendingHours?: number;
   timeSummary?: {
@@ -721,6 +729,8 @@ export interface TimeEntry {
   collaboratorId: string;
   collaboratorName?: string | null;
   costCenterId?: string | null;
+  activityId?: string | null;
+  activity?: Activity | null;
   entryDate: string;
   hours: number;
   description?: string;
@@ -747,6 +757,17 @@ export interface ProposalCategory {
   createdAt?: string;
 }
 
+export interface ProjectActivity extends Activity {
+  entriesCount: number;
+}
+
+export interface Activity {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  createdAt?: string;
+}
 export interface CostCenter {
   id: string;
   code: string;
@@ -910,11 +931,15 @@ export const projectsApi = {
   updateSetup: (id: string, data: { coordinatorId?: string | null; dailyLimitHours?: number; requiresApproval?: boolean }) =>
     api.put<Project>(`/projects/${id}/setup`, data),
   getMembers: (id: string) => api.get<ProjectMember[]>(`/projects/${id}/members`),
+  getProjectActivities: (id: string) => api.get<ProjectActivity[]>(`/projects/${id}/allowed-activities`),
+  setProjectActivities: (id: string, activityIds: string[]) =>
+    api.put<ProjectActivity[]>(`/projects/${id}/allowed-activities`, { activityIds }),
   setMembers: (id: string, userIds: string[]) =>
     api.put<ProjectMember[]>(`/projects/${id}/members`, { userIds }),
   completeSetup: (id: string) => api.post<Project>(`/projects/${id}/setup/complete`),
   activate: (id: string) => api.post<Project>(`/projects/${id}/activate`),
-  close: (id: string) => api.post<Project>(`/projects/${id}/close`),
+  changeStatus: (id: string, status: string) =>
+    api.patch<Project>(`/projects/${id}/status`, { status }),
   getStats: (id: string) => api.get<any>(`/projects/${id}/stats`),
   getActivities: (id: string) => api.get<EntityActivity[]>(`/projects/${id}/activities`),
   getTimeEntries: (id: string) => api.get<TimeEntry[]>(`/projects/${id}/time-entries`),
@@ -966,6 +991,14 @@ export const proposalCategoriesApi = {
   delete: (id: string) => api.delete(`/proposal-categories/${id}`),
 };
 
+export const activitiesApi = {
+  getAll: () => api.get<Activity[]>('/activities'),
+  create: (data: { code: string; name: string; isActive?: boolean }) =>
+    api.post<Activity>('/activities', data),
+  update: (id: string, data: Partial<Activity>) =>
+    api.put<Activity>(`/activities/${id}`, data),
+  delete: (id: string) => api.delete(`/activities/${id}`),
+};
 export const costCentersApi = {
   getAll: () => api.get<CostCenter[]>('/cost-centers'),
   create: (data: { code: string; name: string; isActive?: boolean }) =>

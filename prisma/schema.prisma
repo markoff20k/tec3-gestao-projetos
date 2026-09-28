@@ -255,6 +255,7 @@ model Project {
   timeEntries      TimeEntry[]
   taps             ProjectTap[]
   costCenters      CostCenter[]
+  activities       ProjectActivity[]
   healthRule       ProjectHealthRule?
 
   @@map("projects")
@@ -362,6 +363,7 @@ model TimeEntry {
   projectId       String    @map("project_id")
   collaboratorId  String    @map("collaborator_id")
   costCenterId    String?   @map("cost_center_id")
+  activityId      String?   @map("activity_id")
   entryDate       DateTime  @map("entry_date") @db.Date
   hours           Decimal   @db.Decimal(4, 2)
   description     String?
@@ -375,10 +377,44 @@ model TimeEntry {
 
   project         Project   @relation(fields: [projectId], references: [id])
   costCenter      CostCenter? @relation(fields: [costCenterId], references: [id])
+  activity        Activity?   @relation(fields: [activityId], references: [id])
 
   @@index([costCenterId])
+  @@index([activityId])
   @@index([isLegacyImport])
   @@map("time_entries")
+}
+
+// Catálogo de atividades mantido pelo admin, no mesmo formato dos centros de
+// custo e das categorias: código único, nome e desativação lógica.
+model Activity {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  legacyId  Int?     @unique @map("legacy_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  projects    ProjectActivity[]
+  timeEntries TimeEntry[]
+
+  @@map("activities")
+}
+
+// Quais atividades cada projeto habilita para apontamento. Espelha a tabela
+// ProjetoAtividade do sistema legado.
+model ProjectActivity {
+  id         String   @id @default(uuid())
+  projectId  String   @map("project_id")
+  activityId String   @map("activity_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  activity   Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, activityId])
+  @@index([activityId])
+  @@map("project_activities")
 }
 
 model ProposalCategory {

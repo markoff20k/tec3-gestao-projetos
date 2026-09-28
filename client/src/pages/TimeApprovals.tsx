@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
+import { AlarmClock, Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, UserRound, Users, X } from 'lucide-react';
 import { useLocation } from 'wouter';
-import { format, parseISO } from 'date-fns';
+import { differenceInCalendarDays, format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Layout } from '@/components/Layout';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +13,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
@@ -40,9 +43,44 @@ function getEntryDate(entry: TimeEntry) {
   return parseISO(String(entry.entryDate || '').slice(0, 10));
 }
 
+// Há quantos dias a linha pendente mais antiga do projeto está esperando. É o
+// sinal que ordena a fila: numa aprovação, o que espera há mais tempo é o que
+// trava o fechamento do mês do colaborador.
+function getWaitingDays(project: Project): number | null {
+  const raw = String(project.oldestPendingEntryAt ?? '').slice(0, 10);
+  if (!raw) return null;
+
+  const oldest = parseISO(raw);
+  if (Number.isNaN(oldest.getTime())) return null;
+
+  return Math.max(0, differenceInCalendarDays(new Date(), oldest));
+}
+
+function getWaitingTone(days: number | null) {
+  if (days === null) return 'neutro' as const;
+  if (days >= 15) return 'critico' as const;
+  if (days >= 7) return 'atencao' as const;
+  return 'ok' as const;
+}
+
+const waitingToneClass: Record<string, string> = {
+  critico: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-300/30 dark:bg-rose-500/10 dark:text-rose-200',
+  atencao: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-300/30 dark:bg-amber-500/10 dark:text-amber-100',
+  ok: 'border-border bg-muted/40 text-muted-foreground',
+  neutro: 'border-border bg-muted/40 text-muted-foreground',
+};
+
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 type PendingProjectRowProps = {
   project: Project;
   canManageApprovals: boolean;
+  isCoordinatedByCurrentUser: boolean;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
 };
@@ -69,7 +107,7 @@ function TimeApprovalsListSkeleton() {
   );
 }
 
-function PendingProjectRow({ project, canManageApprovals, isOpen, onOpenChange }: PendingProjectRowProps) {
+function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrentUser, isOpen, onOpenChange }: PendingProjectRowProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [rejectTarget, setRejectTarget] = useState<{ type: 'single'; entryId: string } | { type: 'bulk' } | null>(null);
@@ -196,20 +234,74 @@ function PendingProjectRow({ project, canManageApprovals, isOpen, onOpenChange }
 
   const disableActions = updateEntryStatusMutation.isPending || bulkUpdateEntryStatusMutation.isPending;
 
+  // Enquanto o card está fechado os números vêm da listagem; expandido, das
+  // linhas já carregadas, que são a fonte mais fresca.
+  const pendingCount = isOpen ? pendingEntries.length : Number(project.pendingEntriesCount || 0);
+  const pendingCollaborators = Number(project.pendingCollaboratorsCount || 0);
+  const waitingDays = getWaitingDays(project);
+  const waitingTone = getWaitingTone(waitingDays);
+
   return (
     <Collapsible open={isOpen} onOpenChange={onOpenChange}>
       <div className="rounded-xl border border-border bg-card">
-        <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <p className="truncate text-base font-semibold text-foreground">{project.code} · {project.name}</p>
-            <p className="truncate text-xs text-muted-foreground">{project.client?.razaoSocial || 'Sem cliente'}</p>
+        <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 space-y-2">
+            <div className="min-w-0">
+              <p className="truncate text-base font-semibold text-foreground">{project.code} · {project.name}</p>
+              <p className="truncate text-xs text-muted-foreground">{project.client?.razaoSocial || 'Sem cliente'}</p>
+            </div>
+
+            {/* Quem responde pela aprovação deste projeto. Sem isto, numa lista de
+                vários projetos não dá para saber de quem cobrar. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              {project.coordinator?.name ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Avatar className="h-5 w-5">
+                    <AvatarFallback className="text-[9px]">{getInitials(project.coordinator.name)}</AvatarFallback>
+                  </Avatar>
+                  <span className="font-medium text-foreground">{project.coordinator.name}</span>
+                  {isCoordinatedByCurrentUser ? (
+                    <Badge variant="outline" className="h-5 border-primary/30 bg-primary/10 px-1.5 text-[10px] text-primary">
+                      você aprova
+                    </Badge>
+                  ) : null}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-200">
+                  <UserRound className="h-3.5 w-3.5" />
+                  Coordenador não definido
+                </span>
+              )}
+
+              {pendingCollaborators > 0 ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Users className="h-3.5 w-3.5" />
+                  {pendingCollaborators} colaborador{pendingCollaborators > 1 ? 'es' : ''} aguardando
+                </span>
+              ) : null}
+            </div>
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
+            {waitingDays !== null ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="outline" className={cn('gap-1 text-xs', waitingToneClass[waitingTone])}>
+                    <AlarmClock className="h-3.5 w-3.5" />
+                    {waitingDays === 0 ? 'de hoje' : `há ${waitingDays} dia${waitingDays > 1 ? 's' : ''}`}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[240px] text-xs">
+                  Tempo de espera do lançamento pendente mais antigo deste projeto.
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
+
             <Badge variant="outline" className="text-xs">
-              {isOpen ? pendingEntries.length : (Number(project.pendingHours || 0) > 0 ? '–' : 0)} pendente(s)
+              {pendingCount} pendente{pendingCount === 1 ? '' : 's'}
             </Badge>
-            <Badge variant="outline" className="text-xs">
-              {isOpen ? pendingHours.toFixed(1) : Number(project.pendingHours || 0).toFixed(1)}h pendentes
+            <Badge variant="outline" className="text-xs font-semibold">
+              {(isOpen ? pendingHours : Number(project.pendingHours || 0)).toFixed(1)}h
             </Badge>
             <CollapsibleTrigger asChild>
               <Button type="button" variant="outline" size="sm" data-testid={`button-toggle-project-approvals-${project.id}`}>
@@ -354,6 +446,7 @@ export default function TimeApprovals() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [openProjects, setOpenProjects] = useState<Record<string, boolean>>({});
+  const [onlyMine, setOnlyMine] = useState(false);
 
   const { data: projects = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
     queryKey: ['/api/projects'],
@@ -363,20 +456,45 @@ export default function TimeApprovals() {
   const userRole = normalizeUserRole(user?.role);
   const isAdmin = userRole === 'admin' || userRole === 'owner';
 
-  const projectsWithPending = useMemo(() => {
-    return projects
+  const isCoordinatedByMe = (project: Project) =>
+    Boolean(project.coordinatorId) && project.coordinatorId === user?.id;
+
+  const pendingScope = useMemo(
+    () => projects
       .filter((project) => Number(project.pendingHours || 0) > 0)
-      .filter((project) => {
-        if (isAdmin) return true;
-        return Boolean(project.coordinatorId) && project.coordinatorId === user?.id;
-      })
+      .filter((project) => (isAdmin ? true : isCoordinatedByMe(project))),
+    [projects, isAdmin, user?.id]
+  );
+
+  const myPendingCount = useMemo(
+    () => pendingScope.filter(isCoordinatedByMe).length,
+    [pendingScope, user?.id]
+  );
+
+  const projectsWithPending = useMemo(() => {
+    return pendingScope
+      .filter((project) => (onlyMine ? isCoordinatedByMe(project) : true))
+      // Fila de aprovação ordena por espera, não por volume: o lançamento que
+      // está parado há mais tempo é o que trava o fechamento de alguém.
       .sort((projectA, projectB) => {
+        const waitA = getWaitingDays(projectA);
+        const waitB = getWaitingDays(projectB);
+        if (waitA !== waitB) return (waitB ?? -1) - (waitA ?? -1);
+
         const pendingA = Number(projectA.pendingHours || 0);
         const pendingB = Number(projectB.pendingHours || 0);
         if (pendingA !== pendingB) return pendingB - pendingA;
+
         return projectA.name.localeCompare(projectB.name, 'pt-BR');
       });
-  }, [projects, isAdmin, user?.id]);
+  }, [pendingScope, onlyMine, user?.id]);
+
+  const longestWait = useMemo(() => {
+    const esperas = projectsWithPending
+      .map(getWaitingDays)
+      .filter((d): d is number => d !== null);
+    return esperas.length ? Math.max(...esperas) : null;
+  }, [projectsWithPending]);
 
   const totalPendingProjects = projectsWithPending.length;
   const totalPendingHours = useMemo(
@@ -457,13 +575,29 @@ export default function TimeApprovals() {
             </Card>
             <Card className="border-border/60 bg-muted/20 shadow-none">
               <CardContent className="p-4">
-                <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Escopo</p>
+                <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Espera mais longa</p>
                 {isLoadingProjects ? (
-                  <Skeleton className="mt-2 h-4 w-56" />
+                  <Skeleton className="mt-2 h-8 w-24" />
+                ) : longestWait === null ? (
+                  <p className="mt-2 text-2xl font-semibold text-foreground">—</p>
                 ) : (
-                  <p className="mt-2 text-sm font-semibold text-foreground">
-                    {isAdmin ? 'Todos os projetos com pendência' : 'Apenas projetos em que você coordena'}
-                  </p>
+                  <>
+                    <p
+                      className={cn(
+                        'mt-2 text-2xl font-semibold',
+                        longestWait >= 15
+                          ? 'text-rose-600 dark:text-rose-300'
+                          : longestWait >= 7
+                            ? 'text-amber-600 dark:text-amber-300'
+                            : 'text-foreground'
+                      )}
+                    >
+                      {longestWait === 0 ? 'hoje' : `${longestWait} dia${longestWait > 1 ? 's' : ''}`}
+                    </p>
+                    <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                      {isAdmin ? 'Todos os projetos com pendência' : 'Apenas projetos que você coordena'}
+                    </p>
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -474,6 +608,25 @@ export default function TimeApprovals() {
           <CardHeader className="gap-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <CardTitle className="text-base">Projetos com pendências</CardTitle>
+              <div className="flex flex-wrap items-center gap-4">
+                {/* Um admin vê a fila inteira; este atalho isola o que é
+                    responsabilidade dele, sem trocar de tela. */}
+                {isAdmin && myPendingCount > 0 ? (
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="only-mine-approvals"
+                      checked={onlyMine}
+                      onCheckedChange={(checked) => {
+                        setOnlyMine(checked);
+                        setCurrentPage(1);
+                      }}
+                      data-testid="switch-only-my-approvals"
+                    />
+                    <Label htmlFor="only-mine-approvals" className="cursor-pointer text-sm text-muted-foreground">
+                      Só os que eu coordeno ({myPendingCount})
+                    </Label>
+                  </div>
+                ) : null}
               {totalPendingProjects > 0 ? (
                 <div className="flex items-center gap-2">
                   <Label className="text-sm text-muted-foreground">Exibir</Label>
@@ -492,6 +645,7 @@ export default function TimeApprovals() {
                   <span className="text-sm text-muted-foreground">por página</span>
                 </div>
               ) : null}
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -512,6 +666,7 @@ export default function TimeApprovals() {
                       key={project.id}
                       project={project}
                       canManageApprovals={canManageProjectApprovals}
+                      isCoordinatedByCurrentUser={isCoordinatedByMe(project)}
                       isOpen={isOpen}
                       onOpenChange={(open) =>
                         setOpenProjects((current) => ({

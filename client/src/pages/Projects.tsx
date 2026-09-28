@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, UserPlus, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info, Star, ArrowUpDown, ArrowUp, ArrowDown, Flag } from 'lucide-react';
+import { Plus, Search, Eye, Clock, LayoutGrid, List, UserRound, UserPlus, Filter, SlidersHorizontal, X, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Trash2, FileText, Download, Printer, ArrowRightCircle, ClipboardCheck, MailCheck, Sparkles, Info, Star, ArrowUpDown, ArrowUp, ArrowDown, Flag, AlertTriangle, Lock } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -67,7 +67,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { normalizeTapLogo } from '@/lib/tapHtml';
 import { cn } from '@/lib/utils';
-import { projectsApi, clientsApi, usersApi, projectFavoritesApi, Project, Client, ProjectTap, ProjectMember, UserOption, EntityActivity, ProjectHealthRuleInput, ProjectHealthRuleResponse } from '@/lib/api';
+import { projectsApi, clientsApi, usersApi, activitiesApi, projectFavoritesApi, Activity, Project, Client, ProjectTap, ProjectMember, ProjectActivity, UserOption, EntityActivity, ProjectHealthRuleInput, ProjectHealthRuleResponse } from '@/lib/api';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 import { DangerZoneConfirm } from '@/components/DangerZoneConfirm';
 import { ProjectHealthDot, ProjectHealthSummary } from '@/components/ProjectHealthBadge';
@@ -85,12 +85,39 @@ const statusColors: Record<string, string> = {
 const projectStatusBadgeClassName = 'inline-flex min-w-[112px] h-7 items-center justify-center px-2.5 text-xs font-medium text-white leading-none';
 
 const statusLabels: Record<string, string> = {
-  planning: 'Planejamento',
-  in_progress: 'Em Andamento',
-  active: 'Em Andamento',
-  on_hold: 'Pausado',
+  planning: 'Não iniciado',
+  in_progress: 'Em andamento',
+  active: 'Em andamento',
+  on_hold: 'Paralisado',
   completed: 'Concluído',
   cancelled: 'Cancelado',
+};
+
+// Status tecnico na ordem do ciclo de vida do projeto.
+const PROJECT_STATUS_OPTIONS = [
+  { value: 'planning', label: 'Não iniciado' },
+  { value: 'active', label: 'Em andamento' },
+  { value: 'on_hold', label: 'Paralisado' },
+  { value: 'completed', label: 'Concluído' },
+  { value: 'cancelled', label: 'Cancelado' },
+] as const;
+
+// Espelha PROJECT_STATUS_TRANSITIONS do servidor: o Select desabilita o que o
+// servidor recusaria, em vez de deixar o usuario descobrir pelo erro.
+const PROJECT_STATUS_TRANSITIONS: Record<string, string[]> = {
+  planning: ['active', 'cancelled'],
+  active: ['on_hold', 'completed', 'cancelled', 'planning'],
+  on_hold: ['active', 'completed', 'cancelled', 'planning'],
+  completed: ['active'],
+  cancelled: ['active'],
+};
+
+const PROJECT_STATUS_CONSEQUENCE: Record<string, string> = {
+  planning: 'O projeto volta a ser tratado como não iniciado.',
+  active: 'A equipe alocada volta a poder lançar horas neste projeto.',
+  on_hold: 'A equipe deixa de lançar e editar horas até que o projeto seja retomado. Todo o histórico é preservado.',
+  completed: 'O projeto é encerrado como concluído e ninguém mais lança ou edita horas nele. Somente um administrador pode reabri-lo.',
+  cancelled: 'O projeto é encerrado como cancelado e ninguém mais lança ou edita horas nele. Somente um administrador pode reabri-lo.',
 };
 
 const setupStatusLabels: Record<string, string> = {
@@ -195,7 +222,8 @@ export default function Projects() {
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [deleteConfirmProjectInput, setDeleteConfirmProjectInput] = useState('');
-  const [closeProjectDialogOpen, setCloseProjectDialogOpen] = useState(false);
+  // Destino da troca de status; diferente de null abre o dialogo de confirmacao.
+  const [statusChangeTarget, setStatusChangeTarget] = useState<string | null>(null);
   const [closeConfirmProjectInput, setCloseConfirmProjectInput] = useState('');
   const [tapPreviewOpen, setTapPreviewOpen] = useState(false);
   const [tapDetailsOpen, setTapDetailsOpen] = useState(false);
@@ -443,6 +471,88 @@ export default function Projects() {
     enabled: detailsOpen && !!selectedProjectId,
   });
 
+  const { data: projectActivities = [], isLoading: isLoadingProjectActivities } = useQuery<ProjectActivity[]>({
+    queryKey: ['/api/projects', selectedProjectId, 'allowed-activities'],
+    queryFn: () => projectsApi.getProjectActivities(selectedProjectId as string),
+    enabled: detailsOpen && !!selectedProjectId,
+  });
+
+  // Catálogo completo para o seletor. Só as ativas podem ser habilitadas.
+  const { data: activityCatalog = [] } = useQuery<Activity[]>({
+    queryKey: ['/api/activities'],
+    queryFn: () => activitiesApi.getAll(),
+    enabled: detailsOpen,
+  });
+
+  const [selectedActivityIds, setSelectedActivityIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setSelectedActivityIds(projectActivities.map((activity) => activity.id));
+  }, [projectActivities]);
+
+  const entriesCountByActivity = useMemo(
+    () => new Map(projectActivities.map((activity) => [activity.id, activity.entriesCount])),
+    [projectActivities]
+  );
+
+  const activityCatalogById = useMemo(
+    () => new Map(activityCatalog.map((activity) => [activity.id, activity])),
+    [activityCatalog]
+  );
+
+  // Mostra as habilitadas na ordem do catálogo, com as que já têm horas primeiro:
+  // são as que o coordenador mais consulta e as únicas que não pode remover.
+  const selectedActivities = useMemo(() => {
+    const resolved = selectedActivityIds
+      .map((id) => activityCatalogById.get(id) ?? projectActivities.find((a) => a.id === id))
+      .filter((activity): activity is Activity => Boolean(activity?.name));
+
+    return [...resolved].sort((a, b) => {
+      const usoA = entriesCountByActivity.get(a.id) ?? 0;
+      const usoB = entriesCountByActivity.get(b.id) ?? 0;
+      if ((usoA > 0) !== (usoB > 0)) return usoA > 0 ? -1 : 1;
+      return String(a.name ?? '').localeCompare(String(b.name ?? ''), 'pt-BR', { sensitivity: 'base' });
+    });
+  }, [selectedActivityIds, activityCatalogById, projectActivities, entriesCountByActivity]);
+
+  const availableActivities = useMemo(
+    () => activityCatalog.filter((activity) => !selectedActivityIds.includes(activity.id)),
+    [activityCatalog, selectedActivityIds]
+  );
+
+  const currentActivityIds = useMemo(
+    () => projectActivities.map((activity) => activity.id).sort(),
+    [projectActivities]
+  );
+
+  const hasActivityChanges =
+    currentActivityIds.join('|') !== [...selectedActivityIds].sort().join('|');
+
+  const toggleActivity = (activityId: string) => {
+    setSelectedActivityIds((current) =>
+      current.includes(activityId)
+        ? current.filter((id) => id !== activityId)
+        : [...current, activityId]
+    );
+  };
+
+  const updateProjectActivitiesMutation = useMutation({
+    mutationFn: (activityIds: string[]) =>
+      projectsApi.setProjectActivities(selectedProjectId as string, activityIds),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId, 'allowed-activities'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      toast({ title: 'Atividades do projeto atualizadas', variant: 'success' });
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao atualizar atividades', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const handleSaveActivities = () => {
+    if (!canManageTeamAllocation || !selectedProjectId || !hasActivityChanges) return;
+    updateProjectActivitiesMutation.mutate(selectedActivityIds);
+  };
   const { data: selectedProjectMembers = [] } = useQuery<ProjectMember[]>({
     queryKey: ['/api/projects', selectedProjectId, 'members'],
     queryFn: () => projectsApi.getMembers(selectedProjectId as string),
@@ -556,17 +666,17 @@ export default function Projects() {
     },
   });
 
-  const closeProjectMutation = useMutation({
-    mutationFn: () => projectsApi.close(selectedProjectId as string),
-    onSuccess: () => {
+  const changeStatusMutation = useMutation({
+    mutationFn: (status: string) => projectsApi.changeStatus(selectedProjectId as string, status),
+    onSuccess: (_project, status) => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       queryClient.invalidateQueries({ queryKey: ['/api/projects', selectedProjectId] });
-      toast({ title: 'Projeto encerrado com sucesso', variant: 'success' });
-      setCloseProjectDialogOpen(false);
+      toast({ title: `Status alterado para "${statusLabels[status] ?? status}"`, variant: 'success' });
+      setStatusChangeTarget(null);
       setCloseConfirmProjectInput('');
     },
     onError: (error) => {
-      toast({ title: 'Erro ao encerrar projeto', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erro ao alterar status', description: error.message, variant: 'destructive' });
     },
   });
 
@@ -775,6 +885,38 @@ export default function Projects() {
     selectedProject && canManageTeamAllocation && !isProjectClosed && isProjectExecutionStarted
   );
 
+  // Reabrir um projeto encerrado e exclusivo do admin; o resto segue a mesma
+  // regra do setup, da equipe e das atividades.
+  const canChangeStatus = Boolean(
+    selectedProject && (isProjectClosed ? isAdmin : canManageTeamAllocation)
+  );
+
+  const rawProjectStatus = String(selectedProject?.status ?? '');
+  const currentProjectStatus = rawProjectStatus === 'in_progress' ? 'active' : rawProjectStatus;
+  const availableStatusTargets = PROJECT_STATUS_TRANSITIONS[currentProjectStatus] ?? [];
+  const projectHasTimeEntries = Number(selectedProject?.timeSummary?.entriesCount || 0) > 0;
+
+  // Por que um destino nao esta disponivel. A opcao aparece desabilitada com o
+  // motivo, em vez de sumir da lista e deixar o usuario sem entender.
+  const statusTargetBlockReason = (target: string): string | null => {
+    if (target === currentProjectStatus) return null;
+
+    if (!availableStatusTargets.includes(target)) {
+      return `Não é possível passar de "${statusLabels[currentProjectStatus] ?? currentProjectStatus}" para "${statusLabels[target] ?? target}"`;
+    }
+    if (isProjectClosed && !isAdmin) return 'Somente um administrador pode reabrir o projeto';
+    if (target === 'planning' && projectHasTimeEntries) return 'O projeto já tem horas lançadas';
+    if (target === 'active' && currentProjectStatus === 'planning' && !isSetupCompletedEffective) {
+      return 'Conclua o setup antes de iniciar o projeto';
+    }
+    if ((target === 'completed' || target === 'cancelled') && hasPendingHoursApproval) {
+      return 'Existem horas pendentes de aprovação';
+    }
+    return null;
+  };
+
+  const statusChangeRequiresTyping = statusChangeTarget === 'completed' || statusChangeTarget === 'cancelled';
+
   const openHealthRuleDialog = () => {
     const currentRule = selectedProjectHealthRule?.rule;
     setHealthRuleDraft({
@@ -823,7 +965,8 @@ export default function Projects() {
     )
   );
 
-  const canEditSetupAfterCompletion = !isSetupMarkedCompleted || isAdmin;
+  // Espelha a regra do servidor: admin ou coordenador do próprio projeto.
+  const canEditSetup = Boolean(selectedProject && (isAdmin || isCoordinatorOfSelectedProject));
 
   const isTapReadyEffective = Boolean(
     selectedProject && (
@@ -833,7 +976,7 @@ export default function Projects() {
     )
   );
 
-  const canEditSetupCoordinator = canEditSetupAfterCompletion && !isTapReadyEffective;
+  const canEditSetupCoordinator = canEditSetup && !isTapReadyEffective;
 
   const isLegacyOnboardingInferred = Boolean(
     selectedProject && selectedProject.setupStatus !== 'completed' && isProjectExecutionStarted
@@ -1041,8 +1184,8 @@ export default function Projects() {
 
     if (!selectedProject) return;
 
-    if (isSetupMarkedCompleted && !isAdmin) {
-      toast({ title: 'Somente administradores podem alterar setup concluído', variant: 'destructive' });
+    if (!canEditSetup) {
+      toast({ title: 'Somente o coordenador do projeto ou administrador pode alterar o setup', variant: 'destructive' });
       return;
     }
 
@@ -1052,8 +1195,12 @@ export default function Projects() {
 
     try {
       if (hasSetupChanges) {
+        // O coordenador só vai no payload quando realmente mudou. Enviá-lo sempre
+        // fazia o servidor recusar a edição inteira em projeto com TAP gerado.
+        const coordinatorChanged = normalizedFormCoordinatorId !== normalizedCurrentCoordinatorId;
+
         await updateSetupMutation.mutateAsync({
-          coordinatorId: normalizedFormCoordinatorId || null,
+          ...(coordinatorChanged ? { coordinatorId: normalizedFormCoordinatorId || null } : {}),
           dailyLimitHours: normalizedFormDailyLimitHours,
           requiresApproval: normalizedFormRequiresApproval === 'true',
         });
@@ -1158,7 +1305,7 @@ export default function Projects() {
 
   const canSubmitSetup = Boolean(
     selectedProject &&
-    canEditSetupAfterCompletion &&
+    canEditSetup &&
     (hasSetupChanges || canCompleteSetup)
   );
 
@@ -1894,24 +2041,37 @@ export default function Projects() {
         </AlertDialog>
 
         <AlertDialog
-          open={closeProjectDialogOpen}
+          open={Boolean(statusChangeTarget)}
           onOpenChange={(open) => {
-            if (!open && !closeProjectMutation.isPending) {
-              setCloseProjectDialogOpen(false);
+            if (!open && !changeStatusMutation.isPending) {
+              setStatusChangeTarget(null);
               setCloseConfirmProjectInput('');
             }
           }}
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Encerrar projeto?</AlertDialogTitle>
+              <AlertDialogTitle>
+                {statusChangeTarget === 'completed'
+                  ? 'Encerrar projeto?'
+                  : statusChangeTarget === 'cancelled'
+                    ? 'Cancelar projeto?'
+                    : statusChangeTarget === 'on_hold'
+                      ? 'Paralisar projeto?'
+                      : statusChangeTarget === 'planning'
+                        ? 'Voltar para não iniciado?'
+                        : isProjectClosed
+                          ? 'Reabrir projeto?'
+                          : 'Retomar projeto?'}
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                O projeto “{selectedProject?.code}” será marcado como concluído. Esta ação não pode ser desfeita
-                e, a partir dela, nenhum colaborador poderá lançar ou editar horas neste projeto.
+                O projeto “{selectedProject?.code}” passará para “
+                {statusChangeTarget ? statusLabels[statusChangeTarget] ?? statusChangeTarget : ''}”.{' '}
+                {statusChangeTarget ? PROJECT_STATUS_CONSEQUENCE[statusChangeTarget] ?? '' : ''}
               </AlertDialogDescription>
             </AlertDialogHeader>
 
-            {hasPendingHoursApproval ? (
+            {statusChangeRequiresTyping && hasPendingHoursApproval ? (
               <div className="space-y-3 rounded-lg border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-300/30 dark:bg-[#3a3018] dark:text-amber-100">
                 <p>
                   Este projeto tem {pendingApprovalEntriesCount} lançamento(s) de horas pendentes de aprovação
@@ -1930,36 +2090,45 @@ export default function Projects() {
                   </Button>
                 ) : null}
               </div>
-            ) : (
+            ) : statusChangeRequiresTyping ? (
               <DangerZoneConfirm
                 title="Confirmação de encerramento"
-                description="Para confirmar o encerramento, digite o código do projeto exatamente como abaixo:"
+                description="Para confirmar, digite o código do projeto exatamente como abaixo:"
                 expectedValue={selectedProject?.code || ''}
                 value={closeConfirmProjectInput}
                 onValueChange={setCloseConfirmProjectInput}
                 inputTestId={selectedProject ? `input-confirm-close-project-${selectedProject.id}` : undefined}
               />
-            )}
+            ) : null}
 
             <AlertDialogFooter>
-              <AlertDialogCancel disabled={closeProjectMutation.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogCancel disabled={changeStatusMutation.isPending}>Voltar</AlertDialogCancel>
               <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                className={
+                  statusChangeRequiresTyping
+                    ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                    : undefined
+                }
                 disabled={
-                  closeProjectMutation.isPending ||
+                  changeStatusMutation.isPending ||
                   !selectedProject ||
-                  hasPendingHoursApproval ||
-                  closeConfirmProjectInput.trim() !== (selectedProject?.code || '')
+                  !statusChangeTarget ||
+                  (statusChangeRequiresTyping &&
+                    (hasPendingHoursApproval ||
+                      closeConfirmProjectInput.trim() !== (selectedProject?.code || '')))
                 }
                 onClick={(event) => {
                   event.preventDefault();
-                  if (!selectedProject || hasPendingHoursApproval) return;
-                  if (closeConfirmProjectInput.trim() !== (selectedProject.code || '')) return;
-                  closeProjectMutation.mutate();
+                  if (!selectedProject || !statusChangeTarget) return;
+                  if (statusChangeRequiresTyping) {
+                    if (hasPendingHoursApproval) return;
+                    if (closeConfirmProjectInput.trim() !== (selectedProject.code || '')) return;
+                  }
+                  changeStatusMutation.mutate(statusChangeTarget);
                 }}
-                data-testid="button-confirm-close-project"
+                data-testid="button-confirm-project-status"
               >
-                {closeProjectMutation.isPending ? 'Encerrando...' : 'Encerrar projeto'}
+                {changeStatusMutation.isPending ? 'Alterando...' : 'Confirmar alteração'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -2226,7 +2395,7 @@ export default function Projects() {
                                 type="number"
                                 value={setupForm.dailyLimitHours}
                                 onChange={(event) => setSetupForm((current) => ({ ...current, dailyLimitHours: event.target.value }))}
-                                disabled={!canEditSetupAfterCompletion}
+                                disabled={!canEditSetup}
                               />
                             </div>
                             <div className="space-y-2">
@@ -2234,7 +2403,7 @@ export default function Projects() {
                               <Select
                                 value={setupForm.requiresApproval}
                                 onValueChange={(value) => setSetupForm((current) => ({ ...current, requiresApproval: value }))}
-                                disabled={!canEditSetupAfterCompletion}
+                                disabled={!canEditSetup}
                               >
                                 <SelectTrigger>
                                   <SelectValue />
@@ -2309,9 +2478,9 @@ export default function Projects() {
                           </div>
                         ) : null}
 
-                        {isSetupMarkedCompleted ? (
+                        {!canEditSetup ? (
                           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-300/40 dark:bg-[#3a3018] dark:text-amber-100">
-                            Após a conclusão do setup, somente administradores podem alterar esta configuração.
+                            Somente o coordenador do projeto ou administrador pode alterar esta configuração.
                           </div>
                         ) : null}
 
@@ -2323,6 +2492,63 @@ export default function Projects() {
                             . Novos lançamentos de horas estão bloqueados.
                           </div>
                         ) : null}
+
+                        <div className="space-y-2 border-t pt-4">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold">Status técnico</p>
+                              <p className="text-xs text-muted-foreground">
+                                Situação de execução do projeto. Define se a equipe pode lançar horas.
+                              </p>
+                            </div>
+                            <Badge
+                              className={`${projectStatusBadgeClassName} ${statusColors[currentProjectStatus] ?? 'bg-gray-500'}`}
+                            >
+                              {statusLabels[currentProjectStatus] ?? currentProjectStatus}
+                            </Badge>
+                          </div>
+
+                          <Select
+                            value={currentProjectStatus}
+                            onValueChange={(value) => {
+                              if (value === currentProjectStatus) return;
+                              setCloseConfirmProjectInput('');
+                              setStatusChangeTarget(value);
+                            }}
+                            disabled={!canChangeStatus || changeStatusMutation.isPending}
+                          >
+                            <SelectTrigger data-testid="select-project-status">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {PROJECT_STATUS_OPTIONS.map((option) => {
+                                const blockReason = statusTargetBlockReason(option.value);
+
+                                return (
+                                  <SelectItem
+                                    key={option.value}
+                                    value={option.value}
+                                    disabled={Boolean(blockReason)}
+                                    data-testid={`option-project-status-${option.value}`}
+                                  >
+                                    <span>{option.label}</span>
+                                    {blockReason ? (
+                                      <span className="block text-[11px] text-muted-foreground">{blockReason}</span>
+                                    ) : null}
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectContent>
+                          </Select>
+
+                          {!canChangeStatus ? (
+                            <p className="text-xs text-muted-foreground">
+                              {isProjectClosed
+                                ? 'Projeto encerrado. Somente um administrador pode reabri-lo.'
+                                : 'Somente o coordenador do projeto ou administrador pode alterar o status.'}
+                            </p>
+                          ) : null}
+                        </div>
 
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                           <Button
@@ -2347,15 +2573,15 @@ export default function Projects() {
                               type="button"
                               variant="outline"
                               className="w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive sm:w-auto sm:min-w-[210px]"
-                              disabled={closeProjectMutation.isPending}
+                              disabled={changeStatusMutation.isPending}
                               onClick={() => {
                                 setCloseConfirmProjectInput('');
-                                setCloseProjectDialogOpen(true);
+                                setStatusChangeTarget('completed');
                               }}
                               data-testid="button-close-project"
                             >
                               <Flag className="mr-1 h-4 w-4" />
-                              {closeProjectMutation.isPending ? 'Encerrando...' : 'Encerrar projeto'}
+                              {changeStatusMutation.isPending ? 'Encerrando...' : 'Encerrar projeto'}
                             </Button>
                           ) : null}
                         </div>
@@ -2393,8 +2619,12 @@ export default function Projects() {
                                       {availableTeamCandidates.map((candidate) => (
                                         <CommandItem
                                           key={candidate.id}
-                                          value={candidate.name}
+                                          // O cmdk identifica o item por este valor: com dois
+                                          // homônimos ele tratava os dois como um só. O e-mail
+                                          // é único, separa os dois e ainda entra na busca.
+                                          value={`${candidate.name} ${candidate.email ?? candidate.id}`}
                                           onSelect={() => toggleTeamMember(candidate.id)}
+                                          className="group"
                                           data-testid={`option-add-team-member-${candidate.id}`}
                                         >
                                           <Avatar className="h-6 w-6">
@@ -2404,7 +2634,14 @@ export default function Projects() {
                                           </Avatar>
                                           <div className="min-w-0">
                                             <p className="truncate text-sm">{candidate.name}</p>
-                                            <p className="truncate text-[11px] text-muted-foreground">{candidate.role}</p>
+                                            {/* Cinza normal em repouso; ao realçar a linha, o CommandItem
+                                                troca o texto para accent-foreground e o subtítulo
+                                                acompanha. Cor fixa aqui ficava ilegível sobre o fundo
+                                                destacado, e baixar a opacidade derrubava o contraste
+                                                abaixo do mínimo legível. */}
+                                            <p className="truncate text-[11px] text-muted-foreground group-data-[selected=true]:text-accent-foreground">
+                                              {candidate.email || candidate.role}
+                                            </p>
                                           </div>
                                         </CommandItem>
                                       ))}
@@ -2440,7 +2677,9 @@ export default function Projects() {
                                   </Avatar>
                                   <div className="min-w-0">
                                     <p className="truncate font-medium">{candidate.name}</p>
-                                    <p className="truncate text-[11px] text-muted-foreground">{candidate.role}</p>
+                                    <p className="truncate text-[11px] text-muted-foreground">
+                                      {candidate.email || candidate.role}
+                                    </p>
                                   </div>
                                 </div>
                                 <Button
@@ -2469,6 +2708,157 @@ export default function Projects() {
                               disabled={updateMembersMutation.isPending}
                             >
                               {updateMembersMutation.isPending ? 'Salvando equipe...' : 'Salvar equipe alocada'}
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="space-y-4 border-t pt-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-base font-semibold">Atividades do projeto</p>
+                            <p className="text-xs text-muted-foreground">
+                              Só as atividades habilitadas aqui aparecem na grade de lançamento de horas.
+                            </p>
+                          </div>
+
+                          {canManageTeamAllocation ? (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={updateProjectActivitiesMutation.isPending}
+                                  data-testid="button-add-project-activity"
+                                >
+                                  <Plus className="mr-1 h-4 w-4" />
+                                  Habilitar atividade
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent align="end" className="w-[22rem] p-0">
+                                <Command>
+                                  <CommandInput placeholder="Buscar atividade..." />
+                                  <CommandList>
+                                    <CommandEmpty>
+                                      {activityCatalog.length === 0
+                                        ? 'Nenhuma atividade cadastrada. Cadastre em Administração › Atividades.'
+                                        : 'Todas as atividades já estão habilitadas.'}
+                                    </CommandEmpty>
+                                    <CommandGroup>
+                                      {availableActivities.map((activity) => (
+                                        <CommandItem
+                                          key={activity.id}
+                                          value={`${activity.code} ${activity.name}`}
+                                          onSelect={() => toggleActivity(activity.id)}
+                                          className="group"
+                                          data-testid={`option-project-activity-${activity.id}`}
+                                        >
+                                          <div className="min-w-0">
+                                            <p className="truncate text-sm">{activity.name}</p>
+                                            {/* Mesma razão do seletor de colaborador: a cor precisa
+                                                acompanhar o realce do item. */}
+                                            <p className="text-[11px] text-muted-foreground group-data-[selected=true]:text-accent-foreground">{activity.code}</p>
+                                          </div>
+                                        </CommandItem>
+                                      ))}
+                                    </CommandGroup>
+                                  </CommandList>
+                                </Command>
+                              </PopoverContent>
+                            </Popover>
+                          ) : null}
+                        </div>
+
+                        <div className="space-y-2">
+                          {isLoadingProjectActivities ? (
+                            <p className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                              Carregando atividades...
+                            </p>
+                          ) : selectedActivities.length === 0 ? (
+                            <div className="rounded-lg border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-300/30 dark:bg-[#3a3018] dark:text-amber-100">
+                              <p className="flex items-start gap-2 font-medium">
+                                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                                Nenhuma atividade habilitada
+                              </p>
+                              <p className="mt-1 pl-6 text-xs">
+                                Sem pelo menos uma atividade, ninguém consegue lançar horas neste projeto.
+                              </p>
+                            </div>
+                          ) : (
+                            selectedActivities.map((activity) => {
+                              const usoNoProjeto = entriesCountByActivity.get(activity.id) ?? 0;
+                              const bloqueada = usoNoProjeto > 0;
+
+                              return (
+                                <div
+                                  key={activity.id}
+                                  className="flex items-center gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2"
+                                  data-testid={`project-activity-${activity.id}`}
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-medium">{activity.name}</p>
+                                    <p className="text-[11px] text-muted-foreground">
+                                      {activity.code}
+                                      {bloqueada
+                                        ? ` · ${usoNoProjeto} lançamento${usoNoProjeto > 1 ? 's' : ''}`
+                                        : ' · sem lançamentos'}
+                                    </p>
+                                  </div>
+
+                                  {canManageTeamAllocation ? (
+                                    bloqueada ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className="inline-flex h-8 w-8 items-center justify-center text-muted-foreground">
+                                            <Lock className="h-3.5 w-3.5" />
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="left" className="max-w-[240px] text-xs">
+                                          Já existem horas lançadas nesta atividade. Removê-la deixaria os
+                                          lançamentos sem classificação.
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    ) : (
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                        onClick={() => toggleActivity(activity.id)}
+                                        title="Remover atividade do projeto"
+                                        data-testid={`button-remove-project-activity-${activity.id}`}
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </Button>
+                                    )
+                                  ) : null}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        {canManageTeamAllocation && hasActivityChanges ? (
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full sm:w-auto"
+                              onClick={() => setSelectedActivityIds(projectActivities.map((a) => a.id))}
+                              disabled={updateProjectActivitiesMutation.isPending}
+                            >
+                              Descartar
+                            </Button>
+                            <Button
+                              type="button"
+                              className="w-full sm:w-auto sm:min-w-[210px]"
+                              onClick={handleSaveActivities}
+                              disabled={updateProjectActivitiesMutation.isPending}
+                              data-testid="button-save-project-activities"
+                            >
+                              {updateProjectActivitiesMutation.isPending
+                                ? 'Salvando atividades...'
+                                : 'Salvar atividades'}
                             </Button>
                           </div>
                         ) : null}

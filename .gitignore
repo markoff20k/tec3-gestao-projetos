@@ -9,3 +9,6 @@ vite.config.ts.*
 .env
 .local/
 /generated/prisma
+
+# Backups de migracao de dados (dados de producao, nao versionar)
+backups/

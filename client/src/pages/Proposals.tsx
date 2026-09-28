@@ -440,10 +440,10 @@ function formatTapEmailErrorMessage(value: string | null | undefined): string {
 }
 
 const projectStatusLabels: Record<string, string> = {
-  planning: 'Planejamento',
+  planning: 'Não iniciado',
   in_progress: 'Em andamento',
   active: 'Em andamento',
-  on_hold: 'Pausado',
+  on_hold: 'Paralisado',
   completed: 'Concluído',
   cancelled: 'Cancelado',
 };

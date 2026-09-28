@@ -27,6 +27,7 @@ import TimeApprovals from "@/pages/TimeApprovals";
 import Users from "@/pages/Users";
 import Settings from "@/pages/Settings";
 import Categories from "@/pages/Categories";
+import Activities from "@/pages/Activities";
 import CostCenters from "@/pages/CostCenters";
 import ProjectHealthRules from "@/pages/ProjectHealthRules";
 
@@ -81,6 +82,9 @@ function Router() {
       </Route>
       <Route path="/cost-centers">
         <ProtectedRoute component={CostCenters} />
+      </Route>
+      <Route path="/activities">
+        <ProtectedRoute component={Activities} />
       </Route>
       <Route path="/project-health-rules">
         <ProtectedRoute component={ProjectHealthRules} />

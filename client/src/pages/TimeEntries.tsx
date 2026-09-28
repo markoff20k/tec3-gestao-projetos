@@ -62,7 +62,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { useUpload } from '@/hooks/use-upload';
-import { costCentersApi, CostCenter, projectFavoritesApi, projectsApi, Project, TimeEntry, TimeEntryAttachment } from '@/lib/api';
+import { Activity, projectFavoritesApi, projectsApi, Project, TimeEntry, TimeEntryAttachment } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const statusLabels: Record<string, string> = {
@@ -89,8 +89,7 @@ const statusDotClass: Record<string, string> = {
   rejected: 'bg-rose-500',
 };
 
-const NO_COST_CENTER = 'none';
-const PROJECT_COST_CENTER_OPTION = 'project';
+const NO_ACTIVITY = 'none';
 
 type ViewMode = 'day' | 'week' | 'month';
 
@@ -176,12 +175,14 @@ function isProjectLaunchable(project: Project) {
   return status === 'in_progress' || status === 'active' || status === 'em_andamento';
 }
 
-function rowKeyOf(projectId: string, costCenterId: string) {
-  return `${projectId}::${costCenterId}`;
+function rowKeyOf(projectId: string, activityId: string) {
+  return `${projectId}::${activityId}`;
 }
 
-function cellKeyOf(projectId: string, costCenterId: string, dayKey: string) {
-  return `${projectId}::${costCenterId}::${dayKey}`;
+// Sem atividade não há célula: o lançamento antigo sem vínculo cai em NO_ACTIVITY
+// e fica visível apenas para consulta.
+function cellKeyOf(projectId: string, activityId: string, dayKey: string) {
+  return `${projectId}::${activityId}::${dayKey}`;
 }
 
 function formatHours(value: number) {
@@ -269,13 +270,13 @@ export default function TimeEntries() {
 
   const [detailContext, setDetailContext] = useState<{
     projectId: string;
-    costCenterId: string;
+    activityId: string;
     dayKey: string;
   } | null>(null);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [hoursValue, setHoursValue] = useState('');
   const [descriptionValue, setDescriptionValue] = useState('');
-  const [detailCostCenterId, setDetailCostCenterId] = useState('');
+  const [detailActivityId, setDetailActivityId] = useState('');
   const [attachments, setAttachments] = useState<TimeEntryAttachment[]>([]);
   const [removingAttachmentPath, setRemovingAttachmentPath] = useState<string | null>(null);
   const [deleteConfirmEntryId, setDeleteConfirmEntryId] = useState<string | null>(null);
@@ -308,10 +309,6 @@ export default function TimeEntries() {
     queryFn: () => projectsApi.getAll(),
   });
 
-  const { data: costCenters = [] } = useQuery<CostCenter[]>({
-    queryKey: ['/api/cost-centers'],
-    queryFn: () => costCentersApi.getAll(),
-  });
 
   const entriesQueryKey = ['/api/time-entries/me', startKey, endKey] as const;
 
@@ -337,35 +334,15 @@ export default function TimeEntries() {
       toast({ title: 'Erro ao atualizar favoritos', description: error.message, variant: 'destructive' });
     },
   });
+  // Como no legado, os projetos administrativos (Férias, Feriado, Licença...)
+  // são projetos normais na grade: é neles que essas horas são apontadas.
   const launchableProjects = useMemo(
     () =>
       projects.filter(
-        (project) =>
-          isProjectLaunchable(project) &&
-          Boolean(project.isCurrentUserAllocated) &&
-          !project.isAdministrative
+        (project) => isProjectLaunchable(project) && Boolean(project.isCurrentUserAllocated)
       ),
     [projects]
   );
-
-  // A API devolve apenas os centros de custo administrativos; o centro de custo
-  // próprio de cada projeto vem junto do projeto.
-  const administrativeCostCenters = useMemo(
-    () => costCenters.filter((costCenter) => costCenter.isActive),
-    [costCenters]
-  );
-
-  const costCenterById = useMemo(() => {
-    const map = new Map<string, CostCenter>();
-    for (const costCenter of costCenters) map.set(costCenter.id, costCenter);
-    for (const project of projects) {
-      if (project.costCenter) map.set(project.costCenter.id, project.costCenter);
-    }
-    return map;
-  }, [costCenters, projects]);
-
-  const getSelectableCostCenters = (project: Project): CostCenter[] =>
-    project.costCenter ? [project.costCenter, ...administrativeCostCenters] : administrativeCostCenters;
 
   const filteredProjects = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -376,12 +353,23 @@ export default function TimeEntries() {
       return `${project.code} ${project.name}`.toLowerCase().includes(query);
     });
 
-    // Favoritos primeiro: quem aponta horas todo dia repete os mesmos projetos,
-    // e rolar a grade atrás deles é o atrito que o favorito existe para remover.
+    // Ordem de leitura da grade, do mais forte para o mais fraco:
+    //  1. favorito, que é uma fixação explícita do usuário;
+    //  2. mês do último apontamento, para o que ele está tocando agora ficar à mão;
+    //  3. código, que desempata dentro do mês e ordena quem nunca foi usado.
+    //
+    // A recência é por MÊS, não por dia: comparar a data exata reordenaria a grade
+    // a cada lançamento, e o usuário perderia a referência de onde cada projeto
+    // está. Por mês a lista fica estável e ainda traz o trabalho atual ao topo.
     return [...matching].sort((a, b) => {
       const favA = favoriteProjectsSet.has(a.id) ? 0 : 1;
       const favB = favoriteProjectsSet.has(b.id) ? 0 : 1;
       if (favA !== favB) return favA - favB;
+
+      const monthA = (a.lastEntryAt ?? '').slice(0, 7);
+      const monthB = (b.lastEntryAt ?? '').slice(0, 7);
+      if (monthA !== monthB) return monthA > monthB ? -1 : 1;
+
       return (a.code || '').localeCompare(b.code || '', 'pt-BR', { sensitivity: 'base' });
     });
   }, [launchableProjects, searchQuery, showOnlyFavorites, favoriteProjectsSet]);
@@ -389,7 +377,7 @@ export default function TimeEntries() {
   const entriesByCell = useMemo(() => {
     const map = new Map<string, TimeEntry[]>();
     for (const entry of periodEntries) {
-      const key = cellKeyOf(entry.projectId, entry.costCenterId || NO_COST_CENTER, getEntryDateKey(entry));
+      const key = cellKeyOf(entry.projectId, entry.activityId || NO_ACTIVITY, getEntryDateKey(entry));
       const bucket = map.get(key);
       if (bucket) bucket.push(entry);
       else map.set(key, [entry]);
@@ -397,14 +385,17 @@ export default function TimeEntries() {
     return map;
   }, [periodEntries]);
 
-  const costCenterRowsByProject = useMemo(() => {
-    const costCentersWithEntries = new Map<string, string[]>();
+  // Cada projeto mostra as atividades habilitadas para ele — o vínculo que o
+  // legado guarda em ProjetoAtividade. Fora dessa lista não se lança hora.
+  const activityRowsByProject = useMemo(() => {
+    const activitiesWithEntries = new Map<string, string[]>();
 
     for (const entry of periodEntries) {
-      const current = costCentersWithEntries.get(entry.projectId) ?? [];
-      const costCenterId = entry.costCenterId || NO_COST_CENTER;
-      if (!current.includes(costCenterId)) current.push(costCenterId);
-      costCentersWithEntries.set(entry.projectId, current);
+      const activityId = entry.activityId;
+      if (!activityId) continue;
+      const current = activitiesWithEntries.get(entry.projectId) ?? [];
+      if (!current.includes(activityId)) current.push(activityId);
+      activitiesWithEntries.set(entry.projectId, current);
     }
 
     const map = new Map<string, string[]>();
@@ -412,38 +403,37 @@ export default function TimeEntries() {
     for (const project of filteredProjects) {
       const rows: string[] = [];
 
-      // O centro de custo do próprio projeto é sempre a primeira linha: é onde
-      // o apontamento normalmente cai, e evita cair na linha "Sem centro de custo".
-      if (project.costCenter) rows.push(project.costCenter.id);
-
-      // Os administrativos (férias, feriado, licença, treinamento...) ficam sempre
-      // disponíveis dentro de cada projeto: são horas que o colaborador precisa
-      // apontar no dia a dia, não algo que ele deva acrescentar à grade antes.
-      for (const costCenter of administrativeCostCenters) {
-        if (!rows.includes(costCenter.id)) rows.push(costCenter.id);
+      for (const activity of project.activities ?? []) {
+        if (!rows.includes(activity.id)) rows.push(activity.id);
       }
 
-      // Lançamentos antigos podem apontar para centros de custo fora das listas
-      // acima (inativados, ou a linha "sem centro de custo" do legado).
-      for (const costCenterId of costCentersWithEntries.get(project.id) ?? []) {
-        if (!rows.includes(costCenterId)) rows.push(costCenterId);
+      // Lançamento antigo pode apontar para atividade que saiu da lista do
+      // projeto ou foi desativada: a linha continua visível para consulta.
+      for (const activityId of activitiesWithEntries.get(project.id) ?? []) {
+        if (!rows.includes(activityId)) rows.push(activityId);
       }
-
-      // Só sobra quando o projeto ainda não tem centro de custo próprio
-      // (projeto sem TAP gerado) e não há lançamento no período.
-      if (rows.length === 0) rows.push(NO_COST_CENTER);
 
       map.set(project.id, rows);
     }
 
     return map;
-  }, [periodEntries, filteredProjects, administrativeCostCenters]);
+  }, [periodEntries, filteredProjects]);
 
-  const getCellEntries = (projectId: string, costCenterId: string, dayKey: string) =>
-    entriesByCell.get(cellKeyOf(projectId, costCenterId, dayKey)) ?? [];
+  const activityById = useMemo(() => {
+    const map = new Map<string, Activity>();
+    for (const project of projects) {
+      for (const activity of project.activities ?? []) map.set(activity.id, activity);
+    }
+    for (const entry of periodEntries) {
+      if (entry.activity) map.set(entry.activity.id, entry.activity);
+    }
+    return map;
+  }, [projects, periodEntries]);
+  const getCellEntries = (projectId: string, activityId: string, dayKey: string) =>
+    entriesByCell.get(cellKeyOf(projectId, activityId, dayKey)) ?? [];
 
-  const getCellHours = (projectId: string, costCenterId: string, dayKey: string) =>
-    getCellEntries(projectId, costCenterId, dayKey).reduce(
+  const getCellHours = (projectId: string, activityId: string, dayKey: string) =>
+    getCellEntries(projectId, activityId, dayKey).reduce(
       (sum, entry) => sum + Number(entry.hours || 0),
       0
     );
@@ -492,13 +482,13 @@ export default function TimeEntries() {
 
   const commitCell = async (
     project: Project,
-    costCenterId: string,
+    activityId: string,
     day: Date,
     rawValue: string
   ) => {
     const dayKey = dateKey(day);
-    const cellKey = cellKeyOf(project.id, costCenterId, dayKey);
-    const cellEntries = getCellEntries(project.id, costCenterId, dayKey);
+    const cellKey = cellKeyOf(project.id, activityId, dayKey);
+    const cellEntries = getCellEntries(project.id, activityId, dayKey);
     const currentHours = cellEntries.reduce((sum, entry) => sum + Number(entry.hours || 0), 0);
 
     const normalized = rawValue.trim().replace(',', '.');
@@ -521,11 +511,11 @@ export default function TimeEntries() {
 
     const existingEntry = cellEntries[0];
 
-    if (!existingEntry && costCenterId === NO_COST_CENTER) {
+    if (!existingEntry && activityId === NO_ACTIVITY) {
       clearDraft(cellKey);
       toast({
-        title: 'Escolha um centro de custo',
-        description: 'A linha "Sem centro de custo" mostra apenas lançamentos antigos. Use a linha do centro de custo do projeto ou um administrativo.',
+        title: 'Escolha uma atividade',
+        description: 'Esta linha mostra apenas lançamentos antigos sem atividade. Use uma das atividades do projeto.',
         variant: 'destructive',
       });
       return;
@@ -573,7 +563,7 @@ export default function TimeEntries() {
         }
       } else if (existingEntry) {
         await projectsApi.updateTimeEntry(existingEntry.id, {
-          costCenterId: costCenterId === NO_COST_CENTER ? null : costCenterId,
+          activityId: activityId === NO_ACTIVITY ? null : activityId,
           entryDate: dayKey,
           hours: parsedHours,
           description: existingEntry.description,
@@ -583,7 +573,7 @@ export default function TimeEntries() {
         await projectsApi.createTimeEntry({
           projectId: project.id,
           collaboratorId: '',
-          costCenterId: costCenterId === NO_COST_CENTER ? null : costCenterId,
+          activityId: activityId === NO_ACTIVITY ? null : activityId,
           entryDate: dayKey,
           hours: parsedHours,
           description: '',
@@ -630,15 +620,15 @@ export default function TimeEntries() {
 
   const detailEntries = useMemo(() => {
     if (!detailContext) return [];
-    return getCellEntries(detailContext.projectId, detailContext.costCenterId, detailContext.dayKey);
+    return getCellEntries(detailContext.projectId, detailContext.activityId, detailContext.dayKey);
   }, [detailContext, entriesByCell]);
 
-  // Lançamento novo nunca nasce sem centro de custo: na linha de histórico o
-  // formulário já abre com o centro de custo do próprio projeto selecionado.
-  const defaultCostCenterIdFor = (projectId: string, costCenterId: string) => {
-    if (costCenterId !== NO_COST_CENTER) return costCenterId;
+  // Lançamento novo nunca nasce sem atividade: partindo da linha de histórico,
+  // o formulário já abre com a primeira atividade habilitada no projeto.
+  const defaultActivityIdFor = (projectId: string, activityId: string) => {
+    if (activityId !== NO_ACTIVITY) return activityId;
     const project = launchableProjects.find((candidate) => candidate.id === projectId);
-    return project?.costCenter?.id ?? '';
+    return project?.activities?.[0]?.id ?? '';
   };
 
   const resetDetailForm = () => {
@@ -646,18 +636,18 @@ export default function TimeEntries() {
     setHoursValue('');
     setDescriptionValue('');
     setAttachments([]);
-    setDetailCostCenterId(
-      detailContext ? defaultCostCenterIdFor(detailContext.projectId, detailContext.costCenterId) : ''
+    setDetailActivityId(
+      detailContext ? defaultActivityIdFor(detailContext.projectId, detailContext.activityId) : ''
     );
   };
 
-  const openDetail = (projectId: string, costCenterId: string, dayKey: string) => {
-    setDetailContext({ projectId, costCenterId, dayKey });
+  const openDetail = (projectId: string, activityId: string, dayKey: string) => {
+    setDetailContext({ projectId, activityId, dayKey });
     setEditingEntryId(null);
     setHoursValue('');
     setDescriptionValue('');
     setAttachments([]);
-    setDetailCostCenterId(defaultCostCenterIdFor(projectId, costCenterId));
+    setDetailActivityId(defaultActivityIdFor(projectId, activityId));
   };
 
   const startEditingEntry = (entry: TimeEntry) => {
@@ -665,7 +655,7 @@ export default function TimeEntries() {
     setHoursValue(String(entry.hours));
     setDescriptionValue(entry.description || '');
     setAttachments(entry.attachments || []);
-    setDetailCostCenterId(entry.costCenterId || '');
+    setDetailActivityId(entry.activityId || '');
   };
 
   const createMutation = useMutation({
@@ -769,7 +759,7 @@ export default function TimeEntries() {
     }
 
     const payload = {
-      costCenterId: detailCostCenterId || null,
+      activityId: detailActivityId || null,
       entryDate: detailContext.dayKey,
       hours: requestedHours,
       description: descriptionValue,
@@ -948,7 +938,7 @@ export default function TimeEntries() {
 
                 <tbody>
                   {filteredProjects.map((project) => {
-                    const rows = costCenterRowsByProject.get(project.id) ?? [NO_COST_CENTER];
+                    const rows = activityRowsByProject.get(project.id) ?? [];
                     const isExpanded = isProjectExpanded(project.id);
 
                     return (
@@ -1061,33 +1051,25 @@ export default function TimeEntries() {
                           </td>
                         </tr>
 
-                        {isExpanded && rows.map((costCenterId) => {
-                          const costCenter = costCenterId === NO_COST_CENTER ? null : costCenterById.get(costCenterId);
+                        {isExpanded && rows.map((activityId: string) => {
+                          const activity = activityId === NO_ACTIVITY ? null : activityById.get(activityId);
                           const rowTotal = days.reduce(
-                            (sum, day) => sum + getCellHours(project.id, costCenterId, dateKey(day)),
+                            (sum, day) => sum + getCellHours(project.id, activityId, dateKey(day)),
                             0
                           );
 
                           return (
                             <tr
-                              key={rowKeyOf(project.id, costCenterId)}
+                              key={rowKeyOf(project.id, activityId)}
                               className="border-b border-border/60 hover:bg-muted/20"
                             >
                               <td className="sticky left-0 z-10 bg-[hsl(var(--card))] px-3 py-1.5">
                                 <div className="truncate pl-4 text-xs text-foreground">
-                                  {costCenter ? (
-                                    // O centro de custo próprio do projeto é criado com o mesmo
-                                    // código e nome do projeto, então repetir o rótulo aqui
-                                    // duplicaria o cabeçalho logo acima. Essa linha é o destino
-                                    // padrão das horas, e é isso que o nome precisa dizer.
-                                    costCenter.id === project.costCenter?.id ? (
-                                      <span>Horas do projeto</span>
-                                    ) : (
-                                      `${costCenter.code} · ${costCenter.name}`
-                                    )
+                                  {activity ? (
+                                    activity.name
                                   ) : (
                                     <span className="text-muted-foreground">
-                                      Sem centro de custo{' '}
+                                      Sem atividade{' '}
                                       <span className="text-[10px]">(histórico)</span>
                                     </span>
                                   )}
@@ -1096,8 +1078,8 @@ export default function TimeEntries() {
 
                               {days.map((day) => {
                                 const dayKey = dateKey(day);
-                                const cellKey = cellKeyOf(project.id, costCenterId, dayKey);
-                                const cellEntries = getCellEntries(project.id, costCenterId, dayKey);
+                                const cellKey = cellKeyOf(project.id, activityId, dayKey);
+                                const cellEntries = getCellEntries(project.id, activityId, dayKey);
                                 const cellHours = cellEntries.reduce(
                                   (sum, entry) => sum + Number(entry.hours || 0),
                                   0
@@ -1105,9 +1087,9 @@ export default function TimeEntries() {
                                 const singleEntry = cellEntries.length === 1 ? cellEntries[0] : null;
                                 const isFuture = day > startOfDay(new Date());
                                 // A linha de histórico existe para mostrar lançamentos
-                                // antigos sem centro de custo, não para receber novos.
+                                // antigos sem atividade, não para receber novos.
                                 const isHistoryOnlyCell =
-                                  costCenterId === NO_COST_CENTER && cellEntries.length === 0;
+                                  activityId === NO_ACTIVITY && cellEntries.length === 0;
                                 const isLocked =
                                   isFuture ||
                                   isHistoryOnlyCell ||
@@ -1140,14 +1122,14 @@ export default function TimeEntries() {
                                       }
                                       onBlur={(event) => {
                                         if (draftValues[cellKey] === undefined) return;
-                                        void commitCell(project, costCenterId, day, event.target.value);
+                                        void commitCell(project, activityId, day, event.target.value);
                                       }}
                                       onKeyDown={(event) => {
                                         if (event.key === 'Enter') {
                                           event.currentTarget.blur();
                                         }
                                       }}
-                                      onDoubleClick={() => openDetail(project.id, costCenterId, dayKey)}
+                                      onDoubleClick={() => openDetail(project.id, activityId, dayKey)}
                                       disabled={isLocked || savingCells[cellKey]}
                                       inputMode="decimal"
                                       placeholder=""
@@ -1178,7 +1160,7 @@ export default function TimeEntries() {
                                         <TooltipTrigger asChild>
                                           <button
                                             type="button"
-                                            onClick={() => openDetail(project.id, costCenterId, dayKey)}
+                                            onClick={() => openDetail(project.id, activityId, dayKey)}
                                             className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center"
                                             aria-label={`${statusLabels[cellEntries[0].status] ?? cellEntries[0].status} — abrir detalhes do lançamento`}
                                             data-testid={`button-cell-detail-${cellKey}`}
@@ -1425,28 +1407,26 @@ export default function TimeEntries() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="detail-cost-center">Centro de custo</Label>
+                      <Label htmlFor="detail-activity">Atividade *</Label>
                       <Select
-                        value={detailCostCenterId || PROJECT_COST_CENTER_OPTION}
+                        value={detailActivityId || NO_ACTIVITY}
                         onValueChange={(value) =>
-                          setDetailCostCenterId(value === PROJECT_COST_CENTER_OPTION ? '' : value)
+                          setDetailActivityId(value === NO_ACTIVITY ? '' : value)
                         }
                         disabled={isSaving}
                       >
-                        <SelectTrigger id="detail-cost-center">
+                        <SelectTrigger id="detail-activity">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           {/* Só existe para não descaracterizar lançamentos antigos
-                              que já estão sem centro de custo. */}
-                          {!detailCostCenterId ? (
-                            <SelectItem value={PROJECT_COST_CENTER_OPTION}>
-                              Sem centro de custo (histórico)
-                            </SelectItem>
+                              que já estão sem atividade. */}
+                          {!detailActivityId ? (
+                            <SelectItem value={NO_ACTIVITY}>Sem atividade (histórico)</SelectItem>
                           ) : null}
-                          {getSelectableCostCenters(detailProject).map((costCenter) => (
-                            <SelectItem key={costCenter.id} value={costCenter.id}>
-                              {costCenter.code} · {costCenter.name}
+                          {(detailProject.activities ?? []).map((activity) => (
+                            <SelectItem key={activity.id} value={activity.id}>
+                              {activity.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
