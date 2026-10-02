@@ -158,6 +158,9 @@ model Proposal {
   hourJustification Decimal?  @map("hour_justification") @db.Decimal(10, 2)
   rehabilitation    Decimal?  @default(0) @db.Decimal(10, 2)
   subcontracted     Decimal?  @default(0) @db.Decimal(10, 2)
+  /// Compõem o total da proposta junto com as categorias: total = Σ(preço × horas) + mobilização − desconto.
+  mobilizationValue Decimal?  @default(0) @map("mobilization_value") @db.Decimal(12, 2)
+  discountValue     Decimal?  @default(0) @map("discount_value") @db.Decimal(12, 2)
   paymentBook       Decimal?  @map("payment_book") @default(0) @db.Decimal(10, 2)
   expense           Decimal?  @default(0) @db.Decimal(10, 2)
   additiveValue     Decimal?  @map("additive_value") @default(0) @db.Decimal(10, 2)

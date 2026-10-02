@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, ChevronsUpDown, Check, Star, StarOff, Maximize2, Minimize2, PanelRightClose, Trash2, Edit, Eye, Download, Upload, LayoutGrid, List, GripVertical, FileText, Loader2, Mail, Paperclip, FolderKanban, ArrowUpRight, CircleDashed, AlertTriangle, Sparkles, Route } from 'lucide-react';
+import { Plus, Search, ArrowRight, ChevronLeft, ChevronRight, Pencil, RotateCcw, Settings2, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, Calendar, SlidersHorizontal, ChevronDown, ChevronUp, ChevronsUpDown, Check, Star, StarOff, Maximize2, Minimize2, PanelRightClose, Trash2, Edit, Eye, Download, Upload, LayoutGrid, List, GripVertical, FileText, Loader2, Mail, Paperclip, FolderKanban, ArrowUpRight, CircleDashed, AlertTriangle, Sparkles, Route, FilePlus2 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -455,12 +455,29 @@ const projectSetupStatusLabels: Record<string, string> = {
   completed: 'Concluído',
 };
 
-function getProposalTapButtonState(proposal: Proposal | null): 'completed' | 'draft' | 'not_started' {
+export type ProposalTapState = 'completed' | 'linked' | 'draft' | 'not_started';
+
+/**
+ * Em que pé está o TAP de uma proposta.
+ *
+ * "completed" exige TAP de verdade. Ter projeto vinculado NÃO é a mesma coisa:
+ * 1.067 das 1.099 propostas ligadas a projeto vieram do import do legado e nunca
+ * emitiram TAP nenhum. Tratar as duas situações como uma só fazia a tela afirmar
+ * que um TAP existia quando não existia — foi o que levou a crer que uma mesma
+ * proposta tinha gerado dois TAPs.
+ *
+ * Os dois estados bloqueiam a geração do mesmo jeito; muda o que a tela diz.
+ */
+function getProposalTapButtonState(proposal: Proposal | null): ProposalTapState {
   if (!proposal) return 'not_started';
 
   const tapStatus = String(proposal.tapStatus || 'not_started');
-  if (proposal.projectId || ['generated', 'sent', 'failed'].includes(tapStatus)) {
+  if (proposal.tapGeneratedAt || ['generated', 'sent', 'failed'].includes(tapStatus)) {
     return 'completed';
+  }
+
+  if (proposal.projectId) {
+    return 'linked';
   }
 
   if (tapStatus === 'draft' || Boolean(proposal.tapPayload)) {
@@ -470,11 +487,28 @@ function getProposalTapButtonState(proposal: Proposal | null): 'completed' | 'dr
   return 'not_started';
 }
 
+/** O que a tela deve afirmar sobre o TAP, sem prometer o que não existe. */
+function getProposalTapStateLabel(proposal: Proposal | null): string {
+  const state = getProposalTapButtonState(proposal);
+
+  if (state === 'linked') return 'Projeto vinculado, sem TAP';
+  if (state === 'completed') {
+    const tapStatus = String(proposal?.tapStatus || 'generated');
+    return proposalTapStatusLabels[tapStatus] ?? 'Gerado';
+  }
+
+  return proposalTapStatusLabels[String(proposal?.tapStatus || 'not_started')] ?? 'Não iniciado';
+}
+
 function getProposalTapButtonClassName(proposal: Proposal | null): string {
   const state = getProposalTapButtonState(proposal);
 
   if (state === 'completed') {
     return 'border-emerald-600 bg-emerald-600 text-white hover:border-emerald-700 hover:bg-emerald-700';
+  }
+
+  if (state === 'linked') {
+    return 'border-slate-500 bg-slate-500 text-white hover:border-slate-600 hover:bg-slate-600';
   }
 
   if (state === 'draft') {
@@ -489,6 +523,10 @@ function getProposalTapStatusBadgeClassName(proposal: Proposal | null): string {
 
   if (state === 'completed') {
     return 'bg-green-500 text-white hover:bg-green-500';
+  }
+
+  if (state === 'linked') {
+    return 'bg-slate-500 text-white hover:bg-slate-500';
   }
 
   if (state === 'draft') {
@@ -620,6 +658,20 @@ function normalizeUserNameKey(name: string): string {
 // A busca ignora acentos e caixa: "elaboracao" acha "Em Elaboração".
 function normalizeSearchValue(value: unknown): string {
   return normalizeUserNameKey(String(value ?? ''));
+}
+
+/**
+ * Proposta que já virou projeto é documento fechado: não se revisa mais, adita-se.
+ * Revisar criaria uma versão paralela do mesmo contrato e, se marcada como sucesso,
+ * poderia gerar um segundo projeto.
+ */
+function isProposalConverted(proposal: Proposal | null): boolean {
+  if (!proposal) return false;
+  return (
+    Boolean(proposal.projectId) ||
+    Boolean(proposal.tapGeneratedAt) ||
+    ['generated', 'sent', 'failed'].includes(String(proposal.tapStatus || ''))
+  );
 }
 
 function isProposalTapReadOnly(proposal: Proposal | null): boolean {
@@ -759,7 +811,6 @@ export default function Proposals() {
   const [tapForm, setTapForm] = useState<ProposalTapDraft>(() => createEmptyTapDraft());
   const [tapGenerateConfirmOpen, setTapGenerateConfirmOpen] = useState(false);
   const [additiveProjectComboOpen, setAdditiveProjectComboOpen] = useState(false);
-  const [revisionConfirmProposal, setRevisionConfirmProposal] = useState<Proposal | null>(null);
   const [isSavingTap, setIsSavingTap] = useState(false);
   const [isTapAttachmentDragOver, setIsTapAttachmentDragOver] = useState(false);
   const [expensesProposal, setExpensesProposal] = useState<Proposal | null>(null);
@@ -2103,6 +2154,9 @@ export default function Proposals() {
       toast({ title: 'Erro ao excluir proposta', description: error.message, variant: 'destructive' });
     },
   });
+
+  // Proposta que o usuário tentou revisar, mas que já virou projeto.
+  const [additivePathProposal, setAdditivePathProposal] = useState<Proposal | null>(null);
 
   const revisionProposalMutation = useMutation({
     mutationFn: (proposalId: string) => proposalsApi.createRevision(proposalId),
@@ -4241,8 +4295,10 @@ export default function Proposals() {
                                       data-testid={`button-revision-proposal-${proposal.id}`}
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        if (proposal.projectId) {
-                                          setRevisionConfirmProposal(proposal);
+                                        // A ação não some para a proposta convertida: ela aponta
+                                        // o caminho certo, que é o aditivo.
+                                        if (isProposalConverted(proposal)) {
+                                          setAdditivePathProposal(proposal);
                                         } else {
                                           revisionProposalMutation.mutate(proposal.id);
                                         }
@@ -4253,9 +4309,13 @@ export default function Proposals() {
                                         revisionProposalMutation.isPending &&
                                         revisionProposalMutation.variables === proposal.id
                                       }
-                                      title="Revisão"
+                                      title={isProposalConverted(proposal) ? 'Criar aditivo' : 'Revisão'}
                                     >
-                                      <RotateCcw className="h-4 w-4" />
+                                      {isProposalConverted(proposal) ? (
+                                        <FilePlus2 className="h-4 w-4 text-teal-600" />
+                                      ) : (
+                                        <RotateCcw className="h-4 w-4" />
+                                      )}
                                     </Button>
                                   </div>
                                 ) : (
@@ -5320,27 +5380,32 @@ export default function Proposals() {
           </DialogContent>
         </Dialog>
 
-        <AlertDialog open={Boolean(revisionConfirmProposal)} onOpenChange={(open) => { if (!open) setRevisionConfirmProposal(null); }}>
+        <AlertDialog open={Boolean(additivePathProposal)} onOpenChange={(open) => { if (!open) setAdditivePathProposal(null); }}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Criar revisão desta proposta?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Esta proposta já foi convertida em projeto ({revisionConfirmProposal?.code}). Ao marcar a nova revisão como sucesso novamente, o mesmo projeto será mantido e as horas/valor da revisão serão somados automaticamente a ele.
+              <AlertDialogTitle>Esta proposta já virou projeto</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-2">
+                  <p>
+                    A {additivePathProposal?.code} já gerou projeto, então ela não é mais revisada — vira
+                    documento fechado do contrato.
+                  </p>
+                  <p>
+                    Para ampliar <strong>prazo</strong>, <strong>valor</strong> ou <strong>escopo</strong>, crie um
+                    aditivo: ele soma ao projeto que já existe, sem criar um projeto novo.
+                  </p>
+                  <p className="text-xs">
+                    Por enquanto o aditivo é criado como uma proposta com situação{' '}
+                    <strong>Sucesso (aditivo)</strong>, vinculada ao projeto na geração do TAP. A tela dedicada de
+                    aditamento está em construção.
+                  </p>
+                </div>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel disabled={revisionProposalMutation.isPending}>Cancelar</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={(event) => {
-                  event.preventDefault();
-                  if (!revisionConfirmProposal) return;
-                  revisionProposalMutation.mutate(revisionConfirmProposal.id);
-                  setRevisionConfirmProposal(null);
-                }}
-                disabled={revisionProposalMutation.isPending}
-              >
-                {revisionProposalMutation.isPending ? 'Criando...' : 'Sim, criar revisão'}
-              </AlertDialogAction>
+              {/* Sem botão de confirmar: não há mais o que confirmar, a revisão
+                  deixou de existir para esta proposta. */}
+              <AlertDialogAction onClick={() => setAdditivePathProposal(null)}>Entendi</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -5829,7 +5894,7 @@ export default function Proposals() {
 
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className={cn('border', getProposalTapButtonClassName(selectedProposal))}>
-                        TAP {proposalTapStatusLabels[selectedProposal.tapStatus || 'not_started'] || 'Não iniciado'}
+                        TAP {getProposalTapStateLabel(selectedProposal)}
                       </Badge>
                       <Badge variant="outline">
                         Projeto {selectedProposal.projectId ? 'criado' : 'pendente'}
@@ -5859,6 +5924,7 @@ export default function Proposals() {
                     className={cn(
                       'rounded-2xl border p-4 text-left transition-colors',
                       selectedProposalTapButtonState === 'completed' && 'border-emerald-200 bg-emerald-50',
+                      selectedProposalTapButtonState === 'linked' && 'border-slate-300 bg-slate-100',
                       selectedProposalTapButtonState === 'draft' && 'border-amber-200 bg-amber-50',
                       selectedProposalTapButtonState === 'not_started' && 'border-slate-200 bg-slate-50',
                       canOpenProposalTap(selectedProposal) && isLatestRevision(selectedProposal) ? 'hover:bg-opacity-80' : 'cursor-default'
@@ -5879,7 +5945,7 @@ export default function Proposals() {
                         </p>
                       </div>
                       <Badge className={cn('border', getProposalTapButtonClassName(selectedProposal))}>
-                        {proposalTapStatusLabels[selectedProposal.tapStatus || 'not_started'] || 'Não iniciado'}
+                        {getProposalTapStateLabel(selectedProposal)}
                       </Badge>
                     </div>
                     {canOpenProposalTap(selectedProposal) && isLatestRevision(selectedProposal) ? (

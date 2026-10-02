@@ -12,6 +12,7 @@ import puppeteer from "puppeteer-core";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 import { authenticateViaLdap, listAdDirectoryUsers } from "./ldap";
 import { PERMISSION_CATALOG, resolvePermissionsForGroups, sanitizePermissions } from "./permissions.ts";
+import { recomputeProposalAndProject } from "./proposalTotals.ts";
 
 const PROJECT_SETUP_STATUS = {
   PENDING: 'pending',
@@ -3304,6 +3305,21 @@ export async function registerRoutes(
         return res.status(404).json({ message: 'Proposta nao encontrada' });
       }
 
+      // Proposta que virou projeto é documento fechado: mudança de escopo entra
+      // por aditivo, que soma ao projeto existente, e não por revisão, que criaria
+      // uma versão paralela do mesmo contrato e poderia gerar um segundo projeto.
+      const gerouTap = Boolean(
+        (existing as any).tapGeneratedAt ||
+          ['generated', 'sent', 'failed'].includes(String(existing.tapStatus || ''))
+      );
+      if (existing.projectId || gerouTap) {
+        return res.status(409).json({
+          message:
+            'Esta proposta já gerou projeto e não pode mais ser revisada. Para ampliar prazo, valor ou escopo, crie um aditivo.',
+          reason: 'proposal_already_converted',
+        });
+      }
+
       const latest = existing.code ? await storage.getLatestProposalByCode(existing.code) : null;
       if (latest && (latest.revision ?? 0) > (existing.revision ?? 0)) {
         return res.status(400).json({ message: 'Somente a ultima revisao de uma proposta pode ser revisada' });
@@ -3881,6 +3897,12 @@ export async function registerRoutes(
     res.json({
       ...project,
       client,
+      // A listagem já entrega estes dois campos, e a tela calcula progresso e
+      // consumo a partir deles. Sem devolvê-los aqui, o modal de detalhe lia
+      // undefined e mostrava progresso zerado ao lado do resumo de horas que
+      // exibia o total correto — dois números contraditórios na mesma tela.
+      consumedHours: approvedHours,
+      pendingHours: pendingApprovalHours,
       coordinator: coordinator
         ? {
             id: coordinator.id,
@@ -5901,6 +5923,10 @@ export async function registerRoutes(
     }));
 
     const result = await storage.saveProposalCategoryValues(proposalId, valuesWithProposalId);
+
+    // As categorias SÃO o total da proposta: sem recalcular aqui, o valor gravado
+    // envelhece no primeiro clique e o projeto passa a divergir da proposta.
+    await recomputeProposalAndProject(proposalId);
 
     const userId = (req as any).user?.sub;
     if (typeof userId === 'string') {
