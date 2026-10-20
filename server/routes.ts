@@ -4747,6 +4747,68 @@ export async function registerRoutes(
   // Descrição do projeto. Endpoint próprio em vez de abrir o PUT geral: a regra
   // de quem pode mexer aqui é mais larga que a de editar o projeto inteiro, e
   // misturar as duas acabaria concedendo mais do que o pedido.
+  // Nome do projeto. Rota própria, como a da descrição: o PUT geral aceita
+  // qualquer campo com apenas o perfil "projects", o que deixaria qualquer
+  // pessoa renomear qualquer projeto.
+  app.patch('/api/projects/:id/name', authenticateToken, requireRoles(['projects']), async (req, res) => {
+    const project = await storage.getProject(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    const actorId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
+    const isAdmin = (req as any).user?.role === 'admin';
+    const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+    const permissions: Set<string> = (req as any).permissions ?? new Set();
+
+    const canRename = isAdmin || isCoordinator || permissions.has('projects.rename');
+    if (!canRename) {
+      return res.status(403).json({
+        message: 'Somente o coordenador do projeto, o escritório de projetos ou um administrador pode renomear o projeto',
+      });
+    }
+
+    if (typeof req.body?.name !== 'string') {
+      return res.status(400).json({ message: 'Informe o nome do projeto' });
+    }
+
+    // Espaços repetidos e quebras de linha vêm do texto colado do contrato.
+    const name = req.body.name.replace(/\s+/g, ' ').trim();
+    if (!name) {
+      return res.status(400).json({ message: 'O nome do projeto não pode ficar vazio' });
+    }
+    if (name.length > 500) {
+      return res.status(400).json({ message: 'O nome do projeto pode ter no máximo 500 caracteres' });
+    }
+
+    if (name === project.name) {
+      return res.json(project);
+    }
+
+    const updated = await storage.updateProject(project.id, { name } as any);
+    if (!updated) {
+      return res.status(404).json({ message: 'Projeto nao encontrado' });
+    }
+
+    if (actorId) {
+      await safeCreateUserActivity(req, actorId, {
+        category: 'system',
+        action: 'PROJECT_RENAMED',
+        title: `Projeto renomeado — ${project.code}`,
+        metadata: {
+          projectId: project.id,
+          projectCode: project.code,
+          // O nome anterior é o que permite reconstruir a troca: o TAP já
+          // emitido continua nomeando o projeto como era antes.
+          previousName: project.name,
+          newName: name,
+        },
+      });
+    }
+
+    res.json(updated);
+  });
+
   app.patch('/api/projects/:id/description', authenticateToken, requireRoles(['projects']), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {

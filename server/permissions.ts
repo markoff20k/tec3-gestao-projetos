@@ -28,6 +28,7 @@ export const PERMISSION_CATALOG: PermissionArea[] = [
     items: [
       { key: 'projects.view', label: 'Ver projetos', description: 'Acessar a lista e os detalhes dos projetos.' },
       { key: 'projects.coordinator', label: 'Alterar o coordenador', description: 'Trocar o coordenador do projeto mesmo depois do TAP emitido. O TAP já gerado continua nomeando o coordenador anterior.' },
+      { key: 'projects.rename', label: 'Renomear o projeto', description: 'Alterar o nome do projeto. O nome aparece no TAP já emitido, então a troca fica registrada no log.' },
       { key: 'projects.description', label: 'Editar a descrição', description: 'Alterar o texto descritivo do projeto. O coordenador do projeto sempre pode, independente desta permissão.' },
       { key: 'projects.manage', label: 'Criar e editar projetos', description: 'Cadastrar projetos e alterar seus dados.' },
       { key: 'projects.setup', label: 'Configurar setup', description: 'Definir coordenador, limite diário e exigência de aprovação.' },

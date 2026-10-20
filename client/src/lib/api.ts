@@ -938,6 +938,7 @@ export const projectsApi = {
     api.put<ProjectMember[]>(`/projects/${id}/members`, { userIds }),
   completeSetup: (id: string) => api.post<Project>(`/projects/${id}/setup/complete`),
   activate: (id: string) => api.post<Project>(`/projects/${id}/activate`),
+  updateName: (id: string, name: string) => api.patch<Project>(`/projects/${id}/name`, { name }),
   updateDescription: (id: string, description: string) =>
     api.patch<Project>(`/projects/${id}/description`, { description }),
   changeStatus: (id: string, status: string) =>

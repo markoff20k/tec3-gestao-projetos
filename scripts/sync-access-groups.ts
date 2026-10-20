@@ -42,7 +42,7 @@ const PADROES: Record<string, { name: string; description: string; permissions: 
     name: 'Coordenação de projetos',
     description: 'Conduz os projetos: setup, equipe, status e aprovação das horas.',
     permissions: [
-      'projects.view', 'projects.description', 'projects.manage', 'projects.setup', 'projects.team', 'projects.status',
+      'projects.view', 'projects.rename', 'projects.description', 'projects.manage', 'projects.setup', 'projects.team', 'projects.status',
       'time.log', 'time.approve',
       'proposals.view', 'clients.view',
     ],
@@ -59,7 +59,7 @@ const PADROES: Record<string, { name: string; description: string; permissions: 
   EP: {
     name: 'Escritório de projetos',
     description: 'PMO: acompanha os projetos, edita descrição e responde pela troca de coordenador.',
-    permissions: ['projects.view', 'projects.description', 'projects.coordinator', 'proposals.view', 'proposals.tap', 'time.log'],
+    permissions: ['projects.view', 'projects.rename', 'projects.description', 'projects.coordinator', 'proposals.view', 'proposals.tap', 'time.log'],
   },
   AT: {
     name: 'Assistência técnica',

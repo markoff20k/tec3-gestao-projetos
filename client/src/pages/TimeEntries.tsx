@@ -903,11 +903,17 @@ export default function TimeEntries() {
         ) : (
           <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full border-collapse text-sm">
+              {/* w-max em vez de w-full: com 31 colunas no modo mês, forçar a
+                  tabela à largura do contêiner espremia cada dia a 25px, estreito
+                  demais para ler ou clicar. Assim os dias mantêm a largura
+                  declarada e a grade rola na horizontal, que é o comportamento
+                  esperado de um quadro mensal. min-w-full preserva a largura
+                  cheia nos modos dia e semana, onde sobra espaço. */}
+              <table className="w-max min-w-full border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-border">
-                    <th className="sticky left-0 top-0 z-40 min-w-[320px] bg-muted px-3 py-2 text-left align-bottom text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Projeto / Centro de custo
+                    <th className="sticky left-0 top-0 z-40 w-[320px] min-w-[320px] max-w-[320px] bg-muted px-3 py-2 text-left align-bottom text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Projeto / Atividade
                     </th>
                     {days.map((day) => {
                       const isCurrentDay = isToday(day);
@@ -983,8 +989,15 @@ export default function TimeEntries() {
                                 onClick={() => toggleProjectExpanded(project.id)}
                                 aria-expanded={isExpanded}
                               >
-                                <p className="truncate text-sm font-semibold text-foreground">
-                                  {project.code} · {project.name}
+                                {/* Duas linhas e corta: o código fica em destaque porque
+                                    é por ele que se procura o projeto na grade. */}
+                                <p
+                                  className="line-clamp-2 break-words text-sm leading-snug text-muted-foreground"
+                                  title={`${project.code} · ${project.name}`}
+                                >
+                                  <span className="font-semibold text-foreground">{project.code}</span>
+                                  <span aria-hidden="true"> · </span>
+                                  {project.name}
                                 </p>
                                 {project.dailyLimitHours ? (
                                   <p className="text-[10px] font-normal text-muted-foreground">
@@ -1064,7 +1077,10 @@ export default function TimeEntries() {
                               className="border-b border-border/60 hover:bg-muted/20"
                             >
                               <td className="sticky left-0 z-10 bg-[hsl(var(--card))] px-3 py-1.5">
-                                <div className="truncate pl-4 text-xs text-foreground">
+                                <div
+                                  className="line-clamp-2 break-words pl-4 text-xs leading-snug text-foreground"
+                                  title={activity ? activity.name : undefined}
+                                >
                                   {activity ? (
                                     activity.name
                                   ) : (
@@ -1139,7 +1155,7 @@ export default function TimeEntries() {
                                           : isFuture
                                             ? 'Não é possível lançar horas em datas futuras.'
                                             : isHistoryOnlyCell
-                                              ? 'Linha apenas de histórico. Lance as horas na linha do centro de custo do projeto.'
+                                              ? 'Linha apenas de histórico. Lance as horas na linha de uma atividade do projeto.'
                                               : singleEntry && singleEntry.status !== 'pending'
                                                 ? `Lançamento ${(statusLabels[singleEntry.status] ?? singleEntry.status).toLowerCase()}. Duplo clique para ver os detalhes.`
                                                 : 'Digite as horas e pressione Tab. Duplo clique abre os detalhes.'

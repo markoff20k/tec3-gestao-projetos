@@ -71,6 +71,7 @@ import { cn } from '@/lib/utils';
 import { projectsApi, clientsApi, usersApi, activitiesApi, projectFavoritesApi, Activity, Project, Client, ProjectTap, ProjectMember, ProjectActivity, UserOption, EntityActivity, ProjectHealthRuleInput, ProjectHealthRuleResponse } from '@/lib/api';
 import { TEC3_LOADER_ANIMATION_SECONDS, TEC3_LOADER_MIN_VISIBLE_MS } from '@/lib/loader';
 import { DangerZoneConfirm } from '@/components/DangerZoneConfirm';
+import { InlineEditTitle } from '@/components/InlineEditTitle';
 import { ProjectHealthDot, ProjectHealthSummary } from '@/components/ProjectHealthBadge';
 import { ProjectHealthRuleForm } from '@/components/ProjectHealthRuleForm';
 
@@ -670,6 +671,26 @@ export default function Projects() {
     },
   });
 
+  const renameProjectMutation = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => projectsApi.updateName(id, name),
+    onSuccess: (_project, { id, name }) => {
+      // Escreve o nome novo direto no cache: recarregar a lista inteira leva
+      // segundos e o card nao pode ficar exibindo o nome antigo nesse meio tempo.
+      queryClient.setQueryData<Project[]>(['/api/projects'], (old) =>
+        old?.map((p) => (p.id === id ? { ...p, name } : p))
+      );
+      queryClient.setQueryData<Project>(['/api/projects', id], (old) =>
+        old ? { ...old, name } : old
+      );
+      void queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      void queryClient.invalidateQueries({ queryKey: ['/api/projects', id] });
+      toast({ title: 'Nome do projeto atualizado', variant: 'success' });
+    },
+    onError: (error) => {
+      toast({ title: 'Erro ao renomear o projeto', description: error.message, variant: 'destructive' });
+    },
+  });
+
   const updateDescriptionMutation = useMutation({
     mutationFn: (description: string) =>
       projectsApi.updateDescription(selectedProjectId as string, description),
@@ -907,6 +928,16 @@ export default function Projects() {
   // regra do setup, da equipe e das atividades.
   // Regra combinada com o cliente: engenharia de projetos (pela permissão de
   // grupo), o coordenador do próprio projeto e o administrador.
+  // Mesma regra da descricao, mas avaliada por projeto: na lista o usuario ve
+  // projetos que nao coordena, e o lapis so deve aparecer onde ele pode mexer.
+  const canRenameProject = (project: { coordinatorId?: string | null }) =>
+    isAdmin || can('projects.rename') || Boolean(user?.id && project.coordinatorId === user.id);
+
+  // O Radix escuta Escape em capture no document, antes de qualquer handler
+  // nosso. Entao quem segura o fechamento do modal e o proprio DialogContent,
+  // via onEscapeKeyDown, e para isso ele precisa saber que o titulo esta aberto.
+  const [isEditingDetailName, setIsEditingDetailName] = useState(false);
+
   const canEditDescription = Boolean(
     selectedProject && (isAdmin || isCoordinatorOfSelectedProject || can('projects.description'))
   );
@@ -1904,12 +1935,21 @@ export default function Projects() {
             {paginatedProjects.map((project) => (
               <Card key={project.id} data-testid={`card-project-${project.id}`}>
                 <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <CardTitle className="text-lg">{project.name}</CardTitle>
-                      <Badge variant="outline" className="text-xs">
-                        {project.code}
-                      </Badge>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start gap-2">
+                      <InlineEditTitle
+                        value={project.name}
+                        canEdit={canRenameProject(project)}
+                        onSave={(name) => renameProjectMutation.mutateAsync({ id: project.id, name })}
+                        className="break-words text-lg font-semibold leading-snug tracking-tight"
+                        recommendedLength={80}
+                        data-testid={`project-card-name-${project.id}`}
+                        trailing={
+                          <Badge variant="outline" className="mt-1 shrink-0 text-xs">
+                            {project.code}
+                          </Badge>
+                        }
+                      />
                     </div>
                     <p className="text-sm text-muted-foreground">{project.client?.razaoSocial}</p>
                   </div>
@@ -2240,7 +2280,14 @@ export default function Projects() {
             setDetailsInitialSection('overview');
           }
         }}>
-          <DialogContent className="flex w-[calc(100vw-1rem)] max-h-[90vh] flex-col overflow-hidden p-0 sm:w-[calc(100vw-2rem)] max-w-5xl dark:bg-[#102452] dark:border-white/10">
+          <DialogContent
+            className="flex w-[calc(100vw-1rem)] max-h-[90vh] flex-col overflow-hidden p-0 sm:w-[calc(100vw-2rem)] max-w-5xl dark:bg-[#102452] dark:border-white/10"
+            onEscapeKeyDown={(event) => {
+              // Primeiro Escape cancela a edicao do nome; o modal so fecha no
+              // segundo, que e o comportamento que o usuario ja conhece.
+              if (isEditingDetailName) event.preventDefault();
+            }}
+          >
             <DialogHeader className="shrink-0 border-b px-4 py-4 pr-12 sm:px-6 dark:border-white/10 dark:bg-[#163266]">
               <DialogTitle className="text-xl font-semibold tracking-tight">Detalhes do Projeto</DialogTitle>
             </DialogHeader>
@@ -2251,12 +2298,22 @@ export default function Projects() {
               <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6 space-y-5 sm:space-y-6 dark:bg-[#102452]">
                 <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-4 dark:bg-[#19386f] dark:border-white/10 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                    <div className="space-y-2 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-xl font-semibold leading-tight break-words">{selectedProject.name}</h3>
-                        <Badge variant="outline" className="text-xs">
-                          {selectedProject.code}
-                        </Badge>
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="flex items-start gap-2 flex-wrap">
+                        <InlineEditTitle
+                          value={selectedProject.name}
+                          canEdit={canRenameProject(selectedProject)}
+                          onSave={(name) => renameProjectMutation.mutateAsync({ id: selectedProject.id, name })}
+                          className="break-words text-xl font-semibold leading-tight"
+                          recommendedLength={80}
+                          data-testid="project-detail-name"
+                          onEditingChange={setIsEditingDetailName}
+                          trailing={
+                            <Badge variant="outline" className="mt-1 shrink-0 text-xs">
+                              {selectedProject.code}
+                            </Badge>
+                          }
+                        />
                       </div>
                       <p className="text-sm text-muted-foreground">{selectedProject.client?.razaoSocial || '-'}</p>
                     </div>
