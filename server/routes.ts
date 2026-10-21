@@ -3805,12 +3805,34 @@ export async function registerRoutes(
     // horas) recebe apenas o que lhe diz respeito: projetos que coordena,
     // em que esta alocado e os administrativos, que sao de todos.
     const visaoCompleta = (req as any).user?.role === 'admin' || (req as any).hasGroupProjectsView === true;
+    const filtrados = visaoCompleta
+      ? enriched
+      : enriched.filter(
+          (p: any) => p.isAdministrative || p.isCurrentUserAllocated || p.coordinatorId === requesterId
+        );
+
+    // Quem só lança horas (sem projects.view por grupo nem pelo piso de
+    // coordenador) recebe apenas o mínimo que a grade de apontamento usa.
+    // Valor, orçamento, custo e saúde do projeto são informação gerencial e
+    // não devem nem viajar no payload para esse perfil — esconder só na tela
+    // deixaria o dado a um F12 de distância.
+    const permissoesDoRequisitante: Set<string> = (req as any).permissions ?? new Set();
+    const podeVerGestao = visaoCompleta || permissoesDoRequisitante.has('projects.view');
     res.json(
-      visaoCompleta
-        ? enriched
-        : enriched.filter(
-            (p: any) => p.isAdministrative || p.isCurrentUserAllocated || p.coordinatorId === requesterId
-          )
+      podeVerGestao
+        ? filtrados
+        : filtrados.map((p: any) => ({
+            id: p.id,
+            code: p.code,
+            name: p.name,
+            status: p.status,
+            isAdministrative: p.isAdministrative,
+            isCurrentUserAllocated: p.isCurrentUserAllocated,
+            activities: p.activities,
+            dailyLimitHours: p.dailyLimitHours,
+            requiresApproval: p.requiresApproval,
+            lastEntryAt: p.lastEntryAt,
+          }))
     );
   });
 
