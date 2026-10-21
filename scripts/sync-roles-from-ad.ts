@@ -20,6 +20,7 @@
 import 'dotenv/config';
 import { Client } from 'ldapts';
 import { prisma } from '../server/db.ts';
+import { resolveRoleFromDirectoryGroups } from '../server/permissions.ts';
 
 const APLICAR = process.argv.includes('--apply');
 
@@ -40,33 +41,10 @@ const normalizarNome = (valor: unknown) =>
     .trim()
     .toLowerCase();
 
-/**
- * Mesmo parser do login (server/ldap.ts parseCsvEnv). Um DN tem vírgulas por
- * natureza, então o separador de múltiplos DNs é ponto-e-vírgula ou quebra de
- * linha — nunca vírgula. Divergir daqui faria o perfil calculado por este
- * script diferir do que o login grava no primeiro acesso.
- */
-function lerDns(nome: string): string[] {
-  const bruto = String(process.env[nome] ?? '').trim();
-  if (!bruto) return [];
-  if (bruto.includes(';') || bruto.includes('\n')) {
-    return bruto
-      .split(/[;\n]+/)
-      .map((parte) => parte.trim())
-      .filter(Boolean);
-  }
-  return [bruto];
-}
-
-function perfilPorGrupos(grupos: string[], dns: Record<Role, string[]>): Role {
-  const doUsuario = new Set(grupos.map(normalizarDn));
-  const temAlgum = (lista: string[]) => lista.map(normalizarDn).some((dn) => doUsuario.has(dn));
-
-  if (temAlgum(dns.admin)) return 'admin';
-  if (temAlgum(dns.commercial)) return 'commercial';
-  if (temAlgum(dns.projects)) return 'projects';
-  return 'projects';
-}
+// O perfil vem da tabela access_groups (mesma derivacao do login):
+// admin = membro do grupo ADMIN, commercial = membro do COM, resto projects.
+// Nada de variavel de ambiente — era ela que deixava processos antigos
+// regravarem admin para quem ja tinha saido do grupo.
 
 async function main() {
   const url = process.env.LDAP_AD_URL;
@@ -77,17 +55,16 @@ async function main() {
     throw new Error('Configuração de AD ausente (LDAP_AD_URL/BASE_DN/BIND_DN/BIND_PASSWORD).');
   }
 
-  const dns: Record<Role, string[]> = {
-    admin: lerDns('LDAP_AD_ROLE_ADMIN_DNS'),
-    commercial: lerDns('LDAP_AD_ROLE_COMMERCIAL_DNS'),
-    projects: lerDns('LDAP_AD_ROLE_PROJECTS_DNS'),
-  };
-  console.log('grupos que definem o perfil:');
-  for (const [papel, lista] of Object.entries(dns)) {
-    console.log(`  ${papel.padEnd(11)} ${lista.length ? lista.join(' | ') : '(nenhum configurado)'}`);
+  const gruposPerfil = await prisma.accessGroup.findMany({
+    where: { key: { in: ['GG-APP-GESTAO-ADMIN', 'GG-APP-GESTAO-COM'] } },
+    select: { key: true, directoryDn: true, isActive: true },
+  });
+  console.log('grupos que definem o perfil (tabela access_groups):');
+  for (const g of gruposPerfil) {
+    console.log(`  ${g.key.padEnd(22)} ${g.directoryDn ?? '(sem DN!)'} ${g.isActive ? '' : '[INATIVO]'}`);
   }
-  if (dns.admin.length === 0 && dns.commercial.length === 0) {
-    throw new Error('Nenhum grupo de admin/comercial configurado: todos virariam "projects". Abortando.');
+  if (gruposPerfil.length === 0) {
+    throw new Error('access_groups sem ADMIN/COM: rode scripts/sync-access-groups.ts --apply antes.');
   }
 
   const principal =
@@ -161,7 +138,7 @@ async function main() {
       continue;
     }
 
-    const novo = perfilPorGrupos(ad.grupos, dns);
+    const novo = await resolveRoleFromDirectoryGroups(ad.grupos);
     if (novo !== u.role) {
       mudancas.push({ nome: u.name, email: u.email, de: u.role, para: novo, via });
     } else {

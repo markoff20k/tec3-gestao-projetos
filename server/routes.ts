@@ -11,7 +11,7 @@ import fs from "fs";
 import puppeteer from "puppeteer-core";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 import { authenticateViaLdap, listAdDirectoryUsers } from "./ldap";
-import { PERMISSION_CATALOG, resolvePermissionsForGroups, sanitizePermissions } from "./permissions.ts";
+import { PERMISSION_CATALOG, resolvePermissionsForGroups, resolveRoleFromDirectoryGroups, sanitizePermissions } from "./permissions.ts";
 import { recomputeProposalAndProject } from "./proposalTotals.ts";
 
 const PROJECT_SETUP_STATUS = {
@@ -2317,6 +2317,18 @@ export async function registerRoutes(
           memberSince: ldapMemberSince,
         } = ldapAttempt.profile;
 
+        // O perfil NAO vem mais do calculo do LDAP (variaveis de ambiente):
+        // vem dos grupos do diretorio casados com a tabela access_groups, que
+        // e unica e compartilhada. Processo com .env velho deixou de conseguir
+        // promover alguem a admin.
+        const gruposDoDiretorio = Array.isArray(ldapAttempt.profile.groups)
+          ? ldapAttempt.profile.groups
+          : [];
+        const roleDoBanco = await resolveRoleFromDirectoryGroups(gruposDoDiretorio);
+        console.log(
+          `[auth] login=${ldapLogin ?? ldapEmail} perfil=${roleDoBanco} (derivado do banco; ldap sugeriu ${ldapRole}) grupos=${gruposDoDiretorio.length}`
+        );
+
         let user = await storage.getUserByEmail(ldapEmail);
 
         // O diretório identifica a pessoa pelo e-mail corporativo, mas a base
@@ -2334,14 +2346,14 @@ export async function registerRoutes(
             email: ldapEmail,
             password: `ldap:${crypto.randomUUID()}`,
             name: ldapName,
-            role: ldapRole,
+            role: roleDoBanco,
             isActive: true,
           } as any);
         } else {
           user =
             (await storage.updateUser(user.id, {
               name: ldapName,
-              role: ldapRole,
+              role: roleDoBanco,
               isActive: true,
             } as any)) || user;
         }

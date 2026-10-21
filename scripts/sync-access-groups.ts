@@ -63,8 +63,11 @@ const PADROES: Record<string, { name: string; description: string; permissions: 
   },
   AT: {
     name: 'Assistência técnica',
-    description: 'Equipe de apoio técnico que lança horas.',
-    permissions: ['projects.view', 'time.log'],
+    // Decisao do cliente (21/10/2026): AT e so apontamento, igual ao nivel
+    // basico de quem esta fora de todos os grupos. A grade de horas funciona
+    // sem projects.view porque GET /api/projects tambem aceita time.log.
+    description: 'Equipe de apoio técnico: somente lançamento de horas.',
+    permissions: ['time.log'],
   },
   ADM: {
     name: 'Administrativo',

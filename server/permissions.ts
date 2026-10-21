@@ -108,6 +108,45 @@ export function normalizeDn(value: unknown): string {
 export const FALLBACK_PERMISSIONS = ['time.log'] as const;
 
 /**
+ * Perfil (role) derivado dos grupos do diretório — SEM variável de ambiente.
+ *
+ * Antes o perfil era calculado a partir de LDAP_AD_ROLE_*_DNS, e um processo
+ * rodando com ambiente desatualizado (o container de produção foi um) regravava
+ * admin em cada login para quem estava nos grupos antigos — promover funcionava,
+ * rebaixar nunca descia. Agora a referência é a tabela access_groups, que é
+ * única e compartilhada: o DN de cada grupo vem do banco, e mudou lá, muda em
+ * todo processo no mesmo instante.
+ *
+ * admin ⇔ membro do grupo ADMIN; commercial ⇔ membro do COM; todo o resto é
+ * projects. O perfil é só um atalho grosso — o acesso fino continua vindo das
+ * permissões por grupo.
+ */
+const ROLE_BY_GROUP_KEY: Array<{ key: string; role: 'admin' | 'commercial' }> = [
+  { key: 'GG-APP-GESTAO-ADMIN', role: 'admin' },
+  { key: 'GG-APP-GESTAO-COM', role: 'commercial' },
+];
+
+export async function resolveRoleFromDirectoryGroups(
+  directoryGroups: string[]
+): Promise<'admin' | 'commercial' | 'projects'> {
+  const userDns = new Set(
+    (Array.isArray(directoryGroups) ? directoryGroups : []).map(normalizeDn).filter(Boolean)
+  );
+  if (userDns.size === 0) return 'projects';
+
+  const groups = await prisma.accessGroup.findMany({
+    where: { isActive: true, directoryDn: { not: null }, key: { in: ROLE_BY_GROUP_KEY.map((r) => r.key) } },
+    select: { key: true, directoryDn: true },
+  });
+
+  for (const { key, role } of ROLE_BY_GROUP_KEY) {
+    const group = groups.find((g) => g.key === key);
+    if (group && userDns.has(normalizeDn(group.directoryDn))) return role;
+  }
+  return 'projects';
+}
+
+/**
  * Permissões efetivas de um usuário, a partir dos grupos do diretório gravados
  * no último login. Grupos inativos ou sem DN configurado não contam. Quem não
  * casa com grupo nenhum cai no nível básico (ver FALLBACK_PERMISSIONS).
