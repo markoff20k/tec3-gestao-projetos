@@ -441,6 +441,15 @@ async function tryAuthenticateProvider(params: {
       projectsDns: roleProjectsDns,
     });
 
+    // Diagnostico de autorizacao: um login que receber um perfil inesperado
+    // precisa ser explicavel so pelo log, sem adivinhar o estado do processo.
+    console.log(
+      `[auth] provider=${provider} login=${getUserAttr(entry, 'sAMAccountName') ?? getUserAttr(entry, 'uid') ?? '?'} ` +
+      `perfil=${role} grupos=${groups.length} ` +
+      `adminDns=[${roleAdminDns.join(' ; ')}] ` +
+      `casouAdmin=${roleAdminDns.map((d) => d.trim().toLowerCase()).some((d) => groups.map((g) => g.trim().toLowerCase()).includes(d))}`
+    );
+
     return {
       status: 'success',
       provider,
