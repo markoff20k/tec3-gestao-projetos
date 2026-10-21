@@ -39,8 +39,8 @@ const PADROES: Record<string, { name: string; description: string; permissions: 
     ],
   },
   COORD: {
-    name: 'Coordenação de projetos',
-    description: 'Conduz os projetos: setup, equipe, status e aprovação das horas.',
+    name: 'Coordenação de área',
+    description: 'Coordenadores de área (via AD): pacote completo de projetos. O coordenador DE PROJETO é dado do sistema (coordinatorId) e não precisa deste grupo para equipe, atividades e aprovação dos projetos dele.',
     permissions: [
       'projects.view', 'projects.rename', 'projects.description', 'projects.manage', 'projects.setup', 'projects.team', 'projects.status',
       'time.log', 'time.approve',

@@ -11,7 +11,7 @@ import fs from "fs";
 import puppeteer from "puppeteer-core";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 import { authenticateViaLdap, listAdDirectoryUsers } from "./ldap";
-import { PERMISSION_CATALOG, resolvePermissionsForGroups, resolveRoleFromDirectoryGroups, sanitizePermissions } from "./permissions.ts";
+import { PERMISSION_CATALOG, applyCoordinatorFloor, resolvePermissionsForGroups, resolveRoleFromDirectoryGroups, sanitizePermissions } from "./permissions.ts";
 import { recomputeProposalAndProject } from "./proposalTotals.ts";
 
 const PROJECT_SETUP_STATUS = {
@@ -1769,6 +1769,10 @@ async function authenticateToken(req: Request, res: Response, next: NextFunction
       email: dbUser.email,
       role: effectiveRole,
     } satisfies JwtPayload;
+    // Coordenador de projeto em andamento enxerga projetos e aprova horas,
+    // esteja em que grupo estiver — a coordenacao e um fato do proprio banco.
+    await applyCoordinatorFloor(dbUser.id, permissions);
+
     (req as any).permissions = permissions;
     (req as any).accessGroups = matchedGroups;
     (req as any).accessFallbackApplied = fallbackApplied;

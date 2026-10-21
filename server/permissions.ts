@@ -147,6 +147,36 @@ export async function resolveRoleFromDirectoryGroups(
 }
 
 /**
+ * Piso do coordenador: quem coordena projeto em andamento enxerga projetos e
+ * aprova horas, esteja em que grupo estiver (decisão do cliente, 21/10/2026).
+ *
+ * A coordenação é um fato do próprio sistema (campo coordinatorId), não do AD —
+ * sem este piso, um coordenador esquecido fora dos grupos ficava trancado no
+ * nível básico sem conseguir ajustar os projetos pelos quais responde, como
+ * aconteceu com os 22 coordenadores ativos quando a autorização por grupo
+ * ligou. O piso só abre a PORTA (ver a tela, aprovar horas); o que ele pode
+ * alterar continua limitado pelas regras internas de cada rota, que exigem ser
+ * coordenador DAQUELE projeto.
+ */
+const COORDINATOR_FLOOR_PERMISSIONS = ['projects.view', 'time.approve'] as const;
+const COORDINATOR_FLOOR_STATUSES = ['planning', 'active', 'in_progress', 'on_hold'];
+
+export async function applyCoordinatorFloor(
+  userId: string,
+  permissions: Set<string>
+): Promise<boolean> {
+  if (COORDINATOR_FLOOR_PERMISSIONS.every((p) => permissions.has(p))) return false;
+
+  const coordena = await prisma.project.count({
+    where: { coordinatorId: userId, status: { in: COORDINATOR_FLOOR_STATUSES } },
+  });
+  if (coordena === 0) return false;
+
+  for (const p of COORDINATOR_FLOOR_PERMISSIONS) permissions.add(p);
+  return true;
+}
+
+/**
  * Permissões efetivas de um usuário, a partir dos grupos do diretório gravados
  * no último login. Grupos inativos ou sem DN configurado não contam. Quem não
  * casa com grupo nenhum cai no nível básico (ver FALLBACK_PERMISSIONS).
