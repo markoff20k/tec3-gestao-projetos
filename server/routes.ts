@@ -229,29 +229,13 @@ const ROLES = ['admin', 'commercial', 'projects'] as const;
 type Role = typeof ROLES[number];
 
 /**
- * Atalho de desenvolvimento: trata todo mundo como administrador.
- *
- * O padrão é DESLIGADO. Ligar exige dizer explicitamente
- * TEMP_FORCE_ALL_USERS_AS_ADMIN=true no .env, e qualquer outro valor
- * (inclusive ausente ou vazio) deixa a autorização real valendo — um
- * .env esquecido não pode abrir o sistema inteiro por omissão.
- *
- * Com ele desligado o perfil vem do AD: o login lê os grupos de
- * OU=ControleHoras (ver LDAP_AD_ROLE_*_DNS), grava o perfil no usuário, e
- * authenticateToken relê esse perfil do banco a cada requisição.
+ * O perfil vem do AD, sem atalhos: o login lê os grupos GG-APP-GESTAO-*
+ * (LDAP_AD_ROLE_*_DNS), grava o perfil no usuário, e authenticateToken relê
+ * esse perfil do banco a cada requisição. O antigo atalho de desenvolvimento
+ * que tratava todo usuário como administrador foi removido de vez em
+ * 21/10/2026: não existe mais forma de forçar isso por configuração.
  */
-const TEMP_FORCE_ALL_USERS_AS_ADMIN =
-  String(process.env.TEMP_FORCE_ALL_USERS_AS_ADMIN ?? '').trim().toLowerCase() === 'true';
-
-if (TEMP_FORCE_ALL_USERS_AS_ADMIN) {
-  console.warn(
-    '[seguranca] TEMP_FORCE_ALL_USERS_AS_ADMIN=true: todo usuario autenticado esta sendo tratado como administrador.'
-  );
-}
-
 function resolveEffectiveRole(rawRole: unknown): Role | null {
-  if (TEMP_FORCE_ALL_USERS_AS_ADMIN) return 'admin';
-
   const normalizedRole = String(rawRole ?? '').trim().toLowerCase();
   const mappedRole = normalizedRole === 'owner' ? 'admin' : normalizedRole;
   return isRole(mappedRole) ? mappedRole : null;

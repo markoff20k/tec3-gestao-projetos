@@ -1,8 +1,7 @@
 /**
  * Alinha o perfil (role) e os grupos de diretório de cada usuário com o AD.
  *
- * O login já faz isso, mas só para quem entra: ao desligar o
- * TEMP_FORCE_ALL_USERS_AS_ADMIN, quem está em CN=admin e ainda não logou
+ * O login já faz isso, mas só para quem entra: sem o sincronismo, quem não logou
  * ficaria com o perfil que veio do import do legado até a próxima entrada.
  * Este script antecipa esse acerto para a base inteira.
  *

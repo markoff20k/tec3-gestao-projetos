@@ -50,12 +50,6 @@ type HeaderSearchResult = {
   targetPath: string;
 };
 
-const roleLabels: Record<string, string> = {
-  admin: 'Administrador',
-  commercial: 'Comercial',
-  projects: 'Projetos',
-};
-
 export function Layout({ children }: LayoutProps) {
   const [location, setLocation] = useLocation();
   const { user, logout } = useAuth();
@@ -455,10 +449,10 @@ export function Layout({ children }: LayoutProps) {
               </Avatar>
               {!sidebarCollapsed && (
                 <div className="flex-1 min-w-0">
+                  {/* Só o nome: o acesso vem dos grupos do AD, então o rótulo de
+                      perfil (Administrador/Comercial/Projetos) mais confundia do
+                      que informava. */}
                   <p className="text-sm font-medium text-sidebar-foreground truncate">{user?.name}</p>
-                  <p className="text-xs text-sidebar-foreground/50 truncate">
-                    {user?.role ? roleLabels[user.role] : ''}
-                  </p>
                 </div>
               )}
             </div>
