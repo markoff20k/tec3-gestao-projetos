@@ -64,6 +64,15 @@ async function main() {
       scriptPath: 'scripts/link-project-coordinators.ts',
     },
     {
+      // A fonte verdadeira do coordenador é ProjetoProfissional.coordenador='s'.
+      // O passo anterior deriva da proposta (responsável comercial) e erra na
+      // maioria: na reimportação de 20/10 foram 752 projetos com coordenador
+      // trocado (ex.: T26095 ficou com a Gisele em vez do Fernando).
+      label: 'Corrigir coordenadores pela flag do legado (fonte verdadeira)',
+      scriptPath: 'scripts/repair-project-coordinators-from-legacy.ts',
+      args: ['--apply'],
+    },
+    {
       label: 'Sincronizar horas e orçamento de projeto',
       scriptPath: 'scripts/import-legacy-project-hours-sql.ts',
     },

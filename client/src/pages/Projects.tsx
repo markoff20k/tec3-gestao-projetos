@@ -198,7 +198,7 @@ export default function Projects() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
-  const { can } = usePermissions();
+  const { can, coordinatorFloorApplied } = usePermissions();
   const [location, setLocation] = useLocation();
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
@@ -396,10 +396,22 @@ export default function Projects() {
     }
   };
 
-  const { data: projects = [], isLoading } = useQuery<Project[]>({
+  const { data: projetosDaApi = [], isLoading } = useQuery<Project[]>({
     queryKey: ['/api/projects'],
     queryFn: () => projectsApi.getAll(),
   });
+
+  // Coordenador de projeto (acesso via piso, sem grupo de visao no AD) ve
+  // nesta tela SOMENTE os projetos que coordena — pedido do cliente. A API ja
+  // manda tambem os alocados/administrativos porque a grade de horas precisa,
+  // mas aqui eles nao entram.
+  const projects = useMemo(
+    () =>
+      coordinatorFloorApplied
+        ? projetosDaApi.filter((p) => Boolean(user?.id) && p.coordinatorId === user?.id)
+        : projetosDaApi,
+    [projetosDaApi, coordinatorFloorApplied, user?.id]
+  );
 
   const [showProjectsLoader, setShowProjectsLoader] = useState<boolean>(isLoading);
   const projectsLoaderStartedAtRef = useRef<number | null>(isLoading ? Date.now() : null);

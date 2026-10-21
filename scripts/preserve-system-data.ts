@@ -90,6 +90,14 @@ async function exportar() {
     include: { project: { select: { code: true } } } as any,
   });
 
+  // Projetos administrativos (Ferias, Feriados...) sao marcacao do sistema,
+  // nao do legado: a reimportacao de 20/10 apagou a flag e ninguem sem
+  // alocacao conseguia lancar ferias ate repor.
+  const administrativos = await prisma.project.findMany({
+    where: { isAdministrative: true },
+    select: { code: true },
+  });
+
   const grupos = await prisma.accessGroup.findMany({
     select: { key: true, name: true, description: true, directoryDn: true, permissions: true, isActive: true },
     orderBy: { key: 'asc' },
@@ -114,6 +122,7 @@ async function exportar() {
       rejectionReason: e.rejectionReason,
     })),
     regrasSaude: regrasSaude.map((r: any) => ({ ...r, projetoCodigo: r.project?.code ?? null, project: undefined })),
+    projetosAdministrativos: administrativos.map((p) => p.code),
     gruposAcesso: grupos,
   };
 
@@ -130,6 +139,7 @@ async function exportar() {
     console.log(`     ${String(e.entryDate).slice(0, 10)} ${String(e.hours)}h ${e.status} ${e.colaboradorNome} ${e.projetoCodigo}`);
   }
   console.log(`  regras de saude: ${pacote.regrasSaude.length}`);
+  console.log(`  projetos administrativos: ${pacote.projetosAdministrativos.length}`);
   console.log(`  grupos de acesso: ${pacote.gruposAcesso.length}`);
   return destino;
 }
@@ -249,6 +259,18 @@ async function restaurar(arquivo: string) {
       await prisma.projectHealthRule.update({ where: { id: existente.id }, data: campos });
     } else {
       await prisma.projectHealthRule.create({ data: { ...campos, projectId: alvo } });
+    }
+  }
+
+  // --- marcacao de projetos administrativos -------------------------------
+  const codigosAdm: string[] = pacote.projetosAdministrativos ?? [];
+  if (codigosAdm.length) {
+    console.log(`  ~ remarcando ${codigosAdm.length} projeto(s) administrativos: ${codigosAdm.join(', ')}`);
+    if (!DRY_RUN) {
+      await prisma.project.updateMany({
+        where: { code: { in: codigosAdm } },
+        data: { isAdministrative: true },
+      });
     }
   }
 

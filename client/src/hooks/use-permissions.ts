@@ -23,6 +23,9 @@ export function usePermissions() {
     role,
     groups: data?.groups ?? [],
     permissions,
+    /** projects.view veio do piso de coordenador: a tela de projetos deve
+     *  listar somente os projetos que a pessoa coordena. */
+    coordinatorFloorApplied: Boolean((data as any)?.coordinatorFloorApplied),
     /** Admin passa em tudo, como no servidor. */
     can: (permission: string) => role === 'admin' || permissions.includes(permission),
   };

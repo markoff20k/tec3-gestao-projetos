@@ -1769,10 +1769,17 @@ async function authenticateToken(req: Request, res: Response, next: NextFunction
       email: dbUser.email,
       role: effectiveRole,
     } satisfies JwtPayload;
+    // A visao de portfolio inteiro so vem de GRUPO (area/EP/diretoria etc).
+    // Precisa ser capturada ANTES do piso, porque o piso tambem concede
+    // projects.view — mas com alcance restrito aos projetos do coordenador.
+    const hasGroupProjectsView = permissions.has('projects.view');
+
     // Coordenador de projeto em andamento enxerga projetos e aprova horas,
     // esteja em que grupo estiver — a coordenacao e um fato do proprio banco.
-    await applyCoordinatorFloor(dbUser.id, permissions);
+    const coordinatorFloorApplied = await applyCoordinatorFloor(dbUser.id, permissions);
 
+    (req as any).hasGroupProjectsView = hasGroupProjectsView;
+    (req as any).coordinatorFloorApplied = coordinatorFloorApplied;
     (req as any).permissions = permissions;
     (req as any).accessGroups = matchedGroups;
     (req as any).accessFallbackApplied = fallbackApplied;
@@ -3792,7 +3799,19 @@ export async function registerRoutes(
             : false,
       };
     });
-    res.json(enriched);
+
+    // Visao por grupo (area/EP/diretoria/admin) recebe o portfolio inteiro.
+    // Quem chega pelo piso de coordenador ou so com time.log (grade de
+    // horas) recebe apenas o que lhe diz respeito: projetos que coordena,
+    // em que esta alocado e os administrativos, que sao de todos.
+    const visaoCompleta = (req as any).user?.role === 'admin' || (req as any).hasGroupProjectsView === true;
+    res.json(
+      visaoCompleta
+        ? enriched
+        : enriched.filter(
+            (p: any) => p.isAdministrative || p.isCurrentUserAllocated || p.coordinatorId === requesterId
+          )
+    );
   });
 
   app.get('/api/projects/:id', authenticateToken, requirePermission('projects.view'), async (req, res) => {
@@ -4016,6 +4035,9 @@ export async function registerRoutes(
       // Sem grupo nenhum no AD: a pessoa esta no nivel basico (rede de
       // seguranca). A interface pode avisar para o TI incluir no grupo certo.
       fallbackApplied: Boolean((req as any).accessFallbackApplied),
+      // projects.view veio do piso de coordenador (nao de grupo): a tela de
+      // projetos mostra somente os projetos que a pessoa coordena.
+      coordinatorFloorApplied: Boolean((req as any).coordinatorFloorApplied),
     });
   });
 
