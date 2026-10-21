@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/contexts/AuthContext';
+import { usePermissions } from '@/hooks/use-permissions';
 import { proposalCategoriesApi, ProposalCategory } from '@/lib/api';
 import { saveCsvFile } from '@/lib/utils';
 
@@ -68,7 +68,7 @@ function CategoriesTableSkeleton({ showFullColumnsMobile }: { showFullColumnsMob
 }
 
 export default function Categories() {
-  const { hasRole } = useAuth();
+  const { can } = usePermissions();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -86,7 +86,7 @@ export default function Categories() {
 
   const { data: categories = [], isLoading } = useQuery<ProposalCategory[]>({
     queryKey: ['/api/proposal-categories'],
-    enabled: hasRole(['admin']),
+    enabled: can('admin.categories'),
   });
 
   const createMutation = useMutation({
@@ -234,7 +234,7 @@ export default function Categories() {
     reader.readAsText(file);
   };
 
-  if (!hasRole(['admin'])) {
+  if (!can('admin.categories')) {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">

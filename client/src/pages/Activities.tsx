@@ -30,8 +30,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/use-permissions';
 import { activitiesApi, Activity } from '@/lib/api';
-import { useAuth } from '@/contexts/AuthContext';
 
 type ActivityFormState = {
   id?: string;
@@ -71,7 +71,7 @@ function ActivitiesTableSkeleton({ showFullColumnsMobile }: { showFullColumnsMob
 }
 
 export default function Activities() {
-  const { hasRole } = useAuth();
+  const { can } = usePermissions();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -88,7 +88,7 @@ export default function Activities() {
   const { data: activities = [], isLoading } = useQuery<Activity[]>({
     queryKey: ['/api/activities'],
     queryFn: () => activitiesApi.getAll(),
-    enabled: hasRole(['admin']),
+    enabled: can('admin.activities'),
   });
 
   const createMutation = useMutation({
@@ -204,7 +204,7 @@ export default function Activities() {
     setCurrentPage(1);
   };
 
-  if (!hasRole(['admin'])) {
+  if (!can('admin.activities')) {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">

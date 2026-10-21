@@ -67,6 +67,7 @@ export const PERMISSION_CATALOG: PermissionArea[] = [
       { key: 'admin.costCenters', label: 'Gerenciar centros de custo', description: 'Manter os centros de custo administrativos.' },
       { key: 'admin.activities', label: 'Gerenciar atividades', description: 'Manter o catálogo de atividades.' },
       { key: 'admin.healthRules', label: 'Configurar regra de saúde', description: 'Definir os limiares do semáforo de saúde dos projetos.' },
+      { key: 'reports.view', label: 'Ver relatórios gerenciais', description: 'Acessar o dashboard gerencial com a visão consolidada do negócio.' },
       { key: 'admin.accessGroups', label: 'Gerenciar grupos de acesso', description: 'Definir o que cada grupo do diretório pode fazer. Concede controle sobre o próprio acesso.' },
     ],
   },
@@ -95,35 +96,55 @@ export function normalizeDn(value: unknown): string {
 }
 
 /**
+ * Rede de segurança para quem não está em grupo nenhum: o colaborador novo que
+ * o TI ainda não incluiu nos GG-APP-GESTAO-* não pode ficar trancado. Ele
+ * recebe o nível básico do sistema — por decisão do cliente (21/10/2026),
+ * SOMENTE o apontamento de horas. Nada de lista de projetos, dashboard ou
+ * valores: a pessoa entra, lança as horas dela e pronto.
+ *
+ * A lista é fixa de propósito: a rede de segurança não pode depender de
+ * cadastro que alguém possa apagar ou alargar sem querer.
+ */
+export const FALLBACK_PERMISSIONS = ['time.log'] as const;
+
+/**
  * Permissões efetivas de um usuário, a partir dos grupos do diretório gravados
- * no último login. Grupos inativos ou sem DN configurado não contam.
+ * no último login. Grupos inativos ou sem DN configurado não contam. Quem não
+ * casa com grupo nenhum cai no nível básico (ver FALLBACK_PERMISSIONS).
  */
 export async function resolvePermissionsForGroups(directoryGroups: string[]): Promise<{
   permissions: Set<string>;
   matchedGroups: Array<{ key: string; name: string }>;
+  /** true quando nenhum grupo casou e o nível básico foi aplicado. */
+  fallbackApplied: boolean;
 }> {
   const permissions = new Set<string>();
   const matchedGroups: Array<{ key: string; name: string }> = [];
 
-  if (!Array.isArray(directoryGroups) || directoryGroups.length === 0) {
-    return { permissions, matchedGroups };
-  }
+  const userDns = new Set(
+    (Array.isArray(directoryGroups) ? directoryGroups : []).map(normalizeDn).filter(Boolean)
+  );
 
-  const userDns = new Set(directoryGroups.map(normalizeDn).filter(Boolean));
-  if (userDns.size === 0) return { permissions, matchedGroups };
+  if (userDns.size > 0) {
+    const groups = await prisma.accessGroup.findMany({
+      where: { isActive: true, directoryDn: { not: null } },
+      select: { key: true, name: true, directoryDn: true, permissions: true },
+    });
 
-  const groups = await prisma.accessGroup.findMany({
-    where: { isActive: true, directoryDn: { not: null } },
-    select: { key: true, name: true, directoryDn: true, permissions: true },
-  });
-
-  for (const group of groups) {
-    if (!userDns.has(normalizeDn(group.directoryDn))) continue;
-    matchedGroups.push({ key: group.key, name: group.name });
-    for (const permission of group.permissions) {
-      if (isValidPermission(permission)) permissions.add(permission);
+    for (const group of groups) {
+      if (!userDns.has(normalizeDn(group.directoryDn))) continue;
+      matchedGroups.push({ key: group.key, name: group.name });
+      for (const permission of group.permissions) {
+        if (isValidPermission(permission)) permissions.add(permission);
+      }
     }
   }
 
-  return { permissions, matchedGroups };
+  if (matchedGroups.length > 0) {
+    return { permissions, matchedGroups, fallbackApplied: false };
+  }
+
+  for (const permission of FALLBACK_PERMISSIONS) permissions.add(permission);
+
+  return { permissions, matchedGroups, fallbackApplied: true };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
 import { GripVertical, Minus, Plus } from 'lucide-react';
-import { useAuth } from '@/contexts/AuthContext';
+import { usePermissions } from '@/hooks/use-permissions';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { Button } from '@/components/ui/button';
 import {
@@ -19,14 +19,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { headerShortcutItems } from '@/lib/navigation';
+import { canSeeNavigationItem, headerShortcutItems } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 
 const MAX_HEADER_SHORTCUTS = 4;
 
 export function HeaderShortcutManager() {
   const [, setLocation] = useLocation();
-  const { hasRole } = useAuth();
+  const { can } = usePermissions();
   const { headerShortcutPaths, setHeaderShortcutPaths, isSaving } = usePreferences();
   const [open, setOpen] = useState(false);
   const [draftPaths, setDraftPaths] = useState<string[]>(headerShortcutPaths);
@@ -34,8 +34,8 @@ export function HeaderShortcutManager() {
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
 
   const availableItems = useMemo(
-    () => headerShortcutItems.filter((item) => item.roles.length === 0 || hasRole(item.roles)),
-    [hasRole]
+    () => headerShortcutItems.filter((item) => canSeeNavigationItem(item, can)),
+    [can]
   );
 
   const selectedItems = useMemo(

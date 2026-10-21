@@ -35,7 +35,8 @@ import {
 import { NotificationBell } from '@/components/NotificationBell';
 import { HeaderShortcutManager } from '@/components/HeaderShortcutManager';
 import { clientsApi, projectsApi, proposalsApi, type Client, type Project, type Proposal } from '@/lib/api';
-import { adminMenuItems, mainMenuItems, pageDescriptions, settingsNavigationItem, type NavigationItem } from '@/lib/navigation';
+import { adminMenuItems, canSeeNavigationItem, mainMenuItems, pageDescriptions, settingsNavigationItem, type NavigationItem } from '@/lib/navigation';
+import { usePermissions } from '@/hooks/use-permissions';
 
 interface LayoutProps {
   children: ReactNode;
@@ -57,7 +58,8 @@ const roleLabels: Record<string, string> = {
 
 export function Layout({ children }: LayoutProps) {
   const [location, setLocation] = useLocation();
-  const { user, logout, hasRole } = useAuth();
+  const { user, logout } = useAuth();
+  const { can } = usePermissions();
   const { notificationsEnabled } = usePreferences();
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -185,9 +187,12 @@ export function Layout({ children }: LayoutProps) {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  const canSearchProposals = hasRole(['commercial']);
-  const canSearchProjects = hasRole(['projects']);
-  const canSearchClients = hasRole(['commercial', 'projects']);
+  const canSearchProposals = can('proposals.view');
+  const canSearchProjects = can('projects.view');
+  const canSearchClients = can('clients.view');
+  // Sem nada pesquisavel (nivel basico, so apontamento), a barra some: um
+  // campo de busca que nunca encontra nada so confunde.
+  const canSearchAnything = canSearchProposals || canSearchProjects || canSearchClients;
   const searchEnabled = headerSearchOpen && debouncedHeaderSearch.length >= 2;
 
   const proposalsSearchQuery = useQuery<Proposal[]>({
@@ -293,18 +298,20 @@ export function Layout({ children }: LayoutProps) {
     setLocation(result.targetPath);
   };
 
-  const hasAccess = (item: NavigationItem) => item.roles.length === 0 || hasRole(item.roles);
+  const hasAccess = (item: NavigationItem) => canSeeNavigationItem(item, can);
 
-  const filteredMainItems = mainMenuItems
-    .map((item) => ({
-      ...item,
-      children: item.children?.filter((child) => hasAccess(child)) || [],
-    }))
-    .filter((item) => hasAccess(item) || item.children.length > 0);
+  const filteredMainItems = mainMenuItems.flatMap((item) => {
+    const children = item.children?.filter((child) => hasAccess(child)) || [];
+    if (hasAccess(item)) {
+      return [{ ...item, children }];
+    }
+    // Pai inacessível com filho acessível: o filho sobe para o nível de cima.
+    // Manter o pai viraria um link morto — quem só lança horas via "Projetos"
+    // no menu e caía numa página de acesso restrito.
+    return children.map((child) => ({ ...child, children: [] }));
+  });
 
-  const filteredAdminItems = adminMenuItems.filter(
-    (item) => item.roles.length === 0 || hasRole(item.roles)
-  );
+  const filteredAdminItems = adminMenuItems.filter((item) => hasAccess(item));
 
   const allItems = [
     ...mainMenuItems.flatMap((item) => [item, ...(item.children ?? [])]),
@@ -551,6 +558,7 @@ export function Layout({ children }: LayoutProps) {
           </div>
 
           {/* Center: Search */}
+          {canSearchAnything ? (
           <div className="hidden md:flex flex-1 max-w-md mx-4">
             <div className="relative w-full" ref={headerSearchRef}>
               <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-r from-white/[0.07] via-white/[0.02] to-transparent" />
@@ -632,6 +640,10 @@ export function Layout({ children }: LayoutProps) {
               ) : null}
             </div>
           </div>
+          ) : (
+            // Espacador: mantem a coluna da direita no lugar sem a busca.
+            <div className="hidden md:flex flex-1 max-w-md mx-4" />
+          )}
 
           {/* Right: Actions */}
           <div className="flex items-center gap-1">

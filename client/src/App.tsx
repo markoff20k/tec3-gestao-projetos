@@ -16,6 +16,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/use-permissions";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import Login from "@/pages/Login";
@@ -36,15 +37,18 @@ import ProjectHealthRules from "@/pages/ProjectHealthRules";
 
 function ProtectedRoute({
   component: Component,
-  roles,
+  permission,
 }: {
   component: () => JSX.Element;
-  /** Perfis autorizados. Sem isto, basta estar logado. */
-  roles?: string[];
+  /** Permissao exigida, espelhando o guarda da API. Sem isto, basta estar logado. */
+  permission?: string;
 }) {
-  const { isAuthenticated, isLoading, hasRole } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
+  const { isLoading: isLoadingPermissions, can } = usePermissions();
 
-  if (isLoading) {
+  // Espera as permissoes tambem: decidir com a lista ainda vazia mostraria
+  // "Acesso restrito" por um instante para quem tem acesso.
+  if (isLoading || (permission && isLoadingPermissions)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-muted-foreground">Carregando...</div>
@@ -57,10 +61,15 @@ function ProtectedRoute({
   }
 
   // Esconder o item no menu não é proteger a página: sem esta checagem, qualquer
-  // pessoa autenticada abria as telas de administração digitando a URL. A API
-  // recusaria os dados, mas a tela apareceria vazia, como se não houvesse nada
-  // cadastrado — o que é pior do que dizer que o acesso é restrito.
-  if (roles && !hasRole(roles)) {
+  // pessoa autenticada abria as telas de administração digitando a URL. Quem não
+  // pode ver a página é mandado para o apontamento de horas (decisão do cliente,
+  // 21/10/2026: nada de tela de acesso restrito). O aviso abaixo fica só para o
+  // caso raro de alguém sem nem o nível básico — sem ele, haveria loop de
+  // redirecionamento entre / e /time-entries.
+  if (permission && !can(permission)) {
+    if (permission !== 'time.log' && can('time.log')) {
+      return <Redirect to="/time-entries" />;
+    }
     return (
       <Layout>
         <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
@@ -68,7 +77,7 @@ function ProtectedRoute({
           <div>
             <h1 className="text-xl font-semibold">Acesso restrito</h1>
             <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              Esta tela é exclusiva da administração. Se você precisa dela, peça ao administrador
+              Seu grupo de acesso não contempla esta tela. Se você precisa dela, peça ao administrador
               para incluir seu usuário no grupo de acesso correspondente.
             </p>
           </div>
@@ -80,48 +89,64 @@ function ProtectedRoute({
   return <Component />;
 }
 
+function HomeRoute() {
+  const { isLoading, can } = usePermissions();
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-muted-foreground">Carregando...</div>
+      </div>
+    );
+  }
+  const podeVerDashboard = can('projects.view') || can('proposals.view') || can('reports.view');
+  if (!podeVerDashboard) {
+    return <Redirect to="/time-entries" />;
+  }
+  return <Dashboard />;
+}
+
 function Router() {
   return (
     <Switch>
       <Route path="/login" component={Login} />
       <Route path="/">
-        <ProtectedRoute component={Dashboard} />
+        <ProtectedRoute component={HomeRoute} />
       </Route>
       <Route path="/clients">
-        <ProtectedRoute component={Clients} />
+        <ProtectedRoute component={Clients} permission="clients.view" />
       </Route>
       <Route path="/proposals">
-        <ProtectedRoute component={Proposals} />
+        <ProtectedRoute component={Proposals} permission="proposals.view" />
       </Route>
       <Route path="/projects">
-        <ProtectedRoute component={Projects} />
+        <ProtectedRoute component={Projects} permission="projects.view" />
       </Route>
       <Route path="/projects/indicators">
-        <ProtectedRoute component={ProjectIndicators} />
+        <ProtectedRoute component={ProjectIndicators} permission="projects.view" />
       </Route>
       <Route path="/time-entries">
-        <ProtectedRoute component={TimeEntries} />
+        <ProtectedRoute component={TimeEntries} permission="time.log" />
       </Route>
       <Route path="/access-groups">
-        <ProtectedRoute component={AccessGroups} roles={['admin']} />
+        <ProtectedRoute component={AccessGroups} permission="admin.accessGroups" />
       </Route>
       <Route path="/time-approvals">
-        <ProtectedRoute component={TimeApprovals} />
+        <ProtectedRoute component={TimeApprovals} permission="time.approve" />
       </Route>
       <Route path="/users">
-        <ProtectedRoute component={Users} roles={['admin']} />
+        <ProtectedRoute component={Users} permission="admin.users" />
       </Route>
       <Route path="/categories">
-        <ProtectedRoute component={Categories} roles={['admin']} />
+        <ProtectedRoute component={Categories} permission="admin.categories" />
       </Route>
       <Route path="/cost-centers">
-        <ProtectedRoute component={CostCenters} roles={['admin']} />
+        <ProtectedRoute component={CostCenters} permission="admin.costCenters" />
       </Route>
       <Route path="/activities">
-        <ProtectedRoute component={Activities} roles={['admin']} />
+        <ProtectedRoute component={Activities} permission="admin.activities" />
       </Route>
       <Route path="/project-health-rules">
-        <ProtectedRoute component={ProjectHealthRules} roles={['admin']} />
+        <ProtectedRoute component={ProjectHealthRules} permission="admin.healthRules" />
       </Route>
       <Route path="/settings">
         <ProtectedRoute component={Settings} />

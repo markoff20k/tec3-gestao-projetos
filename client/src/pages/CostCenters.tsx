@@ -30,8 +30,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/use-permissions';
 import { costCentersApi, CostCenter } from '@/lib/api';
-import { useAuth } from '@/contexts/AuthContext';
 
 type CostCenterFormState = {
   id?: string;
@@ -71,7 +71,7 @@ function CostCentersTableSkeleton({ showFullColumnsMobile }: { showFullColumnsMo
 }
 
 export default function CostCenters() {
-  const { hasRole } = useAuth();
+  const { can } = usePermissions();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -88,7 +88,7 @@ export default function CostCenters() {
   const { data: costCenters = [], isLoading } = useQuery<CostCenter[]>({
     queryKey: ['/api/cost-centers'],
     queryFn: () => costCentersApi.getAll(),
-    enabled: hasRole(['admin']),
+    enabled: can('admin.costCenters'),
   });
 
   const createMutation = useMutation({
@@ -204,7 +204,7 @@ export default function CostCenters() {
     setCurrentPage(1);
   };
 
-  if (!hasRole(['admin'])) {
+  if (!can('admin.costCenters')) {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">

@@ -15,40 +15,48 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-export type NavigationRole = 'admin' | 'commercial' | 'projects';
-
 export interface NavigationItem {
   path: string;
   label: string;
   icon: LucideIcon;
-  roles: NavigationRole[];
+  /**
+   * Permissão exigida para o item aparecer, espelhando o guarda da API que a
+   * tela consome. Sem permissão definida, basta estar logado. Admin passa em
+   * tudo, como no servidor. A autorização passou a vir dos grupos do AD
+   * (GG-APP-GESTAO-*), então o menu deixou de olhar o perfil.
+   */
+  permission?: string;
+  /** Alternativas: o item aparece para quem tem QUALQUER uma destas. */
+  anyOf?: string[];
   description?: string;
   children?: NavigationItem[];
 }
 
 export const mainMenuItems: NavigationItem[] = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard, roles: [], description: 'Visão geral do sistema' },
-  { path: '/clients', label: 'Clientes', icon: Building2, roles: ['commercial', 'admin'], description: 'Gerenciar clientes' },
-  { path: '/proposals', label: 'Propostas', icon: FileText, roles: ['commercial', 'admin'], description: 'Gerenciar propostas comerciais' },
+  // O Dashboard mostra numeros do negocio inteiro; quem so aponta horas
+  // (nivel basico, sem grupo no AD) nao deve ve-lo.
+  { path: '/', label: 'Dashboard', icon: LayoutDashboard, anyOf: ['projects.view', 'proposals.view', 'reports.view'], description: 'Visão geral do sistema' },
+  { path: '/clients', label: 'Clientes', icon: Building2, permission: 'clients.view', description: 'Gerenciar clientes' },
+  { path: '/proposals', label: 'Propostas', icon: FileText, permission: 'proposals.view', description: 'Gerenciar propostas comerciais' },
   {
     path: '/projects',
     label: 'Projetos',
     icon: FolderKanban,
-    roles: ['projects', 'admin'],
+    permission: 'projects.view',
     description: 'Gerenciar projetos',
     children: [
       {
         path: '/time-entries',
         label: 'Lançar Horas',
         icon: Clock,
-        roles: ['projects', 'admin'],
+        permission: 'time.log',
         description: 'Registrar horas trabalhadas',
       },
       {
         path: '/time-approvals',
         label: 'Aprovar Horas',
         icon: Clock,
-        roles: ['projects', 'admin'],
+        permission: 'time.approve',
         description: 'Analisar e aprovar lançamentos pendentes',
       },
       // Indicadores está escondido do menu por ora, a pedido do cliente: a tela
@@ -58,7 +66,7 @@ export const mainMenuItems: NavigationItem[] = [
       //   path: '/projects/indicators',
       //   label: 'Indicadores',
       //   icon: BarChart3,
-      //   roles: ['projects', 'admin'],
+      //   permission: 'projects.view',
       //   description: 'Explorar KPIs, correlacoes e widgets de projetos',
       // },
     ],
@@ -66,19 +74,18 @@ export const mainMenuItems: NavigationItem[] = [
 ];
 
 export const adminMenuItems: NavigationItem[] = [
-  { path: '/categories', label: 'Categorias', icon: Tags, roles: ['admin'], description: 'Gerenciar categorias de proposta' },
-  { path: '/cost-centers', label: 'Centros de Custo', icon: Landmark, roles: ['admin'], description: 'Gerenciar centros de custo' },
-  { path: '/activities', label: 'Atividades', icon: ListChecks, roles: ['admin'], description: 'Gerenciar atividades' },
-  { path: '/users', label: 'Profissionais da Tec3', icon: Users, roles: ['admin'], description: 'Gerenciar profissionais da Tec3' },
-  { path: '/project-health-rules', label: 'Regra Padrão de Saúde', icon: HeartPulse, roles: ['admin'], description: 'Configurar regra padrão do semáforo de saúde' },
-  { path: '/access-groups', label: 'Grupos de Acesso', icon: ShieldCheck, roles: ['admin'], description: 'Definir o que cada grupo do Active Directory pode fazer' },
+  { path: '/categories', label: 'Categorias', icon: Tags, permission: 'admin.categories', description: 'Gerenciar categorias de proposta' },
+  { path: '/cost-centers', label: 'Centros de Custo', icon: Landmark, permission: 'admin.costCenters', description: 'Gerenciar centros de custo' },
+  { path: '/activities', label: 'Atividades', icon: ListChecks, permission: 'admin.activities', description: 'Gerenciar atividades' },
+  { path: '/users', label: 'Profissionais da Tec3', icon: Users, permission: 'admin.users', description: 'Gerenciar profissionais da Tec3' },
+  { path: '/project-health-rules', label: 'Regra Padrão de Saúde', icon: HeartPulse, permission: 'admin.healthRules', description: 'Configurar regra padrão do semáforo de saúde' },
+  { path: '/access-groups', label: 'Grupos de Acesso', icon: ShieldCheck, permission: 'admin.accessGroups', description: 'Definir o que cada grupo do Active Directory pode fazer' },
 ];
 
 export const settingsNavigationItem: NavigationItem = {
   path: '/settings',
   label: 'Configurações',
   icon: Settings,
-  roles: ['admin', 'commercial', 'projects'],
   description: 'Gerenciar preferências da conta',
 };
 
@@ -97,6 +104,13 @@ export const pageDescriptions: Record<string, string> = {
   '/project-health-rules': 'Configurar regra padrão do semáforo de saúde',
   '/settings': 'Gerenciar preferências da conta',
 };
+
+/** O item e visivel para este usuario? Mesma regra do servidor: admin ve tudo. */
+export function canSeeNavigationItem(item: NavigationItem, can: (permission: string) => boolean): boolean {
+  if (item.anyOf?.length) return item.anyOf.some((permission) => can(permission));
+  if (item.permission) return can(item.permission);
+  return true;
+}
 
 export const headerShortcutItems: NavigationItem[] = [
   ...mainMenuItems.flatMap((item) => [item, ...(item.children ?? [])]),

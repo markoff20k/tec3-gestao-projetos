@@ -5,7 +5,7 @@ import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/contexts/AuthContext';
+import { usePermissions } from '@/hooks/use-permissions';
 import { projectsApi, ProjectHealthRule, ProjectHealthRuleInput } from '@/lib/api';
 import { ProjectHealthRuleForm } from '@/components/ProjectHealthRuleForm';
 
@@ -27,7 +27,7 @@ function toInput(rule: ProjectHealthRule): ProjectHealthRuleInput {
 }
 
 export default function ProjectHealthRules() {
-  const { hasRole } = useAuth();
+  const { can } = usePermissions();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [draft, setDraft] = useState<ProjectHealthRuleInput | null>(null);
@@ -35,7 +35,7 @@ export default function ProjectHealthRules() {
   const { data: rule, isLoading } = useQuery<ProjectHealthRule>({
     queryKey: ['/api/projects/health-rules/global'],
     queryFn: () => projectsApi.getGlobalHealthRule(),
-    enabled: hasRole(['admin']),
+    enabled: can('admin.healthRules'),
   });
 
   useEffect(() => {

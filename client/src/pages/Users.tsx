@@ -22,8 +22,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/use-permissions';
 import { api, proposalCategoriesApi, ProposalCategory, User } from '@/lib/api';
-import { useAuth } from '@/contexts/AuthContext';
 
 const EMAIL_GROUP_OPTIONS = [
   { value: 'ADM', label: 'ADM' },
@@ -66,7 +66,7 @@ function UsersTableSkeleton({ showFullColumnsMobile }: { showFullColumnsMobile: 
 export default function Users() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { hasRole } = useAuth();
+  const { can } = usePermissions();
   const [search, setSearch] = useState('');
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [showFullColumnsMobile, setShowFullColumnsMobile] = useState(false);
@@ -78,7 +78,7 @@ export default function Users() {
   const { data: professionals = [], isLoading } = useQuery<User[]>({
     queryKey: ['/api/auth/users'],
     queryFn: () => api.get<User[]>('/auth/users'),
-    enabled: hasRole(['admin']),
+    enabled: can('admin.users'),
     staleTime: 0,
     refetchOnMount: 'always',
   });
@@ -86,7 +86,7 @@ export default function Users() {
   const { data: categories = [] } = useQuery<ProposalCategory[]>({
     queryKey: ['/api/proposal-categories'],
     queryFn: () => proposalCategoriesApi.getAll(),
-    enabled: hasRole(['admin']),
+    enabled: can('admin.users'),
   });
 
   const sortedCategories = useMemo(() => {
@@ -222,7 +222,7 @@ export default function Users() {
     },
   });
 
-  if (!hasRole(['admin'])) {
+  if (!can('admin.users')) {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">

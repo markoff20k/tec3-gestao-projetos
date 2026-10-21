@@ -32,7 +32,7 @@ const PADROES: Record<string, { name: string; description: string; permissions: 
     name: 'Diretoria',
     description: 'Visão completa do negócio e aprovação de horas, sem configuração do sistema.',
     permissions: [
-      'projects.view', 'projects.status', 'projects.reopen',
+      'projects.view', 'projects.status', 'projects.reopen', 'reports.view',
       'time.approve',
       'proposals.view', 'proposals.manage',
       'clients.view', 'clients.manage',

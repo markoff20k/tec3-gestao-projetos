@@ -227,7 +227,27 @@ interface TokenPayload {
 
 const ROLES = ['admin', 'commercial', 'projects'] as const;
 type Role = typeof ROLES[number];
-const TEMP_FORCE_ALL_USERS_AS_ADMIN = true;
+
+/**
+ * Atalho de desenvolvimento: trata todo mundo como administrador.
+ *
+ * O padrão é DESLIGADO. Ligar exige dizer explicitamente
+ * TEMP_FORCE_ALL_USERS_AS_ADMIN=true no .env, e qualquer outro valor
+ * (inclusive ausente ou vazio) deixa a autorização real valendo — um
+ * .env esquecido não pode abrir o sistema inteiro por omissão.
+ *
+ * Com ele desligado o perfil vem do AD: o login lê os grupos de
+ * OU=ControleHoras (ver LDAP_AD_ROLE_*_DNS), grava o perfil no usuário, e
+ * authenticateToken relê esse perfil do banco a cada requisição.
+ */
+const TEMP_FORCE_ALL_USERS_AS_ADMIN =
+  String(process.env.TEMP_FORCE_ALL_USERS_AS_ADMIN ?? '').trim().toLowerCase() === 'true';
+
+if (TEMP_FORCE_ALL_USERS_AS_ADMIN) {
+  console.warn(
+    '[seguranca] TEMP_FORCE_ALL_USERS_AS_ADMIN=true: todo usuario autenticado esta sendo tratado como administrador.'
+  );
+}
 
 function resolveEffectiveRole(rawRole: unknown): Role | null {
   if (TEMP_FORCE_ALL_USERS_AS_ADMIN) return 'admin';
@@ -634,31 +654,18 @@ function isRole(value: unknown): value is Role {
  * do AD não estiverem povoados, derrubar o controle por perfil trancaria todo
  * mundo para fora. Admin continua passando, como em requireRoles.
  */
-function requirePermission(permission: string) {
+/** Libera a rota para quem tem QUALQUER uma das permissões informadas. */
+function requirePermission(...allowed: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if ((req as any).user?.role === 'admin') return next();
 
     const permissions: Set<string> | undefined = (req as any).permissions;
-    if (permissions?.has(permission)) return next();
+    if (permissions && allowed.some((permission) => permissions.has(permission))) return next();
 
     return res.status(403).json({
       message: 'Seu grupo de acesso não permite esta ação',
-      ...(process.env.NODE_ENV !== 'production' ? { required: permission } : {}),
+      ...(process.env.NODE_ENV !== 'production' ? { required: allowed.join(' | ') } : {}),
     });
-  };
-}
-
-function requireRoles(allowed: Role[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const role = (req as any).user?.role;
-    if (!isRole(role)) {
-      return res.status(403).json({ message: 'Perfil inválido' });
-    }
-    if (role === 'admin') return next();
-    if (!allowed.includes(role)) {
-      return res.status(403).json({ message: 'Acesso não autorizado' });
-    }
-    next();
   };
 }
 
@@ -1769,7 +1776,7 @@ async function authenticateToken(req: Request, res: Response, next: NextFunction
     // Permissões vêm dos grupos gravados no último login, resolvidas a cada
     // requisição — assim um ajuste na matriz vale imediatamente, sem exigir
     // que a pessoa saia e entre de novo.
-    const { permissions, matchedGroups } = await resolvePermissionsForGroups(
+    const { permissions, matchedGroups, fallbackApplied } = await resolvePermissionsForGroups(
       (dbUser as any).directoryGroups ?? []
     );
 
@@ -1780,6 +1787,7 @@ async function authenticateToken(req: Request, res: Response, next: NextFunction
     } satisfies JwtPayload;
     (req as any).permissions = permissions;
     (req as any).accessGroups = matchedGroups;
+    (req as any).accessFallbackApplied = fallbackApplied;
 
     next();
   } catch {
@@ -2477,7 +2485,7 @@ export async function registerRoutes(
   });
 
   // User creation is admin-only
-  app.post('/api/auth/register', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.post('/api/auth/register', authenticateToken, requirePermission('admin.users'), async (req, res) => {
     const { email, password, name, role } = req.body;
     
     const existing = await storage.getUserByEmail(email);
@@ -2817,7 +2825,7 @@ export async function registerRoutes(
     })));
   });
 
-  app.put('/api/auth/users/:userId/professional', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.put('/api/auth/users/:userId/professional', authenticateToken, requirePermission('admin.users'), async (req, res) => {
     const { userId } = req.params;
     const { professionalCategoryId, emailGroup, receivesEmails } = req.body ?? {};
 
@@ -2868,7 +2876,7 @@ export async function registerRoutes(
   });
 
   // Public (authenticated) user list for internal dropdowns (legacy parity)
-  app.get('/api/users', authenticateToken, requireRoles(['admin', 'commercial', 'projects']), async (_req, res) => {
+  app.get('/api/users', authenticateToken, async (_req, res) => {
     const users = await storage.getAllUsers();
     res.json(users.map(u => ({
       id: u.id,
@@ -2965,12 +2973,12 @@ export async function registerRoutes(
     });
   });
 
-  app.get('/api/clients', authenticateToken, requireRoles(['commercial', 'projects']), async (_req, res) => {
+  app.get('/api/clients', authenticateToken, requirePermission('clients.view'), async (_req, res) => {
     const clients = await storage.getAllClients();
     res.json(clients);
   });
 
-  app.get('/api/clients/:id', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+  app.get('/api/clients/:id', authenticateToken, requirePermission('clients.view'), async (req, res) => {
     const client = await storage.getClient(req.params.id);
     if (!client) {
       return res.status(404).json({ message: 'Cliente nao encontrado' });
@@ -2978,12 +2986,12 @@ export async function registerRoutes(
     res.json(client);
   });
 
-  app.post('/api/clients', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.post('/api/clients', authenticateToken, requirePermission('clients.manage'), async (req, res) => {
     const client = await storage.createClient(req.body);
     res.status(201).json(client);
   });
 
-  app.put('/api/clients/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.put('/api/clients/:id', authenticateToken, requirePermission('clients.manage'), async (req, res) => {
     const client = await storage.updateClient(req.params.id, req.body);
     if (!client) {
       return res.status(404).json({ message: 'Cliente nao encontrado' });
@@ -2991,7 +2999,7 @@ export async function registerRoutes(
     res.json(client);
   });
 
-  app.delete('/api/clients/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.delete('/api/clients/:id', authenticateToken, requirePermission('clients.manage'), async (req, res) => {
     const deleted = await storage.deleteClient(req.params.id);
     if (!deleted) {
       return res.status(404).json({ message: 'Cliente nao encontrado' });
@@ -2999,7 +3007,7 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  app.get('/api/proposals', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.get('/api/proposals', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const clients = await storage.getAllClients();
     const clientMap = new Map(clients.map(c => [c.id, c]));
 
@@ -3031,7 +3039,7 @@ export async function registerRoutes(
     res.json(enriched);
   });
 
-  app.get('/api/proposals/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.get('/api/proposals/:id', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const proposal = await storage.getProposal(req.params.id);
     if (!proposal) {
       return res.status(404).json({ message: 'Proposta nao encontrada' });
@@ -3040,7 +3048,7 @@ export async function registerRoutes(
     res.json({ ...proposal, client });
   });
 
-  app.get('/api/proposals/:id/activities', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.get('/api/proposals/:id/activities', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const proposal = await storage.getProposal(req.params.id);
     if (!proposal) {
       return res.status(404).json({ message: 'Proposta nao encontrada' });
@@ -3132,7 +3140,7 @@ export async function registerRoutes(
     return null;
   }
 
-  app.post('/api/proposals', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.post('/api/proposals', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const body = req.body ?? {};
     const title = String(body.title ?? '').trim();
     const clientId = String(body.clientId ?? '').trim();
@@ -3185,7 +3193,7 @@ export async function registerRoutes(
     res.status(201).json(proposal);
   });
 
-  app.put('/api/proposals/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.put('/api/proposals/:id', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     try {
       const existing = await storage.getProposal(req.params.id);
       if (!existing) {
@@ -3298,7 +3306,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/proposals/:id/revision', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.post('/api/proposals/:id/revision', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     try {
       const existing = await storage.getProposal(req.params.id);
       if (!existing) {
@@ -3353,7 +3361,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete('/api/proposals/:id', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.delete('/api/proposals/:id', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     try {
       const existing = await storage.getProposal(req.params.id);
       if (!existing) {
@@ -3398,7 +3406,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put('/api/proposals/:id/tap', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.put('/api/proposals/:id/tap', authenticateToken, requirePermission('proposals.tap'), async (req, res) => {
     try {
       const proposal = await storage.getProposal(req.params.id);
       if (!proposal) {
@@ -3437,7 +3445,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get('/api/proposals/:id/tap/html', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+  app.get('/api/proposals/:id/tap/html', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     try {
       const proposal = await storage.getProposal(req.params.id);
       if (!proposal) {
@@ -3476,7 +3484,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/proposals/:id/tap/preview-html', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+  app.post('/api/proposals/:id/tap/preview-html', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     try {
       const proposal = await storage.getProposal(req.params.id);
       if (!proposal) {
@@ -3512,7 +3520,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get('/api/proposals/:id/tap/pdf', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+  app.get('/api/proposals/:id/tap/pdf', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     try {
       const proposal = await storage.getProposal(req.params.id);
       if (!proposal) {
@@ -3617,7 +3625,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get('/api/projects/next-code', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+  app.get('/api/projects/next-code', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     try {
       const code = await storage.previewNextProjectCode();
       res.json({ code });
@@ -3627,7 +3635,8 @@ export async function registerRoutes(
     }
   });
 
-  app.get('/api/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  // time.log tambem passa: a grade de apontamento precisa listar os projetos.
+  app.get('/api/projects', authenticateToken, requirePermission('projects.view', 'time.log'), async (req, res) => {
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
     const timeEntries = await storage.getAllTimeEntries();
@@ -3786,7 +3795,7 @@ export async function registerRoutes(
     res.json(enriched);
   });
 
-  app.get('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/projects/:id', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4004,15 +4013,18 @@ export async function registerRoutes(
       permissions: Array.from(permissions).sort(),
       groups: (req as any).accessGroups ?? [],
       role: (req as any).user?.role ?? null,
+      // Sem grupo nenhum no AD: a pessoa esta no nivel basico (rede de
+      // seguranca). A interface pode avisar para o TI incluir no grupo certo.
+      fallbackApplied: Boolean((req as any).accessFallbackApplied),
     });
   });
 
-  app.get('/api/projects/health-rules/global', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.get('/api/projects/health-rules/global', authenticateToken, requirePermission('admin.healthRules'), async (req, res) => {
     const rule = await storage.getGlobalHealthRule();
     res.json(rule);
   });
 
-  app.put('/api/projects/health-rules/global', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.put('/api/projects/health-rules/global', authenticateToken, requirePermission('admin.healthRules'), async (req, res) => {
     const { data, error } = sanitizeHealthRuleInput(req.body || {});
     if (error) {
       return res.status(400).json({ message: error });
@@ -4023,7 +4035,7 @@ export async function registerRoutes(
     res.json(rule);
   });
 
-  app.get('/api/projects/:id/health-rule', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/projects/:id/health-rule', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4038,7 +4050,7 @@ export async function registerRoutes(
     res.json({ rule, source, canEdit: isAdmin || isCoordinator });
   });
 
-  app.put('/api/projects/:id/health-rule', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.put('/api/projects/:id/health-rule', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4062,7 +4074,7 @@ export async function registerRoutes(
     res.json({ rule, source: 'project' as const });
   });
 
-  app.delete('/api/projects/:id/health-rule', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.delete('/api/projects/:id/health-rule', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4082,7 +4094,7 @@ export async function registerRoutes(
     res.json({ rule: globalRule, source: 'global' as const });
   });
 
-  app.get('/api/projects/:id/activities', authenticateToken, requireRoles(['projects', 'commercial']), async (req, res) => {
+  app.get('/api/projects/:id/activities', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4091,7 +4103,7 @@ export async function registerRoutes(
     res.json(activities);
   });
 
-  app.get('/api/projects/:id/tap', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/projects/:id/tap', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4101,7 +4113,7 @@ export async function registerRoutes(
     res.json(tap);
   });
 
-  app.post('/api/projects/:id/tap/resend-email', authenticateToken, requireRoles(['admin', 'commercial', 'projects']), async (req, res) => {
+  app.post('/api/projects/:id/tap/resend-email', authenticateToken, requirePermission('proposals.tap'), async (req, res) => {
     const requester = (req as any).user as TokenPayload | undefined;
     if (!requester?.sub) {
       return res.status(401).json({ message: 'Usuário não autenticado' });
@@ -4125,7 +4137,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.post('/api/projects', authenticateToken, requirePermission('projects.manage'), async (req, res) => {
     const body = req.body ?? {};
     const validationError = validateProjectBusinessData(body);
     if (validationError) {
@@ -4136,7 +4148,7 @@ export async function registerRoutes(
     res.status(201).json(project);
   });
 
-  app.put('/api/projects/:id/setup', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.put('/api/projects/:id/setup', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const existingProject = await storage.getProject(req.params.id);
     if (!existingProject) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4293,7 +4305,7 @@ export async function registerRoutes(
   });
 
   // Caminho próprio: /activities já é o histórico de alterações do projeto.
-  app.get('/api/projects/:id/allowed-activities', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/projects/:id/allowed-activities', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4303,7 +4315,7 @@ export async function registerRoutes(
     res.json(activities);
   });
 
-  app.put('/api/projects/:id/allowed-activities', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.put('/api/projects/:id/allowed-activities', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4362,7 +4374,7 @@ export async function registerRoutes(
     const updated = await storage.getProjectActivities(project.id);
     res.json(updated);
   });
-  app.get('/api/projects/:id/members', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/projects/:id/members', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4413,7 +4425,7 @@ export async function registerRoutes(
     res.json(members);
   });
 
-  app.put('/api/projects/:id/members', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.put('/api/projects/:id/members', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4494,7 +4506,7 @@ export async function registerRoutes(
     res.json(members);
   });
 
-  app.put('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.put('/api/projects/:id', authenticateToken, requirePermission('projects.manage'), async (req, res) => {
     const existing = await storage.getProject(req.params.id);
     if (!existing) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4526,7 +4538,7 @@ export async function registerRoutes(
     res.json(project);
   });
 
-  app.post('/api/projects/:id/setup/complete', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.post('/api/projects/:id/setup/complete', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4750,7 +4762,7 @@ export async function registerRoutes(
   // Nome do projeto. Rota própria, como a da descrição: o PUT geral aceita
   // qualquer campo com apenas o perfil "projects", o que deixaria qualquer
   // pessoa renomear qualquer projeto.
-  app.patch('/api/projects/:id/name', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.patch('/api/projects/:id/name', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4809,7 +4821,7 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  app.patch('/api/projects/:id/description', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.patch('/api/projects/:id/description', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4861,7 +4873,7 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  app.patch('/api/projects/:id/status', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.patch('/api/projects/:id/status', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4876,7 +4888,7 @@ export async function registerRoutes(
   });
 
   // Atalhos do caminho feliz: mesma regra, um clique so.
-  app.post('/api/projects/:id/activate', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.post('/api/projects/:id/activate', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4890,7 +4902,7 @@ export async function registerRoutes(
     res.json(outcome.project);
   });
 
-  app.post('/api/projects/:id/close', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.post('/api/projects/:id/close', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4908,7 +4920,7 @@ export async function registerRoutes(
     res.json(outcome.project);
   });
 
-  app.delete('/api/projects/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.delete('/api/projects/:id', authenticateToken, requirePermission('projects.manage'), async (req, res) => {
     const deleted = await storage.deleteProject(req.params.id);
     if (!deleted) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4916,7 +4928,7 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  app.get('/api/projects/:id/stats', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/projects/:id/stats', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const project = await storage.getProject(req.params.id);
     if (!project) {
       return res.status(404).json({ message: 'Projeto nao encontrado' });
@@ -4939,7 +4951,7 @@ export async function registerRoutes(
     });
   });
 
-  app.get('/api/projects/:id/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/projects/:id/time-entries', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const entries = await storage.getTimeEntriesByProject(req.params.id);
     const collaboratorIds = Array.from(new Set(entries.map((entry) => entry.collaboratorId).filter(Boolean)));
 
@@ -4960,7 +4972,7 @@ export async function registerRoutes(
     );
   });
 
-  app.get('/api/time-entries/me', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/time-entries/me', authenticateToken, requirePermission('time.log'), async (req, res) => {
     const collaboratorId = (req as any).user?.sub as string | undefined;
     if (!collaboratorId) {
       return res.status(401).json({ message: 'Usuário autenticado inválido' });
@@ -4981,7 +4993,7 @@ export async function registerRoutes(
     res.json(entries);
   });
 
-  app.post('/api/projects/time-entries', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.post('/api/projects/time-entries', authenticateToken, requirePermission('time.log'), async (req, res) => {
     const { projectId, costCenterId, activityId, entryDate, hours, description, attachments } = req.body;
     const collaboratorId = (req as any).user?.sub as string | undefined;
 
@@ -5087,7 +5099,7 @@ export async function registerRoutes(
     res.status(201).json(entry);
   });
 
-  app.put('/api/projects/time-entries/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.put('/api/projects/time-entries/:id', authenticateToken, requirePermission('time.log'), async (req, res) => {
     const entry = await storage.getTimeEntry(req.params.id);
     if (!entry) {
       return res.status(404).json({ message: 'Lançamento não encontrado' });
@@ -5176,7 +5188,7 @@ export async function registerRoutes(
     res.json(updatedEntry);
   });
 
-  app.delete('/api/projects/time-entries/:id', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.delete('/api/projects/time-entries/:id', authenticateToken, requirePermission('time.log'), async (req, res) => {
     const entry = await storage.getTimeEntry(req.params.id);
     if (!entry) {
       return res.status(404).json({ message: 'Lançamento não encontrado' });
@@ -5199,7 +5211,7 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  app.patch('/api/projects/time-entries/:id/status', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.patch('/api/projects/time-entries/:id/status', authenticateToken, requirePermission('time.approve'), async (req, res) => {
     const entry = await storage.getTimeEntry(req.params.id);
     if (!entry) {
       return res.status(404).json({ message: 'Lançamento não encontrado' });
@@ -5258,7 +5270,7 @@ export async function registerRoutes(
   });
 
   // Admin-only consolidated dashboard (used by admin profile)
-  app.get('/api/reports/dashboard', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.get('/api/reports/dashboard', authenticateToken, requirePermission('reports.view'), async (req, res) => {
     const proposals = await storage.getAllProposals();
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
@@ -5471,7 +5483,7 @@ export async function registerRoutes(
   });
 
   // Commercial dashboard (pipeline)
-  app.get('/api/dashboard/commercial', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.get('/api/dashboard/commercial', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const proposals = await storage.getAllProposals();
     const clients = await storage.getAllClients();
     const timeEntries = await storage.getAllTimeEntries();
@@ -5620,7 +5632,7 @@ export async function registerRoutes(
   });
 
   // Projects dashboard (execution)
-  app.get('/api/dashboard/projects', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/dashboard/projects', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
     const timeEntries = await storage.getAllTimeEntries();
@@ -5735,14 +5747,14 @@ export async function registerRoutes(
   });
 
   // Proposal Categories API
-  app.get('/api/proposal-categories', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.get('/api/proposal-categories', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const role = (req as any)?.user?.role;
     const includeInactive = role === 'admin';
     const categories = await storage.getAllProposalCategories({ includeInactive });
     res.json(categories);
   });
 
-  app.get('/api/cost-centers', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/cost-centers', authenticateToken, requirePermission('projects.view'), async (req, res) => {
     const role = (req as any)?.user?.role;
     const includeInactive = role === 'admin';
 
@@ -5754,14 +5766,14 @@ export async function registerRoutes(
     res.json(costCenters);
   });
 
-  app.get('/api/activities', authenticateToken, requireRoles(['commercial', 'projects']), async (req, res) => {
+  app.get('/api/activities', authenticateToken, async (req, res) => {
     const role = (req as any)?.user?.role;
     const includeInactive = role === 'admin';
     const activities = await storage.getAllActivities({ includeInactive });
     res.json(activities);
   });
 
-  app.post('/api/activities', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.post('/api/activities', authenticateToken, requirePermission('admin.activities'), async (req, res) => {
     const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
 
@@ -5780,7 +5792,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put('/api/activities/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.put('/api/activities/:id', authenticateToken, requirePermission('admin.activities'), async (req, res) => {
     const { id } = req.params;
     const updates: Record<string, unknown> = {};
 
@@ -5818,7 +5830,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete('/api/activities/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.delete('/api/activities/:id', authenticateToken, requirePermission('admin.activities'), async (req, res) => {
     const { id } = req.params;
 
     const existing = await storage.getActivity(id);
@@ -5829,7 +5841,7 @@ export async function registerRoutes(
     await storage.deleteActivity(id);
     res.status(204).send();
   });
-  app.post('/api/cost-centers', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.post('/api/cost-centers', authenticateToken, requirePermission('admin.costCenters'), async (req, res) => {
     const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const isActive = req.body?.isActive;
@@ -5849,7 +5861,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put('/api/cost-centers/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.put('/api/cost-centers/:id', authenticateToken, requirePermission('admin.costCenters'), async (req, res) => {
     const { id } = req.params;
 
     const existing = await storage.getCostCenter(id);
@@ -5899,7 +5911,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete('/api/cost-centers/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.delete('/api/cost-centers/:id', authenticateToken, requirePermission('admin.costCenters'), async (req, res) => {
     const { id } = req.params;
 
     const existing = await storage.getCostCenter(id);
@@ -5917,7 +5929,7 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  app.post('/api/proposal-categories', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.post('/api/proposal-categories', authenticateToken, requirePermission('admin.categories'), async (req, res) => {
     const { code, name, isActive } = req.body;
     if (!name) {
       return res.status(400).json({ message: 'Categoria é obrigatória' });
@@ -5933,7 +5945,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put('/api/proposal-categories/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.put('/api/proposal-categories/:id', authenticateToken, requirePermission('admin.categories'), async (req, res) => {
     const { id } = req.params;
     const result = await storage.updateProposalCategory(id, req.body);
     if (!result) {
@@ -5942,20 +5954,20 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  app.delete('/api/proposal-categories/:id', authenticateToken, requireRoles(['admin']), async (req, res) => {
+  app.delete('/api/proposal-categories/:id', authenticateToken, requirePermission('admin.categories'), async (req, res) => {
     const { id } = req.params;
     await storage.deleteProposalCategory(id);
     res.status(204).send();
   });
 
   // Proposal Category Values API
-  app.get('/api/proposals/:proposalId/category-values', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.get('/api/proposals/:proposalId/category-values', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const { proposalId } = req.params;
     const values = await storage.getProposalCategoryValues(proposalId);
     res.json(values);
   });
 
-  app.post('/api/proposals/:proposalId/category-values', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.post('/api/proposals/:proposalId/category-values', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const { proposalId } = req.params;
     const { values } = req.body;
 
@@ -6016,7 +6028,7 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  app.delete('/api/proposal-category-values/:id', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.delete('/api/proposal-category-values/:id', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const { id } = req.params;
 
     const deleted = await storage.deleteProposalCategoryValue(id);
@@ -6035,7 +6047,7 @@ export async function registerRoutes(
   });
 
   // Proposal expenses
-  app.get('/api/proposals/:proposalId/expenses', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.get('/api/proposals/:proposalId/expenses', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const { proposalId } = req.params;
     const proposal = await storage.getProposal(proposalId);
     if (!proposal) {
@@ -6046,7 +6058,7 @@ export async function registerRoutes(
     return res.json({ items, total });
   });
 
-  app.post('/api/proposals/:proposalId/expenses', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.post('/api/proposals/:proposalId/expenses', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const { proposalId } = req.params;
     const proposal = await storage.getProposal(proposalId);
     if (!proposal) {
@@ -6083,7 +6095,7 @@ export async function registerRoutes(
     return res.status(201).json(result);
   });
 
-  app.put('/api/proposals/:proposalId/expenses/:expenseId', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.put('/api/proposals/:proposalId/expenses/:expenseId', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const { proposalId, expenseId } = req.params;
     const proposal = await storage.getProposal(proposalId);
     if (!proposal) {
@@ -6127,7 +6139,7 @@ export async function registerRoutes(
     return res.json(result);
   });
 
-  app.delete('/api/proposals/:proposalId/expenses/:expenseId', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.delete('/api/proposals/:proposalId/expenses/:expenseId', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const { proposalId, expenseId } = req.params;
     const proposal = await storage.getProposal(proposalId);
     if (!proposal) {
@@ -6158,7 +6170,7 @@ export async function registerRoutes(
   });
 
   // Proposal additives (aditivos)
-  app.get('/api/proposals/:proposalId/additives', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.get('/api/proposals/:proposalId/additives', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const { proposalId } = req.params;
     const proposal = await storage.getProposal(proposalId);
     if (!proposal) {
@@ -6169,7 +6181,7 @@ export async function registerRoutes(
     return res.json({ items, total });
   });
 
-  app.post('/api/proposals/:proposalId/additives', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.post('/api/proposals/:proposalId/additives', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const { proposalId } = req.params;
     const proposal = await storage.getProposal(proposalId);
     if (!proposal) {
@@ -6227,7 +6239,7 @@ export async function registerRoutes(
     return res.status(201).json(result);
   });
 
-  app.put('/api/proposals/:proposalId/additives/:additiveId', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.put('/api/proposals/:proposalId/additives/:additiveId', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const { proposalId, additiveId } = req.params;
     const proposal = await storage.getProposal(proposalId);
     if (!proposal) {
@@ -6289,7 +6301,7 @@ export async function registerRoutes(
     return res.json(result);
   });
 
-  app.delete('/api/proposals/:proposalId/additives/:additiveId', authenticateToken, requireRoles(['commercial', 'admin']), async (req, res) => {
+  app.delete('/api/proposals/:proposalId/additives/:additiveId', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const { proposalId, additiveId } = req.params;
     const proposal = await storage.getProposal(proposalId);
     if (!proposal) {
@@ -6320,40 +6332,40 @@ export async function registerRoutes(
   });
 
   // Proposal Favorites API
-  app.get('/api/proposal-favorites', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.get('/api/proposal-favorites', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const userId = (req as any).user.sub;
     const favoriteIds = await storage.getUserFavoriteProposals(userId);
     res.json(favoriteIds);
   });
 
-  app.post('/api/proposal-favorites/:proposalId', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.post('/api/proposal-favorites/:proposalId', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const userId = (req as any).user.sub;
     const { proposalId } = req.params;
     await storage.addFavoriteProposal(userId, proposalId);
     res.status(201).json({ success: true });
   });
 
-  app.delete('/api/proposal-favorites/:proposalId', authenticateToken, requireRoles(['commercial']), async (req, res) => {
+  app.delete('/api/proposal-favorites/:proposalId', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
     const userId = (req as any).user.sub;
     const { proposalId } = req.params;
     await storage.removeFavoriteProposal(userId, proposalId);
     res.status(204).send();
   });
 
-  app.get('/api/project-favorites', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.get('/api/project-favorites', authenticateToken, requirePermission('projects.view', 'time.log'), async (req, res) => {
     const userId = (req as any).user.sub;
     const favoriteIds = await storage.getUserFavoriteProjects(userId);
     res.json(favoriteIds);
   });
 
-  app.post('/api/project-favorites/:projectId', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.post('/api/project-favorites/:projectId', authenticateToken, requirePermission('projects.view', 'time.log'), async (req, res) => {
     const userId = (req as any).user.sub;
     const { projectId } = req.params;
     await storage.addFavoriteProject(userId, projectId);
     res.status(201).json({ success: true });
   });
 
-  app.delete('/api/project-favorites/:projectId', authenticateToken, requireRoles(['projects']), async (req, res) => {
+  app.delete('/api/project-favorites/:projectId', authenticateToken, requirePermission('projects.view', 'time.log'), async (req, res) => {
     const userId = (req as any).user.sub;
     const { projectId } = req.params;
     await storage.removeFavoriteProject(userId, projectId);
