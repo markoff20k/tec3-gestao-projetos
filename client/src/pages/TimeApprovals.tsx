@@ -8,12 +8,13 @@ import { Layout } from '@/components/Layout';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -27,6 +28,16 @@ const statusBadgeClass: Record<string, string> = {
   approved: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   rejected: 'border-rose-200 bg-rose-50 text-rose-700',
 };
+
+/**
+ * Janela da visão "Aprovadas recentes". Existe para corrigir aprovações — em
+ * especial as automáticas, que nunca passam pela fila de pendências: sem esta
+ * visão, um lançamento errado num projeto de aprovação automática não tinha
+ * nenhum caminho de conserto pela interface.
+ */
+const RECENT_APPROVED_DAYS = 60;
+
+type ApprovalsView = 'pendentes' | 'aprovadas';
 
 function normalizeUserRole(value: string | null | undefined) {
   return String(value || '')
@@ -79,6 +90,9 @@ function getInitials(name: string) {
 
 type PendingProjectRowProps = {
   project: Project;
+  /** 'pendentes' é a fila clássica; 'aprovadas' lista as horas já aprovadas
+   *  dos últimos dias para o coordenador poder desfazer uma aprovação errada. */
+  mode: ApprovalsView;
   canManageApprovals: boolean;
   isCoordinatedByCurrentUser: boolean;
   isOpen: boolean;
@@ -107,7 +121,7 @@ function TimeApprovalsListSkeleton() {
   );
 }
 
-function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrentUser, isOpen, onOpenChange }: PendingProjectRowProps) {
+function PendingProjectRow({ project, mode, canManageApprovals, isCoordinatedByCurrentUser, isOpen, onOpenChange }: PendingProjectRowProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [rejectTarget, setRejectTarget] = useState<{ type: 'single'; entryId: string } | { type: 'bulk' } | null>(null);
@@ -130,6 +144,20 @@ function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrent
     () => pendingEntries.reduce((sum, entry) => sum + Number(entry.hours || 0), 0),
     [pendingEntries]
   );
+
+  // Aprovadas dentro da janela recente, mais novas primeiro. É daqui que o
+  // coordenador desfaz uma aprovação errada — inclusive as automáticas, que
+  // nunca aparecem na fila de pendências.
+  const recentApprovedEntries = useMemo(() => {
+    const corte = new Date();
+    corte.setHours(0, 0, 0, 0);
+    corte.setDate(corte.getDate() - RECENT_APPROVED_DAYS);
+    return projectEntries
+      .filter((entry) => entry.status === 'approved' && getEntryDate(entry).getTime() >= corte.getTime())
+      .sort((entryA, entryB) => getEntryDate(entryB).getTime() - getEntryDate(entryA).getTime());
+  }, [projectEntries]);
+
+  const visibleEntries = mode === 'pendentes' ? pendingEntries : recentApprovedEntries;
 
   const updateEntryStatusMutation = useMutation({
     mutationFn: (data: { entryId: string; status: 'approved' | 'rejected'; rejectionReason?: string | null }) =>
@@ -211,8 +239,13 @@ function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrent
     setRejectTarget({ type: 'bulk' });
   };
 
+  // Desfazer uma aprovação é mais sério do que rejeitar uma pendência: a hora
+  // já valia. O colaborador precisa saber o porquê, então o motivo é obrigatório.
+  const exigeMotivo = mode === 'aprovadas';
+
   const confirmReject = () => {
     if (!rejectTarget) return;
+    if (exigeMotivo && !rejectReasonInput.trim()) return;
     const rejectionReason = rejectReasonInput.trim() || null;
 
     if (rejectTarget.type === 'single') {
@@ -273,7 +306,7 @@ function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrent
                 </span>
               )}
 
-              {pendingCollaborators > 0 ? (
+              {mode === 'pendentes' && pendingCollaborators > 0 ? (
                 <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Users className="h-3.5 w-3.5" />
                   {pendingCollaborators} colaborador{pendingCollaborators > 1 ? 'es' : ''} aguardando
@@ -283,7 +316,22 @@ function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrent
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {waitingDays !== null ? (
+            {mode === 'aprovadas' ? (
+              <>
+                <Badge variant="outline" className="text-xs">
+                  {isOpen
+                    ? `${recentApprovedEntries.length} aprovada${recentApprovedEntries.length === 1 ? '' : 's'} em ${RECENT_APPROVED_DAYS} dias`
+                    : `aprovadas · ${RECENT_APPROVED_DAYS} dias`}
+                </Badge>
+                <CollapsibleTrigger asChild>
+                  <Button type="button" variant="outline" size="sm" data-testid={`button-toggle-project-approved-${project.id}`}>
+                    <ChevronDown className={cn('mr-2 h-4 w-4 transition-transform', isOpen && 'rotate-180')} />
+                    {isOpen ? 'Recolher' : 'Ver aprovadas'}
+                  </Button>
+                </CollapsibleTrigger>
+              </>
+            ) : null}
+            {mode === 'pendentes' && waitingDays !== null ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Badge variant="outline" className={cn('gap-1 text-xs', waitingToneClass[waitingTone])}>
@@ -297,18 +345,22 @@ function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrent
               </Tooltip>
             ) : null}
 
-            <Badge variant="outline" className="text-xs">
-              {pendingCount} pendente{pendingCount === 1 ? '' : 's'}
-            </Badge>
-            <Badge variant="outline" className="text-xs font-semibold">
-              {(isOpen ? pendingHours : Number(project.pendingHours || 0)).toFixed(1)}h
-            </Badge>
-            <CollapsibleTrigger asChild>
-              <Button type="button" variant="outline" size="sm" data-testid={`button-toggle-project-approvals-${project.id}`}>
-                <ChevronDown className={cn('mr-2 h-4 w-4 transition-transform', isOpen && 'rotate-180')} />
-                {isOpen ? 'Recolher' : 'Ver pendências'}
-              </Button>
-            </CollapsibleTrigger>
+            {mode === 'pendentes' ? (
+              <>
+                <Badge variant="outline" className="text-xs">
+                  {pendingCount} pendente{pendingCount === 1 ? '' : 's'}
+                </Badge>
+                <Badge variant="outline" className="text-xs font-semibold">
+                  {(isOpen ? pendingHours : Number(project.pendingHours || 0)).toFixed(1)}h
+                </Badge>
+                <CollapsibleTrigger asChild>
+                  <Button type="button" variant="outline" size="sm" data-testid={`button-toggle-project-approvals-${project.id}`}>
+                    <ChevronDown className={cn('mr-2 h-4 w-4 transition-transform', isOpen && 'rotate-180')} />
+                    {isOpen ? 'Recolher' : 'Ver pendências'}
+                  </Button>
+                </CollapsibleTrigger>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -330,36 +382,45 @@ function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrent
                   </div>
                 ))}
               </div>
-            ) : pendingEntries.length === 0 ? (
+            ) : visibleEntries.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
-                Não há pendências neste projeto.
+                {mode === 'pendentes'
+                  ? 'Não há pendências neste projeto.'
+                  : `Nenhuma hora aprovada nos últimos ${RECENT_APPROVED_DAYS} dias neste projeto.`}
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleApproveProjectPending}
-                    disabled={disableActions}
-                    data-testid={`button-approve-project-pending-${project.id}`}
-                  >
-                    Aprovar pendentes
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleRejectProjectPending}
-                    disabled={disableActions}
-                    data-testid={`button-reject-project-pending-${project.id}`}
-                  >
-                    Rejeitar pendentes
-                  </Button>
-                </div>
+                {mode === 'pendentes' ? (
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleApproveProjectPending}
+                      disabled={disableActions}
+                      data-testid={`button-approve-project-pending-${project.id}`}
+                    >
+                      Aprovar pendentes
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRejectProjectPending}
+                      disabled={disableActions}
+                      data-testid={`button-reject-project-pending-${project.id}`}
+                    >
+                      Rejeitar pendentes
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    Desfazer uma aprovação rejeita o lançamento com motivo obrigatório. A hora sai
+                    dos totais, libera o limite do dia e o colaborador pode relançar corretamente.
+                  </div>
+                )}
 
-                {pendingEntries.map((entry) => (
+                {visibleEntries.map((entry) => (
                   <div key={entry.id} className="rounded-lg border border-border bg-background px-3 py-3">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div>
@@ -374,31 +435,55 @@ function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrent
                         <p className="mt-1 text-xs text-muted-foreground">
                           Colaborador: {entry.collaboratorName || entry.collaboratorId}
                         </p>
+                        {mode === 'aprovadas' ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {entry.approvedById
+                              ? `Aprovado em ${entry.approvedAt ? format(parseISO(String(entry.approvedAt)), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : 'data desconhecida'}`
+                              : 'Aprovação automática do projeto'}
+                          </p>
+                        ) : null}
                         <p className="mt-1 text-sm text-muted-foreground">{entry.description || 'Sem descrição'}</p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={disableActions}
-                          onClick={() => handleApproveEntry(entry.id)}
-                          data-testid={`button-approve-entry-${entry.id}`}
-                        >
-                          <Check className="mr-2 h-4 w-4" />
-                          Aprovar
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={disableActions}
-                          onClick={() => handleRejectEntry(entry.id)}
-                          data-testid={`button-reject-entry-${entry.id}`}
-                        >
-                          <X className="mr-2 h-4 w-4" />
-                          Rejeitar
-                        </Button>
+                        {mode === 'pendentes' ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={disableActions}
+                              onClick={() => handleApproveEntry(entry.id)}
+                              data-testid={`button-approve-entry-${entry.id}`}
+                            >
+                              <Check className="mr-2 h-4 w-4" />
+                              Aprovar
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={disableActions}
+                              onClick={() => handleRejectEntry(entry.id)}
+                              data-testid={`button-reject-entry-${entry.id}`}
+                            >
+                              <X className="mr-2 h-4 w-4" />
+                              Rejeitar
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-300/30 dark:text-rose-200 dark:hover:bg-rose-500/10"
+                            disabled={disableActions}
+                            onClick={() => handleRejectEntry(entry.id)}
+                            data-testid={`button-undo-approval-${entry.id}`}
+                          >
+                            <X className="mr-2 h-4 w-4" />
+                            Desfazer aprovação
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -413,25 +498,44 @@ function PendingProjectRow({ project, canManageApprovals, isCoordinatedByCurrent
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {rejectTarget?.type === 'bulk' ? 'Rejeitar lançamentos pendentes' : 'Rejeitar lançamento'}
+              {mode === 'aprovadas'
+                ? 'Desfazer aprovação'
+                : rejectTarget?.type === 'bulk'
+                  ? 'Rejeitar lançamentos pendentes'
+                  : 'Rejeitar lançamento'}
             </DialogTitle>
           </DialogHeader>
+          {mode === 'aprovadas' ? (
+            <p className="text-sm text-muted-foreground">
+              O lançamento será rejeitado: sai dos totais, libera o limite do dia e o
+              colaborador poderá relançar as horas corretamente.
+            </p>
+          ) : null}
           <div className="space-y-2">
-            <Label htmlFor="reject-reason">Motivo da rejeição (opcional)</Label>
+            <Label htmlFor="reject-reason">
+              {exigeMotivo ? 'Motivo (obrigatório — o colaborador verá este texto)' : 'Motivo da rejeição (opcional)'}
+            </Label>
             <Textarea
               id="reject-reason"
               value={rejectReasonInput}
               onChange={(event) => setRejectReasonInput(event.target.value)}
-              placeholder="Explique o motivo da rejeição..."
+              placeholder={exigeMotivo ? 'Ex.: horas lançadas no projeto errado' : 'Explique o motivo da rejeição...'}
               rows={3}
+              data-testid="textarea-reject-reason"
             />
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setRejectTarget(null)} disabled={disableActions}>
               Cancelar
             </Button>
-            <Button type="button" variant="destructive" onClick={confirmReject} disabled={disableActions}>
-              Confirmar rejeição
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={confirmReject}
+              disabled={disableActions || (exigeMotivo && !rejectReasonInput.trim())}
+              data-testid="button-confirm-reject"
+            >
+              {mode === 'aprovadas' ? 'Desfazer aprovação' : 'Confirmar rejeição'}
             </Button>
           </div>
         </DialogContent>
@@ -447,6 +551,7 @@ export default function TimeApprovals() {
   const [itemsPerPage, setItemsPerPage] = useState(12);
   const [openProjects, setOpenProjects] = useState<Record<string, boolean>>({});
   const [onlyMine, setOnlyMine] = useState(false);
+  const [view, setView] = useState<ApprovalsView>('pendentes');
 
   const { data: projects = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
     queryKey: ['/api/projects'],
@@ -489,6 +594,41 @@ export default function TimeApprovals() {
       });
   }, [pendingScope, onlyMine, user?.id]);
 
+  // Projetos elegíveis para a visão "Aprovadas recentes": os que a pessoa pode
+  // aprovar e tiveram lançamento na janela. lastEntryAt é um filtro grosso da
+  // listagem; a lista exata de aprovadas vem ao expandir o projeto.
+  const approvedScope = useMemo(() => {
+    const corte = new Date();
+    corte.setHours(0, 0, 0, 0);
+    corte.setDate(corte.getDate() - RECENT_APPROVED_DAYS);
+    return projects
+      .filter((project) => (isAdmin ? true : isCoordinatedByMe(project)))
+      .filter((project) => {
+        // lastProjectEntryAt: último lançamento do projeto, de qualquer pessoa —
+        // o aprovador em geral não lança horas nos projetos que aprova.
+        const raw = String(project.lastProjectEntryAt ?? '').slice(0, 10);
+        if (!raw) return false;
+        const data = parseISO(raw);
+        return !Number.isNaN(data.getTime()) && data.getTime() >= corte.getTime();
+      });
+  }, [projects, isAdmin, user?.id]);
+
+  const myApprovedScopeCount = useMemo(
+    () => approvedScope.filter(isCoordinatedByMe).length,
+    [approvedScope, user?.id]
+  );
+
+  const approvedViewProjects = useMemo(() => {
+    return approvedScope
+      .filter((project) => (onlyMine ? isCoordinatedByMe(project) : true))
+      .sort((projectA, projectB) => {
+        const lastA = String(projectA.lastProjectEntryAt ?? '');
+        const lastB = String(projectB.lastProjectEntryAt ?? '');
+        if (lastA !== lastB) return lastB.localeCompare(lastA);
+        return projectA.name.localeCompare(projectB.name, 'pt-BR');
+      });
+  }, [approvedScope, onlyMine, user?.id]);
+
   const longestWait = useMemo(() => {
     const esperas = projectsWithPending
       .map(getWaitingDays)
@@ -502,11 +642,25 @@ export default function TimeApprovals() {
     [projectsWithPending]
   );
 
-  const totalPages = Math.max(1, Math.ceil(totalPendingProjects / itemsPerPage));
+  // A paginação serve a visão ativa; os cartões de resumo continuam falando da
+  // fila de pendências, que é o indicador de gestão.
+  const activeProjects = view === 'pendentes' ? projectsWithPending : approvedViewProjects;
+  const activeCount = activeProjects.length;
+
+  const totalPages = Math.max(1, Math.ceil(activeCount / itemsPerPage));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const startIndex = (safeCurrentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedProjects = projectsWithPending.slice(startIndex, endIndex);
+  const paginatedProjects = activeProjects.slice(startIndex, endIndex);
+
+  const handleViewChange = (next: string) => {
+    const proxima: ApprovalsView = next === 'aprovadas' ? 'aprovadas' : 'pendentes';
+    if (proxima === view) return;
+    setView(proxima);
+    setCurrentPage(1);
+    // Cada visão recolhida de novo: a mesma linha tem conteúdo diferente em cada aba.
+    setOpenProjects({});
+  };
 
   useEffect(() => {
     if (currentPage !== safeCurrentPage) {
@@ -515,6 +669,8 @@ export default function TimeApprovals() {
   }, [currentPage, safeCurrentPage]);
 
   useEffect(() => {
+    // Links profundos (?projectId=...) apontam para a fila de pendências.
+    if (view !== 'pendentes') return;
     const queryString = location.includes('?') ? location.split('?')[1] : '';
     if (!queryString || projectsWithPending.length === 0) return;
 
@@ -555,7 +711,8 @@ export default function TimeApprovals() {
         <div className="flex flex-col gap-2">
           <h1 className="text-2xl font-semibold">Aprovação de Horas</h1>
           <p className="text-muted-foreground">
-            Lista de projetos com pendências para aprovação. Expanda cada projeto para analisar as linhas pendentes.
+            Analise a fila de pendências ou corrija aprovações recentes — inclusive as automáticas,
+            que entram sem passar pela fila.
           </p>
         </div>
 
@@ -607,11 +764,22 @@ export default function TimeApprovals() {
         <Card className="border-border/70 shadow-sm">
           <CardHeader className="gap-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <CardTitle className="text-base">Projetos com pendências</CardTitle>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <Tabs value={view} onValueChange={handleViewChange}>
+                  <TabsList>
+                    <TabsTrigger value="pendentes" data-testid="tab-approvals-pending">
+                      Pendências{totalPendingProjects > 0 ? ` (${totalPendingProjects})` : ''}
+                    </TabsTrigger>
+                    <TabsTrigger value="aprovadas" data-testid="tab-approvals-approved">
+                      Aprovadas recentes
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
               <div className="flex flex-wrap items-center gap-4">
                 {/* Um admin vê a fila inteira; este atalho isola o que é
                     responsabilidade dele, sem trocar de tela. */}
-                {isAdmin && myPendingCount > 0 ? (
+                {isAdmin && (view === 'pendentes' ? myPendingCount > 0 : myApprovedScopeCount > 0) ? (
                   <div className="flex items-center gap-2">
                     <Switch
                       id="only-mine-approvals"
@@ -623,11 +791,11 @@ export default function TimeApprovals() {
                       data-testid="switch-only-my-approvals"
                     />
                     <Label htmlFor="only-mine-approvals" className="cursor-pointer text-sm text-muted-foreground">
-                      Só os que eu coordeno ({myPendingCount})
+                      Só os que eu coordeno ({view === 'pendentes' ? myPendingCount : myApprovedScopeCount})
                     </Label>
                   </div>
                 ) : null}
-              {totalPendingProjects > 0 ? (
+              {activeCount > 0 ? (
                 <div className="flex items-center gap-2">
                   <Label className="text-sm text-muted-foreground">Exibir</Label>
                   <Select value={String(itemsPerPage)} onValueChange={handleItemsPerPageChange}>
@@ -651,9 +819,11 @@ export default function TimeApprovals() {
           <CardContent className="space-y-3">
             {isLoadingProjects ? (
               <TimeApprovalsListSkeleton />
-            ) : totalPendingProjects === 0 ? (
+            ) : activeCount === 0 ? (
               <div className="rounded-xl border border-dashed border-border bg-muted/20 py-16 text-center text-muted-foreground">
-                Não há projetos com pendências de aprovação no seu escopo.
+                {view === 'pendentes'
+                  ? 'Não há projetos com pendências de aprovação no seu escopo.'
+                  : `Nenhum projeto seu teve lançamentos nos últimos ${RECENT_APPROVED_DAYS} dias.`}
               </div>
             ) : (
               <>
@@ -663,8 +833,9 @@ export default function TimeApprovals() {
 
                   return (
                     <PendingProjectRow
-                      key={project.id}
+                      key={`${view}-${project.id}`}
                       project={project}
+                      mode={view}
                       canManageApprovals={canManageProjectApprovals}
                       isCoordinatedByCurrentUser={isCoordinatedByMe(project)}
                       isOpen={isOpen}
@@ -680,7 +851,7 @@ export default function TimeApprovals() {
 
                 <div className="flex flex-col items-center justify-between gap-4 border-t pt-4 sm:flex-row">
                   <div className="text-sm text-muted-foreground">
-                    Mostrando {Math.min(startIndex + 1, totalPendingProjects)}-{Math.min(endIndex, totalPendingProjects)} de {totalPendingProjects} projeto(s)
+                    Mostrando {Math.min(startIndex + 1, activeCount)}-{Math.min(endIndex, activeCount)} de {activeCount} projeto(s)
                   </div>
 
                   <div className="flex items-center gap-2">

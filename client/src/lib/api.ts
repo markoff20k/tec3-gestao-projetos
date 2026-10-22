@@ -669,6 +669,8 @@ export interface Project {
   activities?: Activity[];
   /** Último apontamento do usuário autenticado neste projeto. */
   lastEntryAt?: string | null;
+  /** Último lançamento do projeto (de qualquer colaborador). */
+  lastProjectEntryAt?: string | null;
   /** Triagem da fila de aprovação, vindas da listagem de projetos. */
   pendingEntriesCount?: number;
   oldestPendingEntryAt?: string | null;

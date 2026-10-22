@@ -3673,13 +3673,22 @@ export async function registerRoutes(
     // isso para trazer ao topo os projetos que ele está tocando agora — e precisa
     // olhar todo o histórico, não só o período exibido na tela.
     const lastEntryByProject = new Map<string, string>();
-    if (requesterId) {
-      for (const entry of timeEntries) {
-        if (entry.collaboratorId !== requesterId) continue;
-        const entryDate = toValidDate((entry as any).entryDate);
-        if (!entryDate) continue;
+    // Último lançamento do PROJETO (de qualquer colaborador). A tela de
+    // aprovações usa isto para saber quais projetos tiveram movimento recente —
+    // lastEntryAt não serve lá, porque é do usuário logado, e o aprovador
+    // normalmente não lança horas nos projetos que aprova.
+    const lastProjectEntryByProject = new Map<string, string>();
+    for (const entry of timeEntries) {
+      const entryDate = toValidDate((entry as any).entryDate);
+      if (!entryDate) continue;
+      const iso = entryDate.toISOString();
 
-        const iso = entryDate.toISOString();
+      const currentProjectLast = lastProjectEntryByProject.get(entry.projectId);
+      if (!currentProjectLast || iso > currentProjectLast) {
+        lastProjectEntryByProject.set(entry.projectId, iso);
+      }
+
+      if (requesterId && entry.collaboratorId === requesterId) {
         const current = lastEntryByProject.get(entry.projectId);
         if (!current || iso > current) lastEntryByProject.set(entry.projectId, iso);
       }
@@ -3780,6 +3789,7 @@ export async function registerRoutes(
         client: clientMap.get(p.clientId),
         costCenter: costCenterByProject.get(p.id) ?? null,
         lastEntryAt: lastEntryByProject.get(p.id) ?? null,
+        lastProjectEntryAt: lastProjectEntryByProject.get(p.id) ?? null,
         coordinator: p.coordinatorId ? coordinatorById.get(p.coordinatorId) ?? null : null,
         pendingEntriesCount: pendingCountByProject.get(p.id) ?? 0,
         oldestPendingEntryAt: oldestPendingByProject.get(p.id) ?? null,
