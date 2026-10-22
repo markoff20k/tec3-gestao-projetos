@@ -438,18 +438,29 @@ export default function TimeEntries() {
       0
     );
 
+  // Hora rejeitada não conta: nem no limite do dia (senão quem teve 7h
+  // rejeitadas não consegue relançar), nem nos totais (não é trabalho válido).
+  // Ela continua visível no detalhe da célula, com o motivo da rejeição.
   const getProjectDayHours = (projectId: string, dayKey: string) =>
     periodEntries
-      .filter((entry) => entry.projectId === projectId && getEntryDateKey(entry) === dayKey)
+      .filter(
+        (entry) =>
+          entry.projectId === projectId &&
+          getEntryDateKey(entry) === dayKey &&
+          entry.status !== 'rejected'
+      )
       .reduce((sum, entry) => sum + Number(entry.hours || 0), 0);
 
   const getDayTotal = (dayKey: string) =>
     periodEntries
-      .filter((entry) => getEntryDateKey(entry) === dayKey)
+      .filter((entry) => getEntryDateKey(entry) === dayKey && entry.status !== 'rejected')
       .reduce((sum, entry) => sum + Number(entry.hours || 0), 0);
 
   const periodTotal = useMemo(
-    () => periodEntries.reduce((sum, entry) => sum + Number(entry.hours || 0), 0),
+    () =>
+      periodEntries
+        .filter((entry) => entry.status !== 'rejected')
+        .reduce((sum, entry) => sum + Number(entry.hours || 0), 0),
     [periodEntries]
   );
 

@@ -5117,7 +5117,11 @@ export async function registerRoutes(
     }
 
     const dailyEntries = await storage.getTimeEntriesByCollaboratorAndDate(collaboratorId, entryDate, projectId);
-    const totalDailyHours = dailyEntries.reduce((sum, e) => sum + parseFloat(String(e.hours)), 0);
+    // Hora rejeitada não ocupa o limite do dia: senão o colaborador que teve
+    // 7h rejeitadas ficaria sem espaço para relançar o dia corretamente.
+    const totalDailyHours = dailyEntries
+      .filter((e) => e.status !== 'rejected')
+      .reduce((sum, e) => sum + parseFloat(String(e.hours)), 0);
 
     if (totalDailyHours + parsedHours > project.dailyLimitHours) {
       return res.status(400).json({
@@ -5199,7 +5203,9 @@ export async function registerRoutes(
 
     const dailyEntries = await storage.getTimeEntriesByCollaboratorAndDate(entry.collaboratorId, normalizedEntryDate as any, entry.projectId);
     const totalDailyHours = dailyEntries
-      .filter((e) => e.id !== entry.id)
+      // A própria entrada sai da soma (está sendo editada) e rejeitadas não
+      // ocupam o limite do dia.
+      .filter((e) => e.id !== entry.id && e.status !== 'rejected')
       .reduce((sum, e) => sum + parseFloat(String(e.hours)), 0);
 
     if (totalDailyHours + parsedHours > project.dailyLimitHours) {
