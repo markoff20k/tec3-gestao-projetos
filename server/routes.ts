@@ -819,6 +819,40 @@ function resolveTapStartDateFromProposal(proposal: any, input?: Record<string, u
   return toDateOnlyString(input?.startDate) ?? toDateOnlyString(proposal?.expectedStartDate);
 }
 
+/**
+ * Soma meses (com fração) a uma data AAAA-MM-DD. A parte inteira anda no
+ * calendário; a fração vira dias corridos (0,5 mês = 15 dias). É o que o
+ * cliente espera de "prazo: 1,5 meses".
+ */
+function addMonthsWithFraction(startIso: string, months: number): string | null {
+  const base = new Date(`${startIso}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) return null;
+  const whole = Math.trunc(months);
+  const fraction = months - whole;
+  base.setUTCMonth(base.getUTCMonth() + whole);
+  if (fraction > 0) base.setUTCDate(base.getUTCDate() + Math.round(fraction * 30));
+  return base.toISOString().slice(0, 10);
+}
+
+/**
+ * Data de término do TAP. Prioridade: o que foi digitado no rascunho, depois
+ * a data esperada da proposta e, faltando as duas, DERIVA do prazo em meses
+ * sobre a data de início — era o elo perdido: propostas trazem prazo, não
+ * data, e o projeto nascia sem término (saúde mostrava "sem data definida").
+ */
+function resolveTapEndDate(proposal: any, existing: Record<string, unknown>): string | null {
+  const explicit = String((existing as any)?.endDate ?? proposal?.expectedEndDate ?? '').trim() || null;
+  if (explicit) return explicit;
+
+  const term = Number(proposal?.termMonths);
+  if (!Number.isFinite(term) || term <= 0) return null;
+
+  const start = resolveTapStartDateFromProposal(proposal, existing);
+  if (!start) return null;
+
+  return addMonthsWithFraction(start, term);
+}
+
 function normalizeProposalTapAttachmentList(value: unknown): ProposalTapAttachment[] {
   if (!Array.isArray(value)) return [];
 
@@ -908,7 +942,7 @@ function normalizeProposalTapDraft(proposal: any, input?: unknown): ProposalTapD
     projectCoordinatorName: existing.projectCoordinatorName ? String(existing.projectCoordinatorName).trim() : null,
     notes: String(existing.notes ?? '').trim(),
     startDate: resolveTapStartDateFromProposal(proposal, existing),
-    endDate: String(existing.endDate ?? proposal?.expectedEndDate ?? '').trim() || null,
+    endDate: resolveTapEndDate(proposal, existing),
     // O rascunho do TAP só prevalece quando traz um número positivo: zero aqui
     // é campo não preenchido, não um orçamento de zero. Com a checagem anterior
     // (isFinite), um rascunho salvo zerado travava o orçamento do projeto em
@@ -6251,7 +6285,7 @@ export async function registerRoutes(
     const termMonthsRaw = req.body?.termMonths;
     const termMonths = termMonthsRaw === null || typeof termMonthsRaw === 'undefined' || termMonthsRaw === ''
       ? null
-      : Number(termMonthsRaw);
+      : Math.round(Number(termMonthsRaw) * 100) / 100;
 
     const subcontractValue = typeof req.body?.subcontractValue === 'number'
       ? req.body.subcontractValue

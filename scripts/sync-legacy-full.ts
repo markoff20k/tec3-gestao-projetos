@@ -96,6 +96,13 @@ async function main() {
       label: 'Garantir centro de custo para cada projeto',
       scriptPath: 'scripts/backfill-cost-centers-from-projects.ts',
     },
+    {
+      // Propostas trazem prazo em meses, não data de término; sem este passo os
+      // projetos importados ficam sem término e a saúde não calcula atraso.
+      label: 'Derivar data de término do prazo em meses',
+      scriptPath: 'scripts/backfill-project-end-dates.ts',
+      args: ['--apply'],
+    },
   ];
 
   const startedAt = Date.now();

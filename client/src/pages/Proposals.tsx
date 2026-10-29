@@ -1085,6 +1085,27 @@ export default function Proposals() {
     },
   });
 
+  // Prazo em meses com máscara de duas casas, no mesmo padrão dos campos R$:
+  // só dígitos, dividido por 100 ("150" vira "1,50"). 0,50 mês = quinze dias.
+  const formatTermMask = useCallback((input: string): string => {
+    const digits = input.replace(/\D/g, '');
+    if (!digits) return '';
+    return (Number(digits) / 100).toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }, []);
+
+  const formatTermFromValue = useCallback((value: unknown): string => {
+    if (value === null || value === undefined || value === '') return '';
+    const num = typeof value === 'number' ? value : Number(String(value).replace(',', '.'));
+    if (!Number.isFinite(num)) return '';
+    return num.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }, []);
+
   const formatMoneyMask = useCallback((input: string): string => {
     const digits = input.replace(/\D/g, '');
     if (!digits) return '';
@@ -1164,14 +1185,17 @@ export default function Proposals() {
     return null;
   }, [createExpenseMutation.isPending, updateExpenseMutation.isPending, expenseForm.description, expenseForm.value, parseMoneyMaskToNumber, editingExpenseId, isEditingExpenseDirty]);
 
+  // Aceita a máscara pt-BR ("1,50") e também "1.5" vindo de dados antigos.
+  // Duas casas decimais: 0,50 mês = quinze dias.
   const parseTermMonthsInput = useCallback((raw: string): number | null => {
     const trimmed = raw.trim();
     if (!trimmed) return null;
-    const num = Number(trimmed);
-    if (!Number.isFinite(num)) return null;
-    const intValue = Math.trunc(num);
-    if (intValue < 0) return null;
-    return intValue;
+    const normalized = trimmed.includes(',')
+      ? trimmed.replace(/\./g, '').replace(',', '.')
+      : trimmed;
+    const num = Number(normalized);
+    if (!Number.isFinite(num) || num < 0) return null;
+    return Math.round(num * 100) / 100;
   }, []);
 
   const parseMoneyMaskOrZero = useCallback((masked: string): number | null => {
@@ -2387,7 +2411,7 @@ export default function Proposals() {
       status: proposal.status || 'em_elaboracao',
       expectation: proposal.expectation || '',
       mainType: proposal.mainType || '',
-      termMonths: proposal.termMonths !== undefined && proposal.termMonths !== null ? String(proposal.termMonths) : '',
+      termMonths: formatTermFromValue(proposal.termMonths),
       riskAssessment: proposal.riskAssessment || 'Não',
       hourJustification: formatMoneyFromValue(proposal.hourJustification),
       subcontracted: formatMoneyFromValue(proposal.subcontracted),
@@ -2437,7 +2461,7 @@ export default function Proposals() {
         status: editFormData.status,
         expectation: editFormData.expectation || null,
         mainType: editFormData.mainType || null,
-        termMonths: editFormData.termMonths ? parseInt(editFormData.termMonths) : null,
+        termMonths: parseTermMonthsInput(editFormData.termMonths),
         riskAssessment: editFormData.riskAssessment || null,
         hourJustification: editFormData.hourJustification ? parseMoneyMaskToNumber(editFormData.hourJustification) : null,
         subcontracted: editFormData.subcontracted ? parseMoneyMaskToNumber(editFormData.subcontracted) : null,
@@ -2539,7 +2563,7 @@ export default function Proposals() {
       status: formData.status,
       expectation: formData.expectation || null,
       mainType: formData.mainType || null,
-      termMonths: formData.termMonths ? parseInt(formData.termMonths, 10) : null,
+      termMonths: parseTermMonthsInput(formData.termMonths),
       riskAssessment: formData.riskAssessment || null,
       hourJustification: formData.hourJustification ? parseMoneyMaskToNumber(formData.hourJustification) : null,
       subcontracted: formData.subcontracted ? parseMoneyMaskToNumber(formData.subcontracted) : null,
@@ -2969,7 +2993,9 @@ export default function Proposals() {
       case 'expectation':
         return (proposal as any).expectation || '-';
       case 'termMonths':
-        return (proposal as any).termMonths || '-';
+        return Number.isFinite(Number((proposal as any).termMonths)) && (proposal as any).termMonths !== null
+          ? Number((proposal as any).termMonths).toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+          : '-';
       case 'hours':
         return (proposal as any).hours || '-';
       case 'riskAssessment':
@@ -3360,10 +3386,12 @@ export default function Proposals() {
                     <Label htmlFor="termMonths">Prazo (em meses)</Label>
                     <Input
                       id="termMonths"
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
                       data-testid="input-proposal-term-months"
                       value={formData.termMonths}
-                      onChange={(e) => setFormData({ ...formData, termMonths: e.target.value })}
+                      onChange={(e) => setFormData({ ...formData, termMonths: formatTermMask(e.target.value) })}
                     />
                   </div>
                   <div className="space-y-2">
@@ -4966,7 +4994,7 @@ export default function Proposals() {
                               </div>
                               <div className="space-y-2">
                                 <Label>Prazo execução</Label>
-                                <Input value={tapProposal.termMonths ? `${tapProposal.termMonths} meses` : '-'} disabled />
+                                <Input value={tapProposal.termMonths ? `${Number(tapProposal.termMonths).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} meses` : '-'} disabled />
                               </div>
                               <div className="space-y-2">
                                 <Label>Data início</Label>
@@ -5228,7 +5256,7 @@ export default function Proposals() {
                               </div>
                               <div className="rounded-lg border bg-muted/20 p-3">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Prazo</p>
-                                <p className="mt-1 font-semibold">{tapProposal.termMonths ? `${tapProposal.termMonths} meses` : '-'}</p>
+                                <p className="mt-1 font-semibold">{tapProposal.termMonths ? `${Number(tapProposal.termMonths).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} meses` : '-'}</p>
                               </div>
                               <div className="rounded-lg border bg-muted/20 p-3">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Avaliação de risco</p>
@@ -6607,12 +6635,11 @@ export default function Proposals() {
                 <div className="space-y-2">
                   <Label>Prazo (meses)</Label>
                   <Input
-                    type="number"
-                    inputMode="numeric"
+                    type="text"
+                    inputMode="decimal"
                     value={additiveForm.termMonths}
-                    onChange={(e) => setAdditiveForm((prev) => ({ ...prev, termMonths: e.target.value }))}
-                    placeholder="0"
-                    min={0}
+                    onChange={(e) => setAdditiveForm((prev) => ({ ...prev, termMonths: formatTermMask(e.target.value) }))}
+                    placeholder="0,00"
                     data-testid="input-additive-term-months"
                   />
                 </div>
@@ -7181,11 +7208,12 @@ export default function Proposals() {
                   <Label htmlFor="edit-termMonths">Prazo (em meses)</Label>
                   <Input
                     id="edit-termMonths"
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0,00"
                     data-testid="input-edit-proposal-term-months"
                     value={editFormData.termMonths}
-                    onChange={(e) => setEditFormData({ ...editFormData, termMonths: e.target.value })}
-                    placeholder=""
+                    onChange={(e) => setEditFormData({ ...editFormData, termMonths: formatTermMask(e.target.value) })}
                   />
                 </div>
                 <div className="space-y-2">

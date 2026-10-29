@@ -173,7 +173,7 @@ model Proposal {
   dueDate           DateTime? @map("due_date") @db.Date
   duration          String?
   expectation       String?
-  termMonths        Int?      @map("term_months")
+  termMonths        Float?      @map("term_months")
   hours             Int?
   riskAssessment    String?   @map("risk_assessment")
   maintenanceNum    Int?      @map("maintenance_num")
@@ -194,7 +194,7 @@ model Proposal {
 model ProposalAdditive {
   id                String   @id @default(uuid())
   proposalId         String   @map("proposal_id")
-  termMonths         Int?     @map("term_months")
+  termMonths         Float?     @map("term_months")
   subcontractValue   Decimal  @default(0) @map("subcontract_value") @db.Decimal(12, 2)
   mobilizationValue  Decimal  @default(0) @map("mobilization_value") @db.Decimal(12, 2)
   readjustValue      Decimal  @default(0) @map("readjust_value") @db.Decimal(12, 2)
