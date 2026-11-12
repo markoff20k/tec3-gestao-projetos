@@ -12,7 +12,7 @@ import puppeteer from "puppeteer-core";
 import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 import { authenticateViaLdap, listAdDirectoryUsers } from "./ldap";
 import { PERMISSION_CATALOG, applyCoordinatorFloor, resolvePermissionsForGroups, resolveRoleFromDirectoryGroups, sanitizePermissions } from "./permissions.ts";
-import { recomputeProposalAndProject } from "./proposalTotals.ts";
+import { recomputeProposalAndProject, syncProjectEndDateFromTerms, syncProjectFromAdditiveChange } from "./proposalTotals.ts";
 
 const PROJECT_SETUP_STATUS = {
   PENDING: 'pending',
@@ -1996,6 +1996,10 @@ export async function registerRoutes(
       budgetValue: Number(project.budgetValue || 0) + additiveValue,
       coordinatorId: projectCoordinatorId,
     } as any);
+
+    // O prazo da proposta aditiva (e das linhas dela) estende o término do
+    // projeto — o orçamento já foi somado acima.
+    await syncProjectEndDateFromTerms(project.id);
 
     const generatedAt = new Date();
     const additivePayload = {
@@ -6314,6 +6318,9 @@ export async function registerRoutes(
       readjustValue,
     });
 
+    // Aditivo soma no projeto: orcamento (mobilizacao+reajuste) e termino (prazo).
+    await syncProjectFromAdditiveChange(proposalId);
+
     const userId = (req as any).user?.sub;
     if (typeof userId === 'string') {
       await safeCreateUserActivity(req, userId, {
@@ -6375,6 +6382,8 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Aditivo nao encontrado' });
     }
 
+    await syncProjectFromAdditiveChange(proposalId);
+
     const userId = (req as any).user?.sub;
     if (typeof userId === 'string') {
       const fieldsChanged = Object.keys(updates ?? {});
@@ -6406,6 +6415,9 @@ export async function registerRoutes(
     if (!result) {
       return res.status(404).json({ message: 'Aditivo nao encontrado' });
     }
+
+    // Remocao tambem propaga: recomputo deterministico, nada de delta.
+    await syncProjectFromAdditiveChange(proposalId);
 
     const userId = (req as any).user?.sub;
     if (typeof userId === 'string') {
