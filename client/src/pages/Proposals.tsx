@@ -2179,9 +2179,6 @@ export default function Proposals() {
     },
   });
 
-  // Proposta que o usuário tentou revisar, mas que já virou projeto.
-  const [additivePathProposal, setAdditivePathProposal] = useState<Proposal | null>(null);
-
   const revisionProposalMutation = useMutation({
     mutationFn: (proposalId: string) => proposalsApi.createRevision(proposalId),
     onSuccess: (created) => {
@@ -4323,10 +4320,11 @@ export default function Proposals() {
                                       data-testid={`button-revision-proposal-${proposal.id}`}
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        // A ação não some para a proposta convertida: ela aponta
-                                        // o caminho certo, que é o aditivo.
+                                        // Proposta convertida não se revisa: o botão abre direto a
+                                        // tela de aditivos (prazo e valores), sem beco sem saída.
                                         if (isProposalConverted(proposal)) {
-                                          setAdditivePathProposal(proposal);
+                                          setAdditivesProposal(proposal);
+                                          setAdditivesDialogOpen(true);
                                         } else {
                                           revisionProposalMutation.mutate(proposal.id);
                                         }
@@ -5407,36 +5405,6 @@ export default function Proposals() {
             ) : null}
           </DialogContent>
         </Dialog>
-
-        <AlertDialog open={Boolean(additivePathProposal)} onOpenChange={(open) => { if (!open) setAdditivePathProposal(null); }}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Esta proposta já virou projeto</AlertDialogTitle>
-              <AlertDialogDescription asChild>
-                <div className="space-y-2">
-                  <p>
-                    A {additivePathProposal?.code} já gerou projeto, então ela não é mais revisada — vira
-                    documento fechado do contrato.
-                  </p>
-                  <p>
-                    Para ampliar <strong>prazo</strong>, <strong>valor</strong> ou <strong>escopo</strong>, crie um
-                    aditivo: ele soma ao projeto que já existe, sem criar um projeto novo.
-                  </p>
-                  <p className="text-xs">
-                    Por enquanto o aditivo é criado como uma proposta com situação{' '}
-                    <strong>Sucesso (aditivo)</strong>, vinculada ao projeto na geração do TAP. A tela dedicada de
-                    aditamento está em construção.
-                  </p>
-                </div>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              {/* Sem botão de confirmar: não há mais o que confirmar, a revisão
-                  deixou de existir para esta proposta. */}
-              <AlertDialogAction onClick={() => setAdditivePathProposal(null)}>Entendi</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
 
         {/* Detail Sheet (Side Panel) */}
         <Sheet open={detailSheetOpen && !detailFullscreen} onOpenChange={setDetailSheetOpen}>
@@ -6555,6 +6523,15 @@ export default function Proposals() {
               </DialogTitle>
               <DialogDescription>{additivesProposal?.title}</DialogDescription>
             </DialogHeader>
+
+            {additivesProposal && isProposalConverted(additivesProposal) ? (
+              <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-900 dark:border-teal-300/30 dark:bg-teal-500/10 dark:text-teal-100">
+                Esta proposta já virou projeto e não é mais revisada. Registre aqui os aditivos de{' '}
+                <strong>prazo</strong> e <strong>valores</strong>. Para aditivo com novo escopo e TAP próprio,
+                crie uma proposta com situação <strong>Sucesso (aditivo)</strong> e gere o TAP — ela se vincula
+                ao projeto existente.
+              </div>
+            ) : null}
 
             {additivesProposal?.umbrellaRef ? (
               <div className="text-sm text-muted-foreground">
