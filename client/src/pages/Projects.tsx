@@ -1032,8 +1032,12 @@ export default function Projects() {
     )
   );
 
-  // Espelha a regra do servidor: admin ou coordenador do próprio projeto.
-  const canEditSetup = Boolean(selectedProject && (isAdmin || isCoordinatorOfSelectedProject));
+  // Espelha a regra do servidor: admin, coordenador do próprio projeto, ou quem
+  // tem a permissão projects.setup (ex.: coordenação de área).
+  const canManageSetupFields = Boolean(
+    selectedProject && (isAdmin || isCoordinatorOfSelectedProject || can('projects.setup'))
+  );
+  const canEditSetup = canManageSetupFields;
 
   const isTapReadyEffective = Boolean(
     selectedProject && (
@@ -1045,9 +1049,11 @@ export default function Projects() {
 
   // Antes do TAP, quem edita o setup define o coordenador. Depois do TAP o campo
   // trava, porque o documento emitido nomeia essa pessoa — só o escritório de
-  // projetos e o administrador seguem podendo trocar.
-  const canChangeCoordinatorAfterTap = isAdmin || can('projects.coordinator');
-  const canEditSetupCoordinator = canEditSetup && (!isTapReadyEffective || canChangeCoordinatorAfterTap);
+  // projetos (via projects.coordinator) e o administrador seguem podendo trocar.
+  // Espelha o servidor: canChangeCoordinator = isAdmin || projects.coordinator ||
+  // (!tapGerado && canManageSetupFields).
+  const canChangeCoordinator = isAdmin || can('projects.coordinator') || (!isTapReadyEffective && canManageSetupFields);
+  const canEditSetupCoordinator = canChangeCoordinator;
   const isChangingCoordinatorAfterTap =
     isTapReadyEffective && normalizedFormCoordinatorId !== normalizedCurrentCoordinatorId;
 
@@ -1257,7 +1263,7 @@ export default function Projects() {
 
     if (!selectedProject) return;
 
-    if (!canEditSetup) {
+    if (!canManageSetupFields && !canChangeCoordinator) {
       toast({ title: 'Somente o coordenador do projeto ou administrador pode alterar o setup', variant: 'destructive' });
       return;
     }
@@ -1378,7 +1384,7 @@ export default function Projects() {
 
   const canSubmitSetup = Boolean(
     selectedProject &&
-    canEditSetup &&
+    (canManageSetupFields || canChangeCoordinator) &&
     (hasSetupChanges || canCompleteSetup)
   );
 
@@ -2589,7 +2595,7 @@ export default function Projects() {
                           </div>
                         ) : null}
 
-                        {!canEditSetup ? (
+                        {!canManageSetupFields && !canChangeCoordinator ? (
                           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-300/40 dark:bg-[#3a3018] dark:text-amber-100">
                             Somente o coordenador do projeto ou administrador pode alterar esta configuração.
                           </div>

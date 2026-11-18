@@ -30,10 +30,11 @@ const PADROES: Record<string, { name: string; description: string; permissions: 
   },
   DIR: {
     name: 'Diretoria',
-    description: 'Visão completa do negócio e aprovação de horas, sem configuração do sistema.',
+    description: 'Visão completa do negócio, dashboard gerencial e aprovação de horas, sem configuração do sistema.',
+    // Pedido do cliente (18/11/2026): diretoria também lança as próprias horas.
     permissions: [
       'projects.view', 'projects.status', 'projects.reopen', 'reports.view',
-      'time.approve',
+      'time.approve', 'time.log',
       'proposals.view', 'proposals.manage',
       'clients.view', 'clients.manage',
     ],
@@ -41,25 +42,31 @@ const PADROES: Record<string, { name: string; description: string; permissions: 
   COORD: {
     name: 'Coordenação de área',
     description: 'Coordenadores de área (via AD): pacote completo de projetos. O coordenador DE PROJETO é dado do sistema (coordinatorId) e não precisa deste grupo para equipe, atividades e aprovação dos projetos dele.',
+    // Pedido do cliente (18/11/2026): COORD não vê mais propostas, só projetos e clientes.
     permissions: [
       'projects.view', 'projects.rename', 'projects.description', 'projects.manage', 'projects.setup', 'projects.team', 'projects.status',
       'time.log', 'time.approve',
-      'proposals.view', 'clients.view',
+      'clients.view',
     ],
   },
   COM: {
     name: 'Comercial',
-    description: 'Propostas e carteira de clientes, da elaboração à abertura do projeto.',
+    description: 'Propostas (inclusive gerar o TAP e abrir o projeto) e carteira de clientes.',
+    // Pedido do cliente (18/11/2026): comercial ganha proposals.tap e perde a
+    // visão da lista de projetos (continua enxergando o próprio projeto para
+    // lançar horas, via time.log).
     permissions: [
-      'proposals.view', 'proposals.manage',
+      'proposals.view', 'proposals.manage', 'proposals.tap',
       'clients.view', 'clients.manage',
-      'projects.view', 'time.log',
+      'time.log',
     ],
   },
   EP: {
     name: 'Escritório de projetos',
     description: 'PMO: acompanha os projetos, edita descrição e responde pela troca de coordenador.',
-    permissions: ['projects.view', 'projects.rename', 'projects.description', 'projects.coordinator', 'proposals.view', 'proposals.tap', 'time.log'],
+    // Pedido do cliente (18/11/2026): EP perde a visão de propostas e a geração
+    // do TAP — fica só com projetos (inclusive trocar coordenador) e horas.
+    permissions: ['projects.view', 'projects.rename', 'projects.description', 'projects.coordinator', 'time.log'],
   },
   AT: {
     name: 'Assistência técnica',
@@ -71,18 +78,22 @@ const PADROES: Record<string, { name: string; description: string; permissions: 
   },
   ADM: {
     name: 'Administrativo',
-    description: 'Apoio administrativo, com visão de clientes e propostas.',
-    permissions: ['projects.view', 'time.log', 'clients.view', 'proposals.view'],
+    // Pedido do cliente (18/11/2026): ADM fica só com lançamento de horas,
+    // igual ao AT — perde a visão de projetos, clientes e propostas.
+    description: 'Equipe administrativa: somente lançamento de horas.',
+    permissions: ['time.log'],
   },
   RH: {
     name: 'Recursos humanos',
+    // Pedido do cliente (18/11/2026): RH perde a visão de projetos.
     description: 'Cadastro dos profissionais da Tec3 e lançamento de horas.',
-    permissions: ['projects.view', 'time.log', 'admin.users'],
+    permissions: ['time.log', 'admin.users'],
   },
   SSMA: {
     name: 'Saúde, segurança e meio ambiente',
+    // Pedido do cliente (18/11/2026): SSMA perde a visão de projetos.
     description: 'Equipe de SSMA que lança horas nos projetos.',
-    permissions: ['projects.view', 'time.log'],
+    permissions: ['time.log'],
   },
 };
 
