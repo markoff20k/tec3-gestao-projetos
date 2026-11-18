@@ -13,6 +13,7 @@ import { ProposalStatus, TimeEntryStatus } from "@shared/schema";
 import { authenticateViaLdap, listAdDirectoryUsers } from "./ldap";
 import { PERMISSION_CATALOG, applyCoordinatorFloor, resolvePermissionsForGroups, resolveRoleFromDirectoryGroups, sanitizePermissions } from "./permissions.ts";
 import { recomputeProposalAndProject, syncProjectEndDateFromTerms, syncProjectFromAdditiveChange } from "./proposalTotals.ts";
+import { getCategoryBalance, normalizeCategoryLines, validateAdditiveChange } from "./proposalAdditives.ts";
 
 const PROJECT_SETUP_STATUS = {
   PENDING: 'pending',
@@ -3805,6 +3806,22 @@ export async function registerRoutes(
       activitiesByProject.set(row.projectId, list);
     }
 
+    // Selo "tem aditivo" da lista: conta os dois mecanismos — propostas
+    // aditivas vinculadas (sucesso_aditivo) e linhas de aditivo nas propostas
+    // do projeto.
+    const propostasVinculadas = projects.length
+      ? await prisma.proposal.findMany({
+          where: { projectId: { in: projects.map((p) => p.id) } },
+          select: { projectId: true, status: true, _count: { select: { additives: true } } },
+        })
+      : [];
+    const additiveCountByProject = new Map<string, number>();
+    for (const prop of propostasVinculadas) {
+      if (!prop.projectId) continue;
+      const extra = (prop.status === 'sucesso_aditivo' ? 1 : 0) + (prop._count?.additives ?? 0);
+      if (extra > 0) additiveCountByProject.set(prop.projectId, (additiveCountByProject.get(prop.projectId) ?? 0) + extra);
+    }
+
     const enriched = projects.map(p => {
       const consumedHours = approvedHoursByProject.get(p.id) || 0;
       const pendingHours = pendingHoursByProject.get(p.id) || 0;
@@ -3836,6 +3853,7 @@ export async function registerRoutes(
         consumedHours,
         pendingHours,
         health,
+        additiveCount: additiveCountByProject.get(p.id) ?? 0,
         // Projeto administrativo (Férias, Feriado, Licença...) é da empresa toda.
         // No legado isso é obtido alocando todo mundo manualmente; aqui a própria
         // natureza do projeto já libera, para quem entra na empresa não ficar
@@ -6279,6 +6297,17 @@ export async function registerRoutes(
     return res.json({ items, total });
   });
 
+  // Mini-relatório do aditivo por categoria: contratado (proposta + aditivos)
+  // de um lado, horas já lançadas no projeto agrupadas pela categoria de quem
+  // lançou do outro, e o saldo que ainda pode ser reduzido.
+  app.get('/api/proposals/:proposalId/additives/category-balance', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
+    const balance = await getCategoryBalance(req.params.proposalId);
+    if (!balance) {
+      return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+    return res.json(balance);
+  });
+
   app.post('/api/proposals/:proposalId/additives', authenticateToken, requirePermission('proposals.manage'), async (req, res) => {
     const { proposalId } = req.params;
     const proposal = await storage.getProposal(proposalId);
@@ -6307,8 +6336,24 @@ export async function registerRoutes(
     if (termMonths !== null && termMonths < 0) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
-    if (subcontractValue < 0 || mobilizationValue < 0 || readjustValue < 0) {
-      return res.status(400).json({ message: 'Dados invalidos' });
+
+    // Valores negativos são permitidos (aditivo de redução, decisão do cliente
+    // em 18/11/2026); a trava é o valor do projeto não ficar negativo.
+    const { lines: categoryLines, error: linesError } = normalizeCategoryLines(req.body?.categoryLines);
+    if (linesError) {
+      return res.status(400).json({ message: linesError });
+    }
+    if (termMonths === null && !subcontractValue && !mobilizationValue && !readjustValue && categoryLines.length === 0) {
+      return res.status(400).json({ message: 'Preencha ao menos um campo do aditivo' });
+    }
+
+    const validation = await validateAdditiveChange({
+      proposalId,
+      additiveId: null,
+      next: { mobilizationValue, readjustValue, lines: categoryLines },
+    });
+    if (!validation.ok) {
+      return res.status(409).json({ message: validation.message });
     }
 
     const result = await storage.createProposalAdditive(proposalId, {
@@ -6316,9 +6361,10 @@ export async function registerRoutes(
       subcontractValue,
       mobilizationValue,
       readjustValue,
+      categoryLines,
     });
 
-    // Aditivo soma no projeto: orcamento (mobilizacao+reajuste) e termino (prazo).
+    // Aditivo soma no projeto: orcamento (mobilizacao+reajuste+categorias) e termino (prazo).
     await syncProjectFromAdditiveChange(proposalId);
 
     const userId = (req as any).user?.sub;
@@ -6333,6 +6379,12 @@ export async function registerRoutes(
           revision: (proposal as any).revision ?? null,
           additiveId: result?.item?.id ?? null,
           termMonths,
+          categoryLines: categoryLines.map((l) => ({
+            categoryId: l.categoryId,
+            customName: l.customName,
+            hoursDelta: l.hoursDelta,
+            hourlyValue: l.hourlyValue,
+          })),
         },
       });
     }
@@ -6367,14 +6419,43 @@ export async function registerRoutes(
     if (updates.termMonths !== undefined && updates.termMonths !== null && updates.termMonths < 0) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
-    if (updates.subcontractValue !== undefined && (!Number.isFinite(updates.subcontractValue) || updates.subcontractValue < 0)) {
+    if (updates.subcontractValue !== undefined && !Number.isFinite(updates.subcontractValue)) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
-    if (updates.mobilizationValue !== undefined && (!Number.isFinite(updates.mobilizationValue) || updates.mobilizationValue < 0)) {
+    if (updates.mobilizationValue !== undefined && !Number.isFinite(updates.mobilizationValue)) {
       return res.status(400).json({ message: 'Dados invalidos' });
     }
-    if (updates.readjustValue !== undefined && (!Number.isFinite(updates.readjustValue) || updates.readjustValue < 0)) {
+    if (updates.readjustValue !== undefined && !Number.isFinite(updates.readjustValue)) {
       return res.status(400).json({ message: 'Dados invalidos' });
+    }
+    if (typeof req.body?.categoryLines !== 'undefined') {
+      const { lines, error } = normalizeCategoryLines(req.body.categoryLines);
+      if (error) {
+        return res.status(400).json({ message: error });
+      }
+      updates.categoryLines = lines;
+    }
+
+    const current = (await storage.getProposalAdditives(proposalId)).find((a) => a.id === additiveId);
+    if (!current) {
+      return res.status(404).json({ message: 'Aditivo nao encontrado' });
+    }
+    const validation = await validateAdditiveChange({
+      proposalId,
+      additiveId,
+      next: {
+        mobilizationValue: updates.mobilizationValue ?? Number(current.mobilizationValue ?? 0),
+        readjustValue: updates.readjustValue ?? Number(current.readjustValue ?? 0),
+        lines: updates.categoryLines ?? current.categoryLines.map((l) => ({
+          categoryId: l.categoryId ?? null,
+          customName: l.customName ?? null,
+          hoursDelta: Number(l.hoursDelta ?? 0),
+          hourlyValue: Number(l.hourlyValue ?? 0),
+        })),
+      },
+    });
+    if (!validation.ok) {
+      return res.status(409).json({ message: validation.message });
     }
 
     const result = await storage.updateProposalAdditive(proposalId, additiveId, updates);
@@ -6409,6 +6490,13 @@ export async function registerRoutes(
     const proposal = await storage.getProposal(proposalId);
     if (!proposal) {
       return res.status(404).json({ message: 'Proposta nao encontrada' });
+    }
+
+    // Remover um aditivo positivo também reduz o contratado — passa pela mesma
+    // trava de apontamento e de valor do projeto.
+    const validation = await validateAdditiveChange({ proposalId, additiveId, next: null });
+    if (!validation.ok) {
+      return res.status(409).json({ message: validation.message });
     }
 
     const result = await storage.deleteProposalAdditive(proposalId, additiveId);

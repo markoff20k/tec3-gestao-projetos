@@ -71,8 +71,16 @@ import {
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
-import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, projectsApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse, ProposalTapDraft, ProposalTapAttachment, Project, EntityActivity } from '@/lib/api';
+import { proposalsApi, clientsApi, authApi, favoritesApi, usersApi, proposalExpensesApi, proposalAdditivesApi, projectsApi, Proposal, Client, UserOption, ProposalExpenseItem, ProposalExpensesResponse, ProposalAdditiveItem, ProposalAdditivesResponse, ProposalAdditivePayload, ProposalTapDraft, ProposalTapAttachment, Project, EntityActivity } from '@/lib/api';
 import { MultiSelectFilter } from '@/components/MultiSelectFilter';
+import {
+  AdditiveCategoryLines,
+  additiveLinesFromItem,
+  additiveLinesSignature,
+  additiveLinesToPayload,
+  formatHours as formatAdditiveHours,
+  type EditableAdditiveLine,
+} from '@/components/AdditiveCategoryLines';
 import { normalizeTapLogo } from '@/lib/tapHtml';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -851,12 +859,14 @@ export default function Proposals() {
     mobilizationValue: '',
     readjustValue: '',
   });
+  const [additiveLines, setAdditiveLines] = useState<EditableAdditiveLine[]>([]);
   const [editingAdditiveId, setEditingAdditiveId] = useState<string | null>(null);
   const [editingAdditiveInitial, setEditingAdditiveInitial] = useState<{
     termMonths: number | null;
     subcontractValue: number;
     mobilizationValue: number;
     readjustValue: number;
+    linesSignature: string;
   } | null>(null);
 
   const [expensesItemsPage, setExpensesItemsPage] = useState(1);
@@ -941,15 +951,8 @@ export default function Proposals() {
   }, [additivesItemsPage, additivesItemsTotalPages]);
 
   useEffect(() => {
-    if (!additivesDialogOpen) {
-      setAdditiveForm({ termMonths: '', subcontractValue: '', mobilizationValue: '', readjustValue: '' });
-      setEditingAdditiveId(null);
-      setEditingAdditiveInitial(null);
-      setAdditivesItemsPage(1);
-      return;
-    }
-
     setAdditiveForm({ termMonths: '', subcontractValue: '', mobilizationValue: '', readjustValue: '' });
+    setAdditiveLines([]);
     setEditingAdditiveId(null);
     setEditingAdditiveInitial(null);
     setAdditivesItemsPage(1);
@@ -1028,18 +1031,22 @@ export default function Proposals() {
   });
 
   const createAdditiveMutation = useMutation({
-    mutationFn: async (input: { proposalId: string; termMonths: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }) => {
+    mutationFn: async (input: { proposalId: string } & ProposalAdditivePayload) => {
       return proposalAdditivesApi.create(input.proposalId, {
         termMonths: input.termMonths,
         subcontractValue: input.subcontractValue,
         mobilizationValue: input.mobilizationValue,
         readjustValue: input.readjustValue,
+        categoryLines: input.categoryLines,
       });
     },
     onSuccess: () => {
+      // O prefixo cobre a lista de aditivos e o mini-relatório de categorias.
       queryClient.invalidateQueries({ queryKey: additivesQueryKey });
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       setAdditiveForm({ termMonths: '', subcontractValue: '', mobilizationValue: '', readjustValue: '' });
+      setAdditiveLines([]);
       setEditingAdditiveId(null);
       setEditingAdditiveInitial(null);
       toast({ title: 'Aditivo adicionado', variant: 'success' });
@@ -1050,18 +1057,21 @@ export default function Proposals() {
   });
 
   const updateAdditiveMutation = useMutation({
-    mutationFn: async (input: { proposalId: string; additiveId: string; termMonths: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }) => {
+    mutationFn: async (input: { proposalId: string; additiveId: string } & ProposalAdditivePayload) => {
       return proposalAdditivesApi.update(input.proposalId, input.additiveId, {
         termMonths: input.termMonths,
         subcontractValue: input.subcontractValue,
         mobilizationValue: input.mobilizationValue,
         readjustValue: input.readjustValue,
+        categoryLines: input.categoryLines,
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: additivesQueryKey });
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       setAdditiveForm({ termMonths: '', subcontractValue: '', mobilizationValue: '', readjustValue: '' });
+      setAdditiveLines([]);
       setEditingAdditiveId(null);
       setEditingAdditiveInitial(null);
       toast({ title: 'Aditivo atualizado', variant: 'success' });
@@ -1078,6 +1088,7 @@ export default function Proposals() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: additivesQueryKey });
       queryClient.invalidateQueries({ queryKey: ['/api/proposals'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
       toast({ title: 'Aditivo removido', variant: 'success' });
     },
     onError: (error) => {
@@ -1106,15 +1117,19 @@ export default function Proposals() {
     });
   }, []);
 
+  // Sinal negativo é preservado: o aditivo pode ser de redução (reajuste
+  // negativo). Os demais campos R$ continuam validados no servidor.
   const formatMoneyMask = useCallback((input: string): string => {
+    const negative = input.trim().startsWith('-');
     const digits = input.replace(/\D/g, '');
-    if (!digits) return '';
+    if (!digits) return negative ? '-' : '';
 
     const value = Number(digits) / 100;
-    return value.toLocaleString('pt-BR', {
+    const formatted = value.toLocaleString('pt-BR', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
+    return negative ? `-${formatted}` : formatted;
   }, []);
 
   const formatMoneyFromValue = useCallback((value: unknown): string => {
@@ -1146,10 +1161,12 @@ export default function Proposals() {
   }, []);
 
   const parseMoneyMaskToNumber = useCallback((masked: string): number | null => {
+    const negative = masked.trim().startsWith('-');
     const digits = masked.replace(/\D/g, '');
     if (!digits) return null;
     const value = Number(digits) / 100;
-    return Number.isFinite(value) ? value : null;
+    if (!Number.isFinite(value)) return null;
+    return negative ? -value : value;
   }, []);
 
   const isEditingExpenseDirty = useMemo(() => {
@@ -1216,9 +1233,10 @@ export default function Proposals() {
     if ((subcontractValue ?? null) !== editingAdditiveInitial.subcontractValue) return true;
     if ((mobilizationValue ?? null) !== editingAdditiveInitial.mobilizationValue) return true;
     if ((readjustValue ?? null) !== editingAdditiveInitial.readjustValue) return true;
+    if (additiveLinesSignature(additiveLines) !== editingAdditiveInitial.linesSignature) return true;
 
     return false;
-  }, [additiveForm.mobilizationValue, additiveForm.readjustValue, additiveForm.subcontractValue, additiveForm.termMonths, editingAdditiveId, editingAdditiveInitial, parseMoneyMaskOrZero, parseTermMonthsInput]);
+  }, [additiveForm.mobilizationValue, additiveForm.readjustValue, additiveForm.subcontractValue, additiveForm.termMonths, additiveLines, editingAdditiveId, editingAdditiveInitial, parseMoneyMaskOrZero, parseTermMonthsInput]);
 
   const additiveSubmitDisabledReason = useMemo(() => {
     if (createAdditiveMutation.isPending || updateAdditiveMutation.isPending) return 'Salvando...';
@@ -1239,11 +1257,15 @@ export default function Proposals() {
     if (mobilizationRaw && mobilizationValue === null) return 'Valor de mobilização inválido.';
     if (readjustRaw && readjustValue === null) return 'Valor de reajuste inválido.';
 
+    const { error: linesError } = additiveLinesToPayload(additiveLines);
+    if (linesError) return linesError;
+
     const hasAnyValue =
       termMonths !== null ||
       Boolean(subcontractRaw) ||
       Boolean(mobilizationRaw) ||
-      Boolean(readjustRaw);
+      Boolean(readjustRaw) ||
+      additiveLines.length > 0;
 
     if (!editingAdditiveId && !hasAnyValue) return 'Preencha ao menos um campo.';
 
@@ -1252,7 +1274,7 @@ export default function Proposals() {
     }
 
     return null;
-  }, [additiveForm.mobilizationValue, additiveForm.readjustValue, additiveForm.subcontractValue, additiveForm.termMonths, createAdditiveMutation.isPending, editingAdditiveId, isEditingAdditiveDirty, parseMoneyMaskOrZero, parseTermMonthsInput, updateAdditiveMutation.isPending]);
+  }, [additiveForm.mobilizationValue, additiveForm.readjustValue, additiveForm.subcontractValue, additiveForm.termMonths, additiveLines, createAdditiveMutation.isPending, editingAdditiveId, isEditingAdditiveDirty, parseMoneyMaskOrZero, parseTermMonthsInput, updateAdditiveMutation.isPending]);
 
   const [formData, setFormData] = useState(createInitialProposalFormData);
   type CreateFormData = typeof formData;
@@ -2896,26 +2918,40 @@ export default function Proposals() {
       case 'revision': {
         const revision = proposal.revision || 0;
         const isAdditive = proposal.status === 'sucesso_aditivo';
-        if (revision <= 0 && !isAdditive) {
+        const additiveCount = proposal.additiveCount ?? 0;
+        if (revision <= 0 && !isAdditive && additiveCount === 0) {
           return revision;
         }
         const linked = Boolean(proposal.projectId);
-        const tooltipText = isAdditive
-          ? linked
-            ? `Aditivo vinculado ao projeto (${proposal.code})`
-            : `Aditivo pendente de vinculação (${proposal.code})`
-          : `Revisão ${revision} de ${proposal.code}`;
+        // Selo de revisão por aditivo (decisão do cliente, 18/11/2026): só um
+        // marcador visual — a proposta não ganha uma revisão de verdade.
+        const tooltipText = additiveCount > 0
+          ? `Revisão ${revision} — aditivo: ${additiveCount} aditivo(s) registrado(s) em ${proposal.code}`
+          : isAdditive
+            ? linked
+              ? `Aditivo vinculado ao projeto (${proposal.code})`
+              : `Aditivo pendente de vinculação (${proposal.code})`
+            : `Revisão ${revision} de ${proposal.code}`;
         return (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex items-center gap-1.5">
                 {revision}
-                <span
-                  className={cn(
-                    'h-1.5 w-1.5 rounded-full',
-                    isAdditive ? (linked ? 'bg-teal-500' : 'bg-amber-400') : 'bg-slate-300',
-                  )}
-                />
+                {additiveCount > 0 ? (
+                  <span
+                    className="rounded-sm bg-teal-500/15 px-1 text-[10px] font-semibold uppercase leading-4 text-teal-700 dark:text-teal-300"
+                    data-testid={`badge-proposal-additive-${proposal.id}`}
+                  >
+                    aditivo
+                  </span>
+                ) : (
+                  <span
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full',
+                      isAdditive ? (linked ? 'bg-teal-500' : 'bg-amber-400') : 'bg-slate-300',
+                    )}
+                  />
+                )}
               </span>
             </TooltipTrigger>
             <TooltipContent>{tooltipText}</TooltipContent>
@@ -6519,7 +6555,8 @@ export default function Proposals() {
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
-                Aditivos — {additivesProposal?.code} (revisão: {typeof additivesProposal?.revision === 'number' ? additivesProposal.revision : '-'})
+                Aditivos — {additivesProposal?.code} (revisão: {typeof additivesProposal?.revision === 'number' ? additivesProposal.revision : '-'}
+                {additivesItems.length > 0 ? ' — aditivo' : ''})
               </DialogTitle>
               <DialogDescription>{additivesProposal?.title}</DialogDescription>
             </DialogHeader>
@@ -6587,6 +6624,12 @@ export default function Proposals() {
                 const readjustValue = parseMoneyField(additiveForm.readjustValue, 'reajuste');
                 if (readjustValue === null) return;
 
+                const { lines: categoryLines, error: linesError } = additiveLinesToPayload(additiveLines);
+                if (linesError) {
+                  toast({ title: 'Categorias do aditivo', description: linesError, variant: 'destructive' });
+                  return;
+                }
+
                 if (editingAdditiveId) {
                   updateAdditiveMutation.mutate({
                     proposalId: additivesProposalId,
@@ -6595,6 +6638,7 @@ export default function Proposals() {
                     subcontractValue,
                     mobilizationValue,
                     readjustValue,
+                    categoryLines,
                   });
                 } else {
                   createAdditiveMutation.mutate({
@@ -6603,6 +6647,7 @@ export default function Proposals() {
                     subcontractValue,
                     mobilizationValue,
                     readjustValue,
+                    categoryLines,
                   });
                 }
               }}
@@ -6645,6 +6690,15 @@ export default function Proposals() {
                 </div>
               </div>
 
+              {additivesProposalId ? (
+                <AdditiveCategoryLines
+                  proposalId={additivesProposalId}
+                  lines={additiveLines}
+                  onChange={setAdditiveLines}
+                  disabled={createAdditiveMutation.isPending || updateAdditiveMutation.isPending}
+                />
+              ) : null}
+
               <div className="flex items-center justify-end gap-2">
                 {editingAdditiveId && (
                   <Button
@@ -6653,6 +6707,7 @@ export default function Proposals() {
                     className={destructiveCancelButtonClassName}
                     onClick={() => {
                       setAdditiveForm({ termMonths: '', subcontractValue: '', mobilizationValue: '', readjustValue: '' });
+                      setAdditiveLines([]);
                       setEditingAdditiveId(null);
                       setEditingAdditiveInitial(null);
                     }}
@@ -6727,23 +6782,38 @@ export default function Proposals() {
                       visibleAdditivesItems.map((item: ProposalAdditiveItem) => (
                         <TableRow key={item.id}>
                           <TableCell className="text-sm">{item.termMonths ?? '-'}</TableCell>
-                          <TableCell className="text-sm font-medium">{formatCurrency(item.readjustValue)}</TableCell>
+                          <TableCell className={cn('text-sm font-medium', Number(item.readjustValue) < 0 && 'text-red-600')}>
+                            {formatCurrency(item.readjustValue)}
+                          </TableCell>
                           <TableCell>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8 mx-auto"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!additivesProposal) return;
-                                setSelectedProposal(additivesProposal);
-                                setCategoryDrawerOpen(true);
-                              }}
-                              title="Abrir valores por categoria"
-                              data-testid={`button-additive-row-category-values-${item.id}`}
-                            >
-                              <Search className="h-4 w-4" />
-                            </Button>
+                            {item.categoryLines?.length ? (
+                              <div className="flex flex-col gap-0.5 text-xs">
+                                {item.categoryLines.map((line) => {
+                                  const hours = Number(line.hoursDelta);
+                                  return (
+                                    <span key={line.id} className={cn(hours < 0 ? 'text-red-600' : 'text-emerald-700')}>
+                                      {hours > 0 ? '+' : ''}{formatAdditiveHours(hours)}h {line.category?.name || line.customName || '-'}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 mx-auto"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!additivesProposal) return;
+                                  setSelectedProposal(additivesProposal);
+                                  setCategoryDrawerOpen(true);
+                                }}
+                                title="Abrir valores por categoria"
+                                data-testid={`button-additive-row-category-values-${item.id}`}
+                              >
+                                <Search className="h-4 w-4" />
+                              </Button>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Button
@@ -6768,12 +6838,15 @@ export default function Proposals() {
                                 size="icon"
                                 variant="ghost"
                                 onClick={() => {
+                                  const lines = additiveLinesFromItem(item);
                                   setEditingAdditiveId(item.id);
+                                  setAdditiveLines(lines);
                                   setEditingAdditiveInitial({
                                     termMonths: item.termMonths ?? null,
                                     subcontractValue: typeof item.subcontractValue === 'number' ? item.subcontractValue : Number(item.subcontractValue),
                                     mobilizationValue: typeof item.mobilizationValue === 'number' ? item.mobilizationValue : Number(item.mobilizationValue),
                                     readjustValue: typeof item.readjustValue === 'number' ? item.readjustValue : Number(item.readjustValue),
+                                    linesSignature: additiveLinesSignature(lines),
                                   });
                                   setAdditiveForm({
                                     termMonths: item.termMonths === null || typeof item.termMonths === 'undefined' ? '' : String(item.termMonths),

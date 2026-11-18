@@ -413,6 +413,8 @@ export interface Proposal {
   id: string;
   code: string;
   revision: number;
+  /** Linhas de aditivo registradas na proposta (selo "tem aditivo"). */
+  additiveCount?: number;
   title: string;
   description?: string | null;
   clientId: string;
@@ -547,6 +549,23 @@ export const proposalExpensesApi = {
     api.delete<{ total: number }>(`/proposals/${proposalId}/expenses/${expenseId}`),
 };
 
+export interface ProposalAdditiveCategoryLine {
+  id: string;
+  additiveId: string;
+  categoryId: string | null;
+  customName: string | null;
+  category: { id: string; name: string } | null;
+  hoursDelta: number | string;
+  hourlyValue: number | string;
+}
+
+export interface ProposalAdditiveCategoryLineInput {
+  categoryId: string | null;
+  customName: string | null;
+  hoursDelta: number;
+  hourlyValue: number;
+}
+
 export interface ProposalAdditiveItem {
   id: string;
   proposalId: string;
@@ -554,6 +573,7 @@ export interface ProposalAdditiveItem {
   subcontractValue: number;
   mobilizationValue: number;
   readjustValue: number;
+  categoryLines: ProposalAdditiveCategoryLine[];
   createdAt: string;
   updatedAt: string;
 }
@@ -563,17 +583,47 @@ export interface ProposalAdditivesResponse {
   total: number;
 }
 
+export interface AdditiveCategoryBalanceProfessional {
+  userId: string;
+  name: string;
+  hours: number;
+}
+
+export interface AdditiveCategoryBalanceRow {
+  key: string;
+  categoryId: string | null;
+  name: string;
+  hourlyValue: number;
+  baseHours: number;
+  additiveHours: number;
+  contractedHours: number;
+  loggedHours: number;
+  availableHours: number;
+  professionals: AdditiveCategoryBalanceProfessional[];
+}
+
+export interface AdditiveCategoryBalance {
+  projectId: string | null;
+  rows: AdditiveCategoryBalanceRow[];
+  uncategorized: { hours: number; professionals: AdditiveCategoryBalanceProfessional[] };
+}
+
+export interface ProposalAdditivePayload {
+  termMonths?: number | null;
+  subcontractValue: number;
+  mobilizationValue: number;
+  readjustValue: number;
+  categoryLines: ProposalAdditiveCategoryLineInput[];
+}
+
 export const proposalAdditivesApi = {
   list: (proposalId: string) => api.get<ProposalAdditivesResponse>(`/proposals/${proposalId}/additives`),
-  create: (
-    proposalId: string,
-    data: { termMonths?: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }
-  ) => api.post<{ item: ProposalAdditiveItem; total: number }>(`/proposals/${proposalId}/additives`, data),
-  update: (
-    proposalId: string,
-    additiveId: string,
-    data: Partial<{ termMonths: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }>
-  ) => api.put<{ item: ProposalAdditiveItem; total: number }>(`/proposals/${proposalId}/additives/${additiveId}`, data),
+  categoryBalance: (proposalId: string) =>
+    api.get<AdditiveCategoryBalance>(`/proposals/${proposalId}/additives/category-balance`),
+  create: (proposalId: string, data: ProposalAdditivePayload) =>
+    api.post<{ item: ProposalAdditiveItem; total: number }>(`/proposals/${proposalId}/additives`, data),
+  update: (proposalId: string, additiveId: string, data: Partial<ProposalAdditivePayload>) =>
+    api.put<{ item: ProposalAdditiveItem; total: number }>(`/proposals/${proposalId}/additives/${additiveId}`, data),
   delete: (proposalId: string, additiveId: string) =>
     api.delete<{ total: number }>(`/proposals/${proposalId}/additives/${additiveId}`),
 };
@@ -630,6 +680,8 @@ export interface ProjectHealthRuleResponse {
 export interface Project {
   id: string;
   code: string;
+  /** Aditivos do projeto: propostas aditivas vinculadas + linhas de aditivo. */
+  additiveCount?: number;
   legacyProposalCode?: string;
   legacyRevision?: number;
   legacyTermMonths?: number;

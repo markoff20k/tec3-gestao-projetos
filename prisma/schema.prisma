@@ -203,10 +203,32 @@ model ProposalAdditive {
   updatedAt          DateTime? @updatedAt @map("updated_at")
 
   proposal           Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  categoryLines      ProposalAdditiveCategoryLine[]
 
   @@index([proposalId, createdAt])
   @@index([isLegacyImport])
   @@map("proposal_additives")
+}
+
+/// Linha de aditivo por categoria: ajusta (para mais ou para menos) as horas
+/// contratadas de uma categoria. O valor da linha é hoursDelta × hourlyValue;
+/// o preço-hora vem por padrão da proposta base, mas pode ser alterado.
+model ProposalAdditiveCategoryLine {
+  id          String   @id @default(uuid())
+  additiveId  String   @map("additive_id")
+  categoryId  String?  @map("category_id")
+  customName  String?  @map("custom_name")
+  hoursDelta  Decimal  @default(0) @map("hours_delta") @db.Decimal(8, 2)
+  hourlyValue Decimal  @default(0) @map("hourly_value") @db.Decimal(12, 2)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime? @updatedAt @map("updated_at")
+
+  additive    ProposalAdditive  @relation(fields: [additiveId], references: [id], onDelete: Cascade)
+  category    ProposalCategory? @relation(fields: [categoryId], references: [id])
+
+  @@index([additiveId])
+  @@index([categoryId])
+  @@map("proposal_additive_category_lines")
 }
 
 model ProposalExpense {
@@ -430,6 +452,7 @@ model ProposalCategory {
   createdAt DateTime @default(now()) @map("created_at")
 
   categoryValues ProposalCategoryValue[]
+  additiveLines  ProposalAdditiveCategoryLine[]
 
   professionals  User[]
   @@map("proposal_categories")

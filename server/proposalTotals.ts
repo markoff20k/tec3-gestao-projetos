@@ -97,23 +97,40 @@ export async function syncProjectBudgetFromProposals(
   const { base, aditivos, vinculadas } = await resolveProjectProposals(projectId);
   if (!base) return null;
 
-  // Linhas de aditivo (a telinha da proposta): mobilização e reajuste somam;
-  // subcontratação não, pelo mesmo critério do total da proposta base.
+  // Linhas de aditivo (a telinha da proposta): mobilização, reajuste e as
+  // categorias (horas × preço-hora, com sinal) somam; subcontratação não, pelo
+  // mesmo critério do total da proposta base.
   const linhasAditivo = await prisma.proposalAdditive.findMany({
     where: { proposalId: { in: vinculadas.map((p) => p.id) } },
-    select: { mobilizationValue: true, readjustValue: true },
+    select: {
+      mobilizationValue: true,
+      readjustValue: true,
+      categoryLines: { select: { hoursDelta: true, hourlyValue: true } },
+    },
   });
   const extrasDasLinhas = linhasAditivo.reduce(
-    (s, l) => s + Number(l.mobilizationValue ?? 0) + Number(l.readjustValue ?? 0),
+    (s, l) =>
+      s +
+      Number(l.mobilizationValue ?? 0) +
+      Number(l.readjustValue ?? 0) +
+      l.categoryLines.reduce((c, cl) => c + Number(cl.hoursDelta ?? 0) * Number(cl.hourlyValue ?? 0), 0),
+    0
+  );
+  const horasDasLinhas = linhasAditivo.reduce(
+    (s, l) => s + l.categoryLines.reduce((c, cl) => c + Number(cl.hoursDelta ?? 0), 0),
     0
   );
 
+  // Pode ficar menor que a base (aditivo de redução); nunca negativo, porque a
+  // validação do aditivo (validateAdditiveChange) barra antes de gravar.
   const budgetValue =
     Number(base.totalValue ?? 0) +
     aditivos.reduce((s, a) => s + Number(a.totalValue ?? 0), 0) +
     extrasDasLinhas;
   const budgetHours =
-    Number(base.estimatedHours ?? 0) + aditivos.reduce((s, a) => s + Number(a.estimatedHours ?? 0), 0);
+    Number(base.estimatedHours ?? 0) +
+    aditivos.reduce((s, a) => s + Number(a.estimatedHours ?? 0), 0) +
+    horasDasLinhas;
 
   if (!options.dryRun) {
     await prisma.project.update({

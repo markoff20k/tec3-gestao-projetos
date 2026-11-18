@@ -1,8 +1,45 @@
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
-import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, UserActivity, Notification, ProjectTap, EmailOutbox, CostCenter, Activity, ProjectHealthRule } from "../generated/prisma/client.ts";
+import type { User, Client, Proposal, Project, TimeEntry, ProposalCategory, ProposalCategoryValue, ProposalFavorite, ProposalExpense, ProposalAdditive, ProposalAdditiveCategoryLine, UserActivity, Notification, ProjectTap, EmailOutbox, CostCenter, Activity, ProjectHealthRule } from "../generated/prisma/client.ts";
 import { Prisma } from "../generated/prisma/client.ts";
+import type { AdditiveCategoryLineInput } from "./proposalAdditives.ts";
+
+export type ProposalAdditiveWithLines = ProposalAdditive & {
+  categoryLines: Array<ProposalAdditiveCategoryLine & { category: { id: string; name: string } | null }>;
+};
+
+const ADDITIVE_INCLUDE = {
+  categoryLines: {
+    include: { category: { select: { id: true, name: true } } },
+    orderBy: [{ createdAt: 'asc' as const }],
+  },
+} satisfies Prisma.ProposalAdditiveInclude;
+
+/** Total exibido na tela de aditivos: valores soltos + categorias (horas × preço-hora). */
+async function recomputeAdditiveTotal(tx: Prisma.TransactionClient, proposalId: string): Promise<number> {
+  const rows = await tx.proposalAdditive.findMany({
+    where: { proposalId },
+    select: {
+      subcontractValue: true,
+      mobilizationValue: true,
+      readjustValue: true,
+      categoryLines: { select: { hoursDelta: true, hourlyValue: true } },
+    },
+  });
+  const total = rows.reduce(
+    (s, r) =>
+      s +
+      Number(r.subcontractValue ?? 0) +
+      Number(r.mobilizationValue ?? 0) +
+      Number(r.readjustValue ?? 0) +
+      r.categoryLines.reduce((c, l) => c + Number(l.hoursDelta ?? 0) * Number(l.hourlyValue ?? 0), 0),
+    0
+  );
+  const rounded = Number(total.toFixed(2));
+  await tx.proposal.update({ where: { id: proposalId }, data: { additiveValue: rounded as any } });
+  return rounded;
+}
 
 export type UserActivityCategory = 'security' | 'profile' | 'preferences' | 'system';
 export type NotificationType = 'proposal_due_soon' | 'project_tap_email_failed' | 'project_setup_completed' | 'project_closed' | 'project_status_changed' | 'time_entry_approved' | 'time_entry_rejected';
@@ -178,16 +215,24 @@ export interface IStorage {
   ): Promise<{ item: ProposalExpense; total: number } | null>;
   deleteProposalExpense(proposalId: string, expenseId: string): Promise<{ total: number } | null>;
 
-  getProposalAdditives(proposalId: string): Promise<ProposalAdditive[]>;
+  getProposalAdditives(proposalId: string): Promise<ProposalAdditiveWithLines[]>;
   createProposalAdditive(
     proposalId: string,
-    input: { termMonths?: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }
-  ): Promise<{ item: ProposalAdditive; total: number }>;
+    input: {
+      termMonths?: number | null;
+      subcontractValue: number;
+      mobilizationValue: number;
+      readjustValue: number;
+      categoryLines: AdditiveCategoryLineInput[];
+    }
+  ): Promise<{ item: ProposalAdditiveWithLines; total: number }>;
   updateProposalAdditive(
     proposalId: string,
     additiveId: string,
-    updates: Partial<Pick<ProposalAdditive, 'termMonths' | 'subcontractValue' | 'mobilizationValue' | 'readjustValue'>>
-  ): Promise<{ item: ProposalAdditive; total: number } | null>;
+    updates: Partial<Pick<ProposalAdditive, 'termMonths' | 'subcontractValue' | 'mobilizationValue' | 'readjustValue'>> & {
+      categoryLines?: AdditiveCategoryLineInput[];
+    }
+  ): Promise<{ item: ProposalAdditiveWithLines; total: number } | null>;
   deleteProposalAdditive(proposalId: string, additiveId: string): Promise<{ total: number } | null>;
   
   getAllProjects(): Promise<Project[]>;
@@ -930,6 +975,7 @@ export class PrismaStorage implements IStorage {
     const proposals = await prisma.proposal.findMany({
       include: {
         categoryValues: true,
+        _count: { select: { additives: true } },
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       ...(typeof options?.skip === 'number' ? { skip: options.skip } : {}),
@@ -980,6 +1026,8 @@ export class PrismaStorage implements IStorage {
         const hours = Number((cv as any).hours) || 0;
         return sum + value * hours;
       }, 0) || 0,
+      // Selo "tem aditivo" da lista: quantas linhas de aditivo a proposta tem.
+      additiveCount: (p as any)._count?.additives ?? 0,
     }));
   }
 
@@ -1118,17 +1166,24 @@ export class PrismaStorage implements IStorage {
     });
   }
 
-  async getProposalAdditives(proposalId: string): Promise<ProposalAdditive[]> {
+  async getProposalAdditives(proposalId: string): Promise<ProposalAdditiveWithLines[]> {
     return prisma.proposalAdditive.findMany({
       where: { proposalId },
+      include: ADDITIVE_INCLUDE,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
   }
 
   async createProposalAdditive(
     proposalId: string,
-    input: { termMonths?: number | null; subcontractValue: number; mobilizationValue: number; readjustValue: number }
-  ): Promise<{ item: ProposalAdditive; total: number }> {
+    input: {
+      termMonths?: number | null;
+      subcontractValue: number;
+      mobilizationValue: number;
+      readjustValue: number;
+      categoryLines: AdditiveCategoryLineInput[];
+    }
+  ): Promise<{ item: ProposalAdditiveWithLines; total: number }> {
     return prisma.$transaction(async (tx) => {
       const item = await tx.proposalAdditive.create({
         data: {
@@ -1137,28 +1192,19 @@ export class PrismaStorage implements IStorage {
           subcontractValue: input.subcontractValue as any,
           mobilizationValue: input.mobilizationValue as any,
           readjustValue: input.readjustValue as any,
+          categoryLines: {
+            create: input.categoryLines.map((l) => ({
+              categoryId: l.categoryId,
+              customName: l.customName,
+              hoursDelta: l.hoursDelta as any,
+              hourlyValue: l.hourlyValue as any,
+            })),
+          },
         },
+        include: ADDITIVE_INCLUDE,
       });
 
-      const agg = await tx.proposalAdditive.aggregate({
-        where: { proposalId },
-        _sum: {
-          subcontractValue: true,
-          mobilizationValue: true,
-          readjustValue: true,
-        },
-      });
-
-      const total =
-        Number((agg._sum.subcontractValue as any) ?? 0) +
-        Number((agg._sum.mobilizationValue as any) ?? 0) +
-        Number((agg._sum.readjustValue as any) ?? 0);
-
-      await tx.proposal.update({
-        where: { id: proposalId },
-        data: { additiveValue: total as any },
-      });
-
+      const total = await recomputeAdditiveTotal(tx, proposalId);
       return { item, total };
     });
   }
@@ -1166,14 +1212,33 @@ export class PrismaStorage implements IStorage {
   async updateProposalAdditive(
     proposalId: string,
     additiveId: string,
-    updates: Partial<Pick<ProposalAdditive, 'termMonths' | 'subcontractValue' | 'mobilizationValue' | 'readjustValue'>>
-  ): Promise<{ item: ProposalAdditive; total: number } | null> {
+    updates: Partial<Pick<ProposalAdditive, 'termMonths' | 'subcontractValue' | 'mobilizationValue' | 'readjustValue'>> & {
+      categoryLines?: AdditiveCategoryLineInput[];
+    }
+  ): Promise<{ item: ProposalAdditiveWithLines; total: number } | null> {
     return prisma.$transaction(async (tx) => {
       const existing = await tx.proposalAdditive.findFirst({
         where: { id: additiveId, proposalId },
         select: { id: true },
       });
       if (!existing) return null;
+
+      // As linhas de categoria são substituídas por inteiro: a tela manda o
+      // conjunto completo, não deltas.
+      if (Array.isArray(updates.categoryLines)) {
+        await tx.proposalAdditiveCategoryLine.deleteMany({ where: { additiveId } });
+        if (updates.categoryLines.length > 0) {
+          await tx.proposalAdditiveCategoryLine.createMany({
+            data: updates.categoryLines.map((l) => ({
+              additiveId,
+              categoryId: l.categoryId,
+              customName: l.customName,
+              hoursDelta: l.hoursDelta as any,
+              hourlyValue: l.hourlyValue as any,
+            })),
+          });
+        }
+      }
 
       const item = await tx.proposalAdditive.update({
         where: { id: additiveId },
@@ -1185,27 +1250,10 @@ export class PrismaStorage implements IStorage {
           ...(typeof (updates as any).mobilizationValue === 'number' ? { mobilizationValue: (updates as any).mobilizationValue as any } : {}),
           ...(typeof (updates as any).readjustValue === 'number' ? { readjustValue: (updates as any).readjustValue as any } : {}),
         },
+        include: ADDITIVE_INCLUDE,
       });
 
-      const agg = await tx.proposalAdditive.aggregate({
-        where: { proposalId },
-        _sum: {
-          subcontractValue: true,
-          mobilizationValue: true,
-          readjustValue: true,
-        },
-      });
-
-      const total =
-        Number((agg._sum.subcontractValue as any) ?? 0) +
-        Number((agg._sum.mobilizationValue as any) ?? 0) +
-        Number((agg._sum.readjustValue as any) ?? 0);
-
-      await tx.proposal.update({
-        where: { id: proposalId },
-        data: { additiveValue: total as any },
-      });
-
+      const total = await recomputeAdditiveTotal(tx, proposalId);
       return { item, total };
     });
   }
@@ -1220,25 +1268,7 @@ export class PrismaStorage implements IStorage {
 
       await tx.proposalAdditive.delete({ where: { id: additiveId } });
 
-      const agg = await tx.proposalAdditive.aggregate({
-        where: { proposalId },
-        _sum: {
-          subcontractValue: true,
-          mobilizationValue: true,
-          readjustValue: true,
-        },
-      });
-
-      const total =
-        Number((agg._sum.subcontractValue as any) ?? 0) +
-        Number((agg._sum.mobilizationValue as any) ?? 0) +
-        Number((agg._sum.readjustValue as any) ?? 0);
-
-      await tx.proposal.update({
-        where: { id: proposalId },
-        data: { additiveValue: total as any },
-      });
-
+      const total = await recomputeAdditiveTotal(tx, proposalId);
       return { total };
     });
   }
@@ -1366,7 +1396,7 @@ export class PrismaStorage implements IStorage {
       const [categoryValues, expenses, additives] = await Promise.all([
         tx.proposalCategoryValue.findMany({ where: { proposalId: latest.id } }),
         tx.proposalExpense.findMany({ where: { proposalId: latest.id } }),
-        tx.proposalAdditive.findMany({ where: { proposalId: latest.id } }),
+        tx.proposalAdditive.findMany({ where: { proposalId: latest.id }, include: { categoryLines: true } }),
       ]);
 
       if (categoryValues.length > 0) {
@@ -1392,15 +1422,23 @@ export class PrismaStorage implements IStorage {
         });
       }
 
-      if (additives.length > 0) {
-        await tx.proposalAdditive.createMany({
-          data: additives.map((ad) => ({
+      for (const ad of additives) {
+        await tx.proposalAdditive.create({
+          data: {
             proposalId: created.id,
             termMonths: ad.termMonths ?? null,
             subcontractValue: (ad as any).subcontractValue,
             mobilizationValue: (ad as any).mobilizationValue,
             readjustValue: (ad as any).readjustValue,
-          })),
+            categoryLines: {
+              create: ad.categoryLines.map((l) => ({
+                categoryId: l.categoryId ?? null,
+                customName: l.customName ?? null,
+                hoursDelta: (l as any).hoursDelta,
+                hourlyValue: (l as any).hourlyValue,
+              })),
+            },
+          },
         });
       }
 

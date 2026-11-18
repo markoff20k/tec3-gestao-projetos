@@ -1867,7 +1867,20 @@ export default function Projects() {
                         </Button>
                       </TableCell>
                       <TableCell className="font-medium">{project.name}</TableCell>
-                      <TableCell>{project.code}</TableCell>
+                      <TableCell>
+                        <span className="inline-flex items-center gap-1.5">
+                          {project.code}
+                          {(project.additiveCount ?? 0) > 0 ? (
+                            <span
+                              className="rounded-sm bg-teal-500/15 px-1 text-[10px] font-semibold uppercase leading-4 text-teal-700 dark:text-teal-300"
+                              title={`${project.additiveCount} aditivo(s) registrado(s)`}
+                              data-testid={`badge-project-additive-${project.id}`}
+                            >
+                              aditivo
+                            </span>
+                          ) : null}
+                        </span>
+                      </TableCell>
                       <TableCell>{project.client?.razaoSocial || '-'}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -1963,9 +1976,20 @@ export default function Projects() {
                         recommendedLength={80}
                         data-testid={`project-card-name-${project.id}`}
                         trailing={
-                          <Badge variant="outline" className="mt-1 shrink-0 text-xs">
-                            {project.code}
-                          </Badge>
+                          <span className="mt-1 inline-flex shrink-0 items-center gap-1">
+                            <Badge variant="outline" className="text-xs">
+                              {project.code}
+                            </Badge>
+                            {(project.additiveCount ?? 0) > 0 ? (
+                              <Badge
+                                className="bg-teal-500/15 text-[10px] uppercase text-teal-700 hover:bg-teal-500/15 dark:text-teal-300"
+                                title={`${project.additiveCount} aditivo(s) registrado(s)`}
+                                data-testid={`badge-project-card-additive-${project.id}`}
+                              >
+                                aditivo
+                              </Badge>
+                            ) : null}
+                          </span>
                         }
                       />
                     </div>
