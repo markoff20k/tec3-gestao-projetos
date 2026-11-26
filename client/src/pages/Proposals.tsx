@@ -3156,11 +3156,16 @@ export default function Proposals() {
             <h1 className="text-2xl font-semibold">Propostas</h1>
             <p className="text-sm text-muted-foreground">
               {filteredProposals.length} propostas encontradas
-              <span className="mx-1.5">·</span>
-              Valor total:{' '}
-              <span className="font-semibold text-foreground" data-testid="text-proposals-total-value">
-                {formatCurrency(filteredTotalValue)}
-              </span>
+              {/* Só com filtro ou busca: a carteira inteira não é um número útil. */}
+              {activeFilterCount > 0 || search.trim() || showOnlyFavorites ? (
+                <>
+                  <span className="mx-1.5">·</span>
+                  Valor total:{' '}
+                  <span className="font-semibold text-foreground" data-testid="text-proposals-total-value">
+                    {formatCurrency(filteredTotalValue)}
+                  </span>
+                </>
+              ) : null}
             </p>
           </div>
 
