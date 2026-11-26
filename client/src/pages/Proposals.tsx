@@ -5470,8 +5470,8 @@ export default function Proposals() {
               <SheetTitle className="flex items-center gap-2">
                 <span className="text-primary font-mono">{selectedProposal?.code}</span>
                 {selectedProposal && (
-                  <Badge className={cn(proposalStatusBadgeClassName, statusColors[selectedProposal.status])}>
-                    {statusLabels[selectedProposal.status]}
+                  <Badge className={cn(proposalStatusBadgeClassName, statusColors[selectedProposal.status] ?? 'bg-gray-500')}>
+                    {statusLabels[selectedProposal.status] ?? selectedProposal.status}
                   </Badge>
                 )}
               </SheetTitle>
@@ -5709,8 +5709,8 @@ export default function Proposals() {
               <DialogTitle className="flex items-center gap-2">
                 <span className="text-primary font-mono">{selectedProposal?.code}</span>
                 {selectedProposal && (
-                  <Badge className={cn(proposalStatusBadgeClassName, statusColors[selectedProposal.status])}>
-                    {statusLabels[selectedProposal.status]}
+                  <Badge className={cn(proposalStatusBadgeClassName, statusColors[selectedProposal.status] ?? 'bg-gray-500')}>
+                    {statusLabels[selectedProposal.status] ?? selectedProposal.status}
                   </Badge>
                 )}
               </DialogTitle>
