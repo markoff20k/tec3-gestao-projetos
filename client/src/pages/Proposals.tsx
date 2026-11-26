@@ -2903,6 +2903,26 @@ export default function Proposals() {
     });
   }, [proposals, search, searchTerms, proposalSearchIndex, getCoordinatorDisplayName, statusFilters, typeFilters, dateFrom, dateTo, dateBasisFilter, valueMin, valueMax, coordinatorFilters, clientFilters, conversionFilter, expectationFilters, mainTypeFilters, tapStatusFilters, revisionFilters, showOnlyFavorites, favoritesSet, sortColumn, sortDirection]);
 
+  // Pedido do cliente (26/11/2026): somatório do Valor total das propostas que
+  // o filtro deixou na lista, em todas as páginas. Uma proposta conta uma vez
+  // só — a revisão mais recente entre as listadas — para o filtro sem situação
+  // não somar R0 e R1 do mesmo código.
+  const filteredTotalValue = useMemo(() => {
+    const latestByCode = new Map<string, Proposal>();
+    for (const proposal of filteredProposals) {
+      const code = String(proposal.code || '').trim() || proposal.id;
+      const current = latestByCode.get(code);
+      if (!current || Number(proposal.revision || 0) > Number(current.revision || 0)) {
+        latestByCode.set(code, proposal);
+      }
+    }
+    let total = 0;
+    latestByCode.forEach((proposal) => {
+      total += getProposalTotalValue(proposal);
+    });
+    return total;
+  }, [filteredProposals, getProposalTotalValue]);
+
   const totalPages = Math.ceil(filteredProposals.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
@@ -3136,6 +3156,11 @@ export default function Proposals() {
             <h1 className="text-2xl font-semibold">Propostas</h1>
             <p className="text-sm text-muted-foreground">
               {filteredProposals.length} propostas encontradas
+              <span className="mx-1.5">·</span>
+              Valor total:{' '}
+              <span className="font-semibold text-foreground" data-testid="text-proposals-total-value">
+                {formatCurrency(filteredTotalValue)}
+              </span>
             </p>
           </div>
 
