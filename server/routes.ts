@@ -4174,9 +4174,11 @@ export async function registerRoutes(
     const actorRole = (req as any).user?.role as Role | undefined;
     const isAdmin = actorRole === 'admin';
     const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+    const rulePermissions: Set<string> = (req as any).permissions ?? new Set();
 
-    if (!isAdmin && !isCoordinator) {
-      return res.status(403).json({ message: 'Apenas o coordenador do projeto ou um administrador pode configurar as regras de saúde' });
+    // Regra de saúde é configuração do projeto: anda junto com projects.setup.
+    if (!isAdmin && !isCoordinator && !rulePermissions.has('projects.setup')) {
+      return res.status(403).json({ message: 'Sem permissão para configurar as regras de saúde deste projeto' });
     }
 
     const { data, error } = sanitizeHealthRuleInput(req.body || {});
@@ -4198,9 +4200,10 @@ export async function registerRoutes(
     const actorRole = (req as any).user?.role as Role | undefined;
     const isAdmin = actorRole === 'admin';
     const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+    const rulePermissions: Set<string> = (req as any).permissions ?? new Set();
 
-    if (!isAdmin && !isCoordinator) {
-      return res.status(403).json({ message: 'Apenas o coordenador do projeto ou um administrador pode remover a personalização de regras' });
+    if (!isAdmin && !isCoordinator && !rulePermissions.has('projects.setup')) {
+      return res.status(403).json({ message: 'Sem permissão para remover a personalização de regras deste projeto' });
     }
 
     await storage.deleteProjectHealthRule(project.id);
@@ -4439,9 +4442,11 @@ export async function registerRoutes(
     const requesterRole = (req as any).user?.role as Role | undefined;
     const isAdmin = requesterRole === 'admin';
     const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === requesterId;
+    const activityPermissions: Set<string> = (req as any).permissions ?? new Set();
 
-    if (!isAdmin && !isCoordinator) {
-      return res.status(403).json({ message: 'Somente administrador ou coordenador do projeto pode definir as atividades' });
+    // projects.team existia no catálogo mas não era honrada aqui (26/11/2026).
+    if (!isAdmin && !isCoordinator && !activityPermissions.has('projects.team')) {
+      return res.status(403).json({ message: 'Sem permissão para definir as atividades deste projeto' });
     }
 
     const input: unknown[] = Array.isArray(req.body?.activityIds) ? req.body.activityIds : [];
@@ -4549,9 +4554,10 @@ export async function registerRoutes(
     const requesterRole = (req as any).user?.role as Role | undefined;
     const isAdmin = requesterRole === 'admin';
     const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === requesterId;
+    const memberPermissions: Set<string> = (req as any).permissions ?? new Set();
 
-    if (!isAdmin && !isCoordinator) {
-      return res.status(403).json({ message: 'Somente administrador ou coordenador do projeto pode alocar equipe' });
+    if (!isAdmin && !isCoordinator && !memberPermissions.has('projects.team')) {
+      return res.status(403).json({ message: 'Sem permissão para alocar equipe neste projeto' });
     }
 
     const inputUserIds: unknown[] = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
@@ -4662,9 +4668,10 @@ export async function registerRoutes(
     const requesterId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
     const isAdmin = (req as any).user?.role === 'admin';
     const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === requesterId;
+    const completePermissions: Set<string> = (req as any).permissions ?? new Set();
 
-    if (!isAdmin && !isCoordinator) {
-      return res.status(403).json({ message: 'Somente administrador ou coordenador do projeto pode concluir o setup' });
+    if (!isAdmin && !isCoordinator && !completePermissions.has('projects.setup')) {
+      return res.status(403).json({ message: 'Sem permissão para concluir o setup deste projeto' });
     }
 
     if (!project.coordinatorId) {
@@ -4733,9 +4740,12 @@ export async function registerRoutes(
     const actorId = typeof (req as any).user?.sub === 'string' ? (req as any).user.sub : null;
     const isAdmin = (req as any).user?.role === 'admin';
     const isCoordinator = Boolean(project.coordinatorId) && project.coordinatorId === actorId;
+    const statusPermissions: Set<string> = (req as any).permissions ?? new Set();
 
-    if (!isAdmin && !isCoordinator) {
-      return { ok: false, httpStatus: 403, message: 'Somente administrador ou coordenador do projeto pode alterar o status' };
+    // projects.status e projects.reopen passaram a valer de fato em 26/11/2026
+    // (pedido do cliente: escritório de projetos com controle total do projeto).
+    if (!isAdmin && !isCoordinator && !statusPermissions.has('projects.status') && !statusPermissions.has('projects.reopen')) {
+      return { ok: false, httpStatus: 403, message: 'Sem permissão para alterar o status deste projeto' };
     }
 
     const current = String(project.status ?? '');
@@ -4765,8 +4775,11 @@ export async function registerRoutes(
     }
 
     const reopening = PROJECT_CLOSED_STATUSES.has(current);
-    if (reopening && !isAdmin) {
-      return { ok: false, httpStatus: 403, message: 'Somente um administrador pode reabrir um projeto encerrado' };
+    if (reopening && !isAdmin && !statusPermissions.has('projects.reopen')) {
+      return { ok: false, httpStatus: 403, message: 'Sem permissão para reabrir um projeto encerrado' };
+    }
+    if (!reopening && !isAdmin && !isCoordinator && !statusPermissions.has('projects.status')) {
+      return { ok: false, httpStatus: 403, message: 'Sem permissão para alterar o status deste projeto' };
     }
 
     const entries = await storage.getTimeEntriesByProject(project.id);

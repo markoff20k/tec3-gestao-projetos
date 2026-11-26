@@ -923,8 +923,17 @@ export default function Projects() {
   const isCoordinatorOfSelectedProject = Boolean(
     selectedProject && user?.id && selectedProject.coordinatorId === user.id
   );
-  const canManageTeamAllocation = Boolean(selectedProject && (isAdmin || isCoordinatorOfSelectedProject));
-  const canManageHealthRule = canManageTeamAllocation;
+  // Equipe/atividades seguem projects.team; regra de saúde anda com o setup.
+  // Mesmo critério do servidor (26/11/2026).
+  const canManageTeamAllocation = Boolean(
+    selectedProject && (isAdmin || isCoordinatorOfSelectedProject || can('projects.team'))
+  );
+  const canManageHealthRule = Boolean(
+    selectedProject && (isAdmin || isCoordinatorOfSelectedProject || can('projects.setup'))
+  );
+  const canOperateStatus = Boolean(
+    selectedProject && (isAdmin || isCoordinatorOfSelectedProject || can('projects.status'))
+  );
 
   const isProjectClosed = Boolean(
     selectedProject && (selectedProject.status === 'completed' || selectedProject.status === 'cancelled')
@@ -933,7 +942,7 @@ export default function Projects() {
   const pendingApprovalHours = Number(selectedProject?.timeSummary?.pendingApprovalHours || 0);
   const hasPendingHoursApproval = pendingApprovalEntriesCount > 0;
   const canCloseProject = Boolean(
-    selectedProject && canManageTeamAllocation && !isProjectClosed && isProjectExecutionStarted
+    selectedProject && canOperateStatus && !isProjectClosed && isProjectExecutionStarted
   );
 
   // Reabrir um projeto encerrado e exclusivo do admin; o resto segue a mesma
@@ -955,7 +964,7 @@ export default function Projects() {
   );
 
   const canChangeStatus = Boolean(
-    selectedProject && (isProjectClosed ? isAdmin : canManageTeamAllocation)
+    selectedProject && (isProjectClosed ? isAdmin || can('projects.reopen') : canOperateStatus)
   );
 
   const rawProjectStatus = String(selectedProject?.status ?? '');
@@ -2685,8 +2694,8 @@ export default function Projects() {
                           {!canChangeStatus ? (
                             <p className="text-xs text-muted-foreground">
                               {isProjectClosed
-                                ? 'Projeto encerrado. Somente um administrador pode reabri-lo.'
-                                : 'Somente o coordenador do projeto ou administrador pode alterar o status.'}
+                                ? 'Projeto encerrado. Você não tem permissão para reabri-lo.'
+                                : 'Você não tem permissão para alterar o status deste projeto.'}
                             </p>
                           ) : null}
                         </div>
@@ -2796,7 +2805,7 @@ export default function Projects() {
 
                         {!canManageTeamAllocation ? (
                           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-300/40 dark:bg-[#3a3018] dark:text-amber-100">
-                            Somente o coordenador do projeto ou administrador pode alterar a equipe alocada.
+                            Você não tem permissão para alterar a equipe alocada deste projeto.
                           </div>
                         ) : null}
 

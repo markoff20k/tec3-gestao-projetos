@@ -63,10 +63,15 @@ const PADROES: Record<string, { name: string; description: string; permissions: 
   },
   EP: {
     name: 'Escritório de projetos',
-    description: 'PMO: acompanha os projetos, edita descrição e responde pela troca de coordenador.',
+    description: 'PMO: controle total dos projetos já criados (setup, equipe, status, coordenador), sem propostas, TAP ou criação de projeto.',
     // Pedido do cliente (18/11/2026): EP perde a visão de propostas e a geração
-    // do TAP — fica só com projetos (inclusive trocar coordenador) e horas.
-    permissions: ['projects.view', 'projects.rename', 'projects.description', 'projects.coordinator', 'time.log'],
+    // do TAP. Em 26/11/2026 ganhou controle total do projeto existente — fora
+    // ficam só criar/excluir projeto (projects.manage) e tudo de propostas.
+    permissions: [
+      'projects.view', 'projects.rename', 'projects.description', 'projects.coordinator',
+      'projects.setup', 'projects.team', 'projects.status', 'projects.reopen',
+      'time.log',
+    ],
   },
   AT: {
     name: 'Assistência técnica',
