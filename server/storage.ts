@@ -67,7 +67,24 @@ export const ProposalStatus = {
   NAO_SUCESSO: 'nao_sucesso',
   CANCELADA: 'cancelada',
   DECLINIO: 'declinio',
+  // Revisão anterior que foi substituída por uma nova enquanto ainda estava em
+  // aberto. Só o sistema atribui (createProposalRevision); ninguém escolhe à mão.
+  SUPERADA: 'superada',
 } as const;
+
+/**
+ * Status em que a proposta ainda está "viva" no comercial. É só nesses que uma
+ * revisão nova marca a anterior como superada: Sucesso é contrato fechado e
+ * Não sucesso / Cancelada / Declínio guardam o motivo da perda — ficam como estão.
+ */
+export const OPEN_PROPOSAL_STATUSES: ReadonlySet<string> = new Set([
+  ProposalStatus.EM_ELABORACAO,
+  ProposalStatus.EM_ANALISE,
+  'draft',
+  'in_review',
+  'sent',
+  'negotiating',
+]);
 
 export const ProjectStatus = {
   PLANNING: 'planning',
@@ -1439,6 +1456,16 @@ export class PrismaStorage implements IStorage {
               })),
             },
           },
+        });
+      }
+
+      // Pedido do cliente (26/11/2026): a revisão anterior não pode continuar
+      // "Em análise" ao lado da nova — vira Superada. Só vale para revisão em
+      // aberto; Sucesso e as perdas mantêm o status como registro histórico.
+      if (OPEN_PROPOSAL_STATUSES.has(latestStatusNormalized)) {
+        await tx.proposal.update({
+          where: { id: latest.id },
+          data: { status: ProposalStatus.SUPERADA },
         });
       }
 

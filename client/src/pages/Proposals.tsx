@@ -112,6 +112,7 @@ const statusColors: Record<string, string> = {
   nao_sucesso: 'bg-red-500',
   cancelada: 'bg-gray-400',
   declinio: 'bg-red-500',
+  superada: 'bg-slate-400',
 
   // Backward compatibility (old statuses)
   draft: 'bg-gray-500',
@@ -133,6 +134,7 @@ const statusLabels: Record<string, string> = {
   nao_sucesso: 'Não sucesso',
   cancelada: 'Cancelada',
   declinio: 'Declínio',
+  superada: 'Superada',
 
   // Backward compatibility (old statuses)
   draft: 'Em elaboração',
@@ -155,6 +157,13 @@ const proposalStatusOptions: Array<{ value: string; label: string }> = [
   { value: 'nao_sucesso', label: 'Não sucesso' },
   { value: 'cancelada', label: 'Cancelada' },
   { value: 'declinio', label: 'Declínio' },
+];
+
+// "Superada" é atribuída pelo sistema quando uma revisão substitui a anterior em
+// aberto; entra só no filtro da lista, nunca como opção de quem edita a proposta.
+const proposalStatusFilterOptions: Array<{ value: string; label: string }> = [
+  ...proposalStatusOptions,
+  { value: 'superada', label: 'Superada' },
 ];
 
 const destructiveCancelButtonClassName = 'border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50';
@@ -3823,7 +3832,7 @@ export default function Proposals() {
                       <Label className="font-medium">Status</Label>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {proposalStatusOptions.map(({ value: key, label }) => (
+                      {proposalStatusFilterOptions.map(({ value: key, label }) => (
                         <Button
                           key={key}
                           variant={statusFilters.includes(key) ? 'default' : 'outline'}

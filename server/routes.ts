@@ -202,6 +202,8 @@ const ALLOWED_STATUS_TRANSITIONS: Record<string, string[]> = {
   nao_sucesso: ['em_elaboracao'],
   cancelada: [],
   declinio: ['em_elaboracao'],
+  // Atribuído pelo sistema ao criar revisão; terminal e nunca escolhido à mão.
+  superada: [],
 
   // Backward-compatibility for old statuses while deployments/migrations roll out
   draft: ['em_analise', 'com_sucesso', 'cancelada'],
@@ -252,6 +254,8 @@ const APPROVED_PROPOSAL_STATUSES = new Set([
   'sucesso',
 ]);
 
+// 'superada' (revisão substituída) fica de fora de propósito: não é pipeline nem
+// perda, a proposta continua viva na revisão seguinte.
 const PROPOSAL_FUNNEL_STATUS = {
   elaboracao: new Set(['em_elaboracao', 'draft']),
   analise: new Set(['em_analise', 'in_review', 'sent', 'negotiating']),
