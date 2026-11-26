@@ -5391,7 +5391,11 @@ export async function registerRoutes(
 
   // Admin-only consolidated dashboard (used by admin profile)
   app.get('/api/reports/dashboard', authenticateToken, requirePermission('reports.view'), async (req, res) => {
-    const proposals = await storage.getAllProposals();
+    // Revisão superada é a mesma proposta contada de novo: sai de totais, taxa
+    // de sucesso e tendência de contagem, senão cada revisão derruba a taxa.
+    const proposals = (await storage.getAllProposals()).filter(
+      (proposal) => normalizeStatus(proposal.status) !== ProposalStatus.SUPERADA
+    );
     const projects = await storage.getAllProjects();
     const clients = await storage.getAllClients();
     const timeEntries = await storage.getAllTimeEntries();
@@ -5604,7 +5608,10 @@ export async function registerRoutes(
 
   // Commercial dashboard (pipeline)
   app.get('/api/dashboard/commercial', authenticateToken, requirePermission('proposals.view'), async (req, res) => {
-    const proposals = await storage.getAllProposals();
+    // Mesmo critério do dashboard administrativo: revisão superada não conta.
+    const proposals = (await storage.getAllProposals()).filter(
+      (proposal) => normalizeStatus(proposal.status) !== ProposalStatus.SUPERADA
+    );
     const clients = await storage.getAllClients();
     const timeEntries = await storage.getAllTimeEntries();
     const periodDays = parseDashboardPeriod(req.query.period);
